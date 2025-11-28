@@ -39,6 +39,88 @@ RSpec.describe Langfuse::RailsCacheAdapter do
         adapter = described_class.new(namespace: "my_app")
         expect(adapter.namespace).to eq("my_app")
       end
+
+      context "when stale TTL is provided (SWR enabled)" do
+        it "creates an adapter with custom stale TTL" do
+          adapter = described_class.new(stale_ttl: 300)
+          expect(adapter.stale_ttl).to eq(300)
+        end
+
+        it "initializes thread pool with default refresh_threads (5)" do
+          expect(Concurrent::CachedThreadPool).to receive(:new)
+            .with(
+              max_threads: 5,
+              min_threads: 2,
+              max_queue: 50,
+              fallback_policy: :discard
+            ).and_call_original
+
+          adapter = described_class.new(stale_ttl: 300)
+
+          # Verify thread pool is initialized and can accept work
+          expect(adapter.thread_pool).to be_a(Concurrent::CachedThreadPool)
+          expect(adapter.thread_pool.running?).to be true
+          expect(adapter.thread_pool.shuttingdown?).to be false
+        end
+
+        it "initializes thread pool with custom refresh_threads parameter" do
+          expect(Concurrent::CachedThreadPool).to receive(:new)
+            .with(
+              max_threads: 3,
+              min_threads: 2,
+              max_queue: 50,
+              fallback_policy: :discard
+            ).and_call_original
+
+          adapter = described_class.new(stale_ttl: 300, refresh_threads: 3)
+
+          # Verify thread pool is initialized and can accept work
+          expect(adapter.thread_pool).to be_a(Concurrent::CachedThreadPool)
+          expect(adapter.thread_pool.running?).to be true
+          expect(adapter.thread_pool.shuttingdown?).to be false
+        end
+      end
+
+      context "when stale TTL is not provided (SWR disabled)" do
+        it "does not initialize thread pool when stale_ttl is not provided" do
+          adapter = described_class.new(ttl: 60)
+          expect(adapter.thread_pool).to be_nil
+        end
+
+        it "ignores refresh_threads when stale_ttl is not provided" do
+          # refresh_threads should have no effect without stale_ttl
+          adapter = described_class.new(ttl: 60, refresh_threads: 20)
+          expect(adapter.thread_pool).to be_nil
+        end
+      end
+
+      context "with logger parameter" do
+        it "uses provided logger" do
+          custom_logger = Logger.new($stdout)
+          adapter = described_class.new(logger: custom_logger)
+          expect(adapter.logger).to eq(custom_logger)
+        end
+
+        it "creates default stdout logger when no logger provided and Rails.logger not available" do
+          allow(Rails).to receive(:respond_to?).and_return(true)
+          allow(Rails).to receive(:respond_to?).with(:logger).and_return(false)
+          adapter = described_class.new
+          expect(adapter.logger).to be_a(Logger)
+        end
+
+        it "uses Rails.logger as default when Rails is available" do
+          rails_logger = Logger.new($stdout)
+          allow(Rails).to receive_messages(respond_to?: true, logger: rails_logger)
+          adapter = described_class.new
+          expect(adapter.logger).to eq(rails_logger)
+        end
+
+        it "creates stdout logger when Rails.logger returns nil" do
+          allow(Rails).to receive_messages(respond_to?: true, logger: nil)
+          adapter = described_class.new
+          expect(adapter.logger).to be_a(Logger)
+        end
+      end
     end
 
     context "when Rails.cache is not available" do
@@ -426,6 +508,545 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
       expect(memory_cache).not_to respond_to(:fetch_with_lock)
       expect(rails_cache).to respond_to(:fetch_with_lock)
+    end
+  end
+
+  describe "#fetch_with_stale_while_revalidate" do
+    let(:ttl) { 60 }
+    let(:stale_ttl) { 120 }
+    let(:refresh_threads) { 2 }
+    let(:adapter_with_swr) { described_class.new(ttl:, stale_ttl:, refresh_threads:) }
+    let(:adapter_without_swr) { described_class.new(ttl:) }
+
+    before do
+      allow(mock_cache).to receive_messages(read: nil, write: true, delete: true, delete_matched: true)
+    end
+
+    context "when SWR is disabled" do
+      it "falls back to fetch_with_lock" do
+        cache_key = "test_key"
+        new_data = "new_value"
+        expect(adapter_without_swr).to receive(:fetch_with_lock).with(cache_key)
+        adapter_without_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+      end
+    end
+
+    context "with fresh cache entry" do
+      it "returns cached data immediately" do
+        cache_key = "test_key"
+        fresh_data = "fresh_value"
+        new_data = "new_value"
+
+        fresh_entry = Langfuse::PromptCache::CacheEntry.new(
+          fresh_data,
+          Time.now + 30,
+          Time.now + 150
+        )
+
+        # Mock Rails.cache to return the fresh entry
+        allow(mock_cache).to receive(:read)
+          .with("langfuse:#{cache_key}")
+          .and_return(fresh_entry)
+
+        result = adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+        expect(result).to eq(fresh_data)
+      end
+
+      it "does not trigger background refresh" do
+        cache_key = "test_key"
+        fresh_data = "fresh_value"
+        new_data = "new_value"
+
+        fresh_entry = Langfuse::PromptCache::CacheEntry.new(
+          fresh_data,
+          Time.now + 30,
+          Time.now + 150
+        )
+
+        # Mock Rails.cache to return the fresh entry
+        allow(mock_cache).to receive(:read)
+          .with("langfuse:#{cache_key}")
+          .and_return(fresh_entry)
+
+        # Verify thread pool is not used
+        expect(adapter_with_swr.thread_pool).not_to receive(:post)
+
+        adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+      end
+    end
+
+    context "with stale entry (revalidate state)" do
+      it "returns stale data immediately" do
+        cache_key = "test_key"
+        stale_data = "stale_value"
+        new_data = "new_value"
+        stale_entry = Langfuse::PromptCache::CacheEntry.new(
+          stale_data,
+          Time.now - 30, # Expired
+          Time.now + 90  # Still within grace period
+        )
+
+        # Mock Rails.cache to return the stale entry
+        allow(mock_cache).to receive(:read)
+          .with("langfuse:#{cache_key}")
+          .and_return(stale_entry)
+
+        result = adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+
+        expect(result).to eq(stale_data)
+      end
+
+      it "schedules background refresh" do
+        cache_key = "test_key"
+        stale_data = "stale_value"
+        new_data = "new_value"
+        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+
+        stale_entry = Langfuse::PromptCache::CacheEntry.new(
+          stale_data,
+          Time.now - 30, # Expired
+          Time.now + 90  # Still within grace period
+        )
+
+        # Mock Rails.cache to return the stale entry
+        allow(mock_cache).to receive(:read)
+          .with("langfuse:#{cache_key}")
+          .and_return(stale_entry)
+
+        # Mock cache write operations during refresh
+        allow(mock_cache).to receive(:write)
+          .with("langfuse:#{cache_key}", new_data, expires_in: 180)
+          .and_return(true)
+
+        # Mock lock release
+        allow(mock_cache).to receive(:delete)
+          .with(refresh_lock_key)
+
+        # Verify thread pool is used
+        expect(adapter_with_swr.thread_pool).to receive(:post).and_yield
+
+        adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+      end
+    end
+
+    context "with expired entry (past stale period)" do
+      it "fetches fresh data synchronously" do
+        cache_key = "test_key"
+        stale_data = "stale_value"
+        new_data = "new_value"
+        expired_entry = Langfuse::PromptCache::CacheEntry.new(
+          stale_data,
+          Time.now - 150, # Expired
+          Time.now - 30   # Past grace period
+        )
+
+        # Mock Rails.cache to return the expired entry
+        allow(mock_cache).to receive(:read)
+          .with("langfuse:#{cache_key}")
+          .and_return(expired_entry)
+
+        # Mock cache write for the new data
+        allow(mock_cache).to receive(:write)
+          .with("langfuse:#{cache_key}", new_data, expires_in: 180)
+          .and_return(true)
+
+        result = adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+        expect(result).to eq(new_data)
+      end
+
+      it "does not schedule background refresh" do
+        cache_key = "test_key"
+        stale_data = "stale_value"
+        new_data = "new_value"
+
+        expired_entry = Langfuse::PromptCache::CacheEntry.new(
+          stale_data,
+          Time.now - 150, # Expired
+          Time.now - 30   # Past grace period
+        )
+
+        # Mock Rails.cache to return the expired entry
+        allow(mock_cache).to receive(:read)
+          .with("langfuse:#{cache_key}")
+          .and_return(expired_entry)
+
+        # Mock cache write for the new data
+        allow(mock_cache).to receive(:write)
+          .with("langfuse:#{cache_key}", new_data, expires_in: 180)
+          .and_return(true)
+
+        # Verify thread pool is not used
+        expect(adapter_with_swr.thread_pool).not_to receive(:post)
+
+        adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+      end
+    end
+
+    context "with cache miss" do
+      it "fetches fresh data synchronously" do
+        cache_key = "test_key"
+        new_data = "new_value"
+
+        # Mock Rails.cache to return nil (cache miss)
+        allow(mock_cache).to receive(:read)
+          .with("langfuse:#{cache_key}")
+          .and_return(nil)
+
+        # Mock cache write for the new data
+        allow(mock_cache).to receive(:write)
+          .with("langfuse:#{cache_key}", new_data, expires_in: 180)
+          .and_return(true)
+
+        # Verify thread pool is not used
+        expect(adapter_with_swr.thread_pool).not_to receive(:post)
+
+        result = adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+
+        expect(result).to eq(new_data)
+      end
+    end
+  end
+
+  describe "#schedule_refresh" do
+    let(:ttl) { 60 }
+    let(:stale_ttl) { 120 }
+    let(:refresh_threads) { 2 }
+    let(:adapter_with_swr) { described_class.new(ttl: ttl, stale_ttl: stale_ttl, refresh_threads: refresh_threads) }
+
+    before do
+      allow(mock_cache).to receive_messages(read: nil, write: true, delete: true, delete_matched: true)
+    end
+
+    context "when refresh lock is acquired" do
+      it "schedules refresh in thread pool" do
+        cache_key = "test_key"
+        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+        refreshed_value = "refreshed_value"
+
+        # Mock lock acquisition succeeds
+        allow(mock_cache).to receive(:write)
+          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .and_return(true)
+
+        # Mock lock release
+        allow(mock_cache).to receive(:delete)
+          .with(refresh_lock_key)
+
+        # Mock thread pool to execute immediately for testing
+        allow(adapter_with_swr.thread_pool).to receive(:post).and_yield
+
+        # Verify cache is written with CacheEntry (note: double namespacing due to implementation)
+        # We need to allow the lock write first, then expect the cache write
+        cache_write_called = false
+        # TODO: Fix this spec, there are better ways to implement this scenario
+        allow(mock_cache).to receive(:write) do |key, value, options|
+          if key == "langfuse:#{cache_key}"
+            # Cache write with CacheEntry
+            expect(value).to be_a(Langfuse::PromptCache::CacheEntry)
+            expect(value.data).to eq(refreshed_value)
+            expect(options[:expires_in]).to eq(180)
+            cache_write_called = true
+          end
+          true
+        end
+
+        adapter_with_swr.send(:schedule_refresh, cache_key) { refreshed_value }
+        expect(cache_write_called).to be true
+      end
+
+      it "releases the refresh lock after completion" do
+        cache_key = "test_key"
+        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+
+        # Mock lock acquisition succeeds
+        allow(mock_cache).to receive(:write)
+          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .and_return(true)
+
+        # Mock cache write
+        allow(mock_cache).to receive(:write)
+          .with("langfuse:#{cache_key}", anything, expires_in: 180)
+          .and_return(true)
+
+        # Mock thread pool to execute immediately
+        allow(adapter_with_swr.thread_pool).to receive(:post).and_yield
+
+        # Verify lock is released
+        expect(mock_cache).to receive(:delete)
+          .with(refresh_lock_key)
+
+        adapter_with_swr.send(:schedule_refresh, cache_key) { "refreshed_value" }
+      end
+
+      it "logs error and releases lock when refresh block raises error" do
+        cache_key = "test_key"
+        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+        mock_logger = instance_double(Logger)
+
+        adapter_with_logger = described_class.new(
+          ttl: ttl,
+          stale_ttl: stale_ttl,
+          refresh_threads: refresh_threads,
+          logger: mock_logger
+        )
+
+        # Mock lock acquisition succeeds
+        allow(mock_cache).to receive(:write)
+          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .and_return(true)
+
+        # Mock thread pool to execute immediately
+        allow(adapter_with_logger.thread_pool).to receive(:post).and_yield
+
+        expect(mock_logger).to receive(:error)
+          .with(/Langfuse cache refresh failed for key 'test_key': RuntimeError - test error/)
+
+        # Verify lock is released even on error
+        expect(mock_cache).to receive(:delete)
+          .with(refresh_lock_key)
+
+        # Error should be caught and logged, not raised
+        expect do
+          adapter_with_logger.send(:schedule_refresh, cache_key) { raise "test error" }
+        end.not_to raise_error
+      end
+
+      it "logs error with correct exception class and message" do
+        cache_key = "greeting:1"
+        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+        mock_logger = instance_double(Logger)
+
+        adapter_with_logger = described_class.new(
+          ttl: ttl,
+          stale_ttl: stale_ttl,
+          refresh_threads: refresh_threads,
+          logger: mock_logger
+        )
+
+        # Mock lock acquisition succeeds
+        allow(mock_cache).to receive(:write)
+          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .and_return(true)
+
+        # Mock thread pool to execute immediately
+        allow(adapter_with_logger.thread_pool).to receive(:post).and_yield
+
+        expect(mock_logger).to receive(:error)
+          .with("Langfuse cache refresh failed for key 'greeting:1': ArgumentError - Invalid prompt data")
+
+        # Verify lock is released even on error
+        expect(mock_cache).to receive(:delete)
+          .with(refresh_lock_key)
+
+        # Custom exception type
+        adapter_with_logger.send(:schedule_refresh, cache_key) do
+          raise ArgumentError, "Invalid prompt data"
+        end
+      end
+    end
+
+    context "when refresh lock is not acquired" do
+      it "does not schedule refresh" do
+        cache_key = "test_key"
+        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+
+        # Mock lock acquisition fails
+        allow(mock_cache).to receive(:write)
+          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .and_return(false)
+
+        expect(adapter_with_swr.thread_pool).not_to receive(:post)
+        adapter_with_swr.send(:schedule_refresh, cache_key) { "refreshed_value" }
+      end
+    end
+  end
+
+  describe "cache entry behavior" do
+    let(:ttl) { 60 }
+    let(:stale_ttl) { 120 }
+    let(:refresh_threads) { 2 }
+    let(:adapter_with_swr) { described_class.new(ttl: ttl, stale_ttl: stale_ttl, refresh_threads: refresh_threads) }
+
+    context "when reading from cache" do
+      it "returns CacheEntry objects with correct data" do
+        cache_key = "test_key"
+        namespaced_key = "langfuse:#{cache_key}"
+        fresh_until_time = Time.now + 30
+        stale_until_time = Time.now + 150
+
+        # Create a CacheEntry that would be stored in Rails.cache
+        cache_entry = Langfuse::PromptCache::CacheEntry.new(
+          "test_value",
+          fresh_until_time,
+          stale_until_time
+        )
+
+        allow(mock_cache).to receive(:read)
+          .with(namespaced_key)
+          .and_return(cache_entry)
+
+        result = adapter_with_swr.get(cache_key)
+
+        expect(result).to be_a(Langfuse::PromptCache::CacheEntry)
+        expect(result.data).to eq("test_value")
+        expect(result.fresh_until).to eq(fresh_until_time)
+        expect(result.stale_until).to eq(stale_until_time)
+      end
+
+      it "returns nil when cache is empty" do
+        cache_key = "test_key"
+        namespaced_key = "langfuse:#{cache_key}"
+
+        allow(mock_cache).to receive(:read)
+          .with(namespaced_key)
+          .and_return(nil)
+
+        result = adapter_with_swr.get(cache_key)
+        expect(result).to be_nil
+      end
+    end
+
+    context "when writing to cache" do
+      it "regular set stores raw values, not CacheEntry objects" do
+        cache_key = "test_key"
+        value = "test_value"
+        namespaced_key = "langfuse:#{cache_key}"
+
+        # Regular set() stores the value directly, not wrapped in CacheEntry
+        expect(mock_cache).to receive(:write) do |key, stored_value, options|
+          expect(key).to eq(namespaced_key)
+          expect(stored_value).to eq(value)
+          expect(options[:expires_in]).to eq(ttl)
+          true
+        end
+
+        result = adapter_with_swr.set(cache_key, value)
+        expect(result).to eq(value)
+      end
+
+      it "SWR operations store CacheEntry objects with metadata" do
+        cache_key = "test_key"
+        value = "test_value"
+        total_ttl = ttl + stale_ttl
+
+        freeze_time = Time.now
+        allow(Time).to receive(:now).and_return(freeze_time)
+
+        # Mock cache miss to trigger fetch_and_cache
+        allow(mock_cache).to receive(:read)
+          .with("langfuse:#{cache_key}")
+          .and_return(nil)
+
+        # SWR operations use set_cache_entry which wraps in CacheEntry
+        # Note: There's double namespacing due to set_cache_entry calling set(namespaced_key(...))
+        expect(mock_cache).to receive(:write) do |key, entry, options|
+          expect(key).to eq("langfuse:#{cache_key}")
+          expect(entry).to be_a(Langfuse::PromptCache::CacheEntry)
+          expect(entry.data).to eq(value)
+          expect(entry.fresh_until).to be_within(1).of(freeze_time + ttl)
+          expect(entry.stale_until).to be_within(1).of(freeze_time + total_ttl)
+          expect(options[:expires_in]).to eq(total_ttl)
+          true
+        end
+
+        result = adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { value }
+        expect(result).to eq(value)
+      end
+    end
+  end
+
+  describe "refresh lock behavior" do
+    let(:ttl) { 60 }
+    let(:stale_ttl) { 120 }
+    let(:refresh_threads) { 2 }
+    let(:adapter_with_swr) { described_class.new(ttl: ttl, stale_ttl: stale_ttl, refresh_threads: refresh_threads) }
+
+    it "uses Rails.cache to acquire locks atomically" do
+      cache_key = "test_key"
+      refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+
+      # Simulate stale entry to trigger refresh
+      stale_entry = Langfuse::PromptCache::CacheEntry.new(
+        "stale_data",
+        Time.now - 30, # Expired
+        Time.now + 90  # Still within grace period
+      )
+
+      allow(mock_cache).to receive(:read)
+        .with("langfuse:#{cache_key}")
+        .and_return(stale_entry)
+
+      # Mock thread pool to execute immediately
+      allow(adapter_with_swr.thread_pool).to receive(:post).and_yield
+
+      # Mock lock release
+      allow(mock_cache).to receive(:delete)
+        .with(refresh_lock_key)
+
+      # Mock cache write (double-namespaced due to implementation)
+      allow(mock_cache).to receive(:write)
+        .with("langfuse:#{cache_key}", anything, expires_in: 180)
+        .and_return(true)
+
+      # Verify lock acquisition is attempted with correct parameters
+      expect(mock_cache).to receive(:write)
+        .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+        .and_return(true)
+
+      adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { "new_data" }
+    end
+
+    it "prevents duplicate refreshes when lock is not available" do
+      cache_key = "test_key"
+      refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+
+      # Lock acquisition fails (already held by another process)
+      allow(mock_cache).to receive(:write)
+        .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+        .and_return(false)
+
+      # Simulate stale entry
+      stale_entry = Langfuse::PromptCache::CacheEntry.new(
+        "stale_data",
+        Time.now - 30,
+        Time.now + 90
+      )
+
+      allow(mock_cache).to receive(:read)
+        .with("langfuse:#{cache_key}")
+        .and_return(stale_entry)
+
+      # Thread pool should not be used since lock was not acquired
+      expect(adapter_with_swr.thread_pool).not_to receive(:post)
+
+      result = adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { "new_data" }
+      expect(result).to eq("stale_data")
+    end
+  end
+
+  describe "#shutdown" do
+    let(:ttl) { 60 }
+    let(:stale_ttl) { 120 }
+    let(:refresh_threads) { 2 }
+
+    before do
+      allow(mock_cache).to receive_messages(read: nil, write: true, delete: true, delete_matched: true)
+    end
+
+    it "shuts down the thread pool gracefully" do
+      adapter = described_class.new(ttl: ttl, stale_ttl: stale_ttl, refresh_threads: refresh_threads)
+      thread_pool = adapter.thread_pool
+      expect(thread_pool).to receive(:shutdown).once
+      expect(thread_pool).to receive(:wait_for_termination).with(5).once
+
+      adapter.shutdown
+    end
+
+    context "when no thread pool exists" do
+      it "does not raise an error" do
+        adapter = described_class.new(ttl: ttl)
+        expect { adapter.shutdown }.not_to raise_error
+      end
     end
   end
 end
