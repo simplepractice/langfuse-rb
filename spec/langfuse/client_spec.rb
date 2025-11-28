@@ -121,6 +121,36 @@ RSpec.describe Langfuse::Client do
           described_class.new(config_with_rails_cache)
         end.not_to raise_error
       end
+
+      it "passes logger from config to RailsCacheAdapter" do
+        custom_logger = Logger.new($stdout)
+        config_with_rails_cache.logger = custom_logger
+        client = described_class.new(config_with_rails_cache)
+        expect(client.api_client.cache.logger).to eq(custom_logger)
+      end
+
+      it "configures RailsCacheAdapter with stale-while-revalidate settings" do
+        config_with_rails_cache.cache_stale_while_revalidate = true
+        config_with_rails_cache.cache_stale_ttl = 300
+        config_with_rails_cache.cache_refresh_threads = 3
+        config_with_rails_cache.cache_lock_timeout = 15
+
+        client = described_class.new(config_with_rails_cache)
+        adapter = client.api_client.cache
+
+        expect(adapter.stale_ttl).to eq(300)
+        expect(adapter.lock_timeout).to eq(15)
+        expect(adapter.thread_pool).to be_a(Concurrent::CachedThreadPool)
+      end
+
+      it "configures RailsCacheAdapter without SWR when disabled" do
+        config_with_rails_cache.cache_stale_while_revalidate = false
+        client = described_class.new(config_with_rails_cache)
+        adapter = client.api_client.cache
+
+        expect(adapter.stale_ttl).to be_nil
+        expect(adapter.thread_pool).to be_nil
+      end
     end
 
     context "with invalid cache backend" do
