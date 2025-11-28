@@ -4,6 +4,54 @@ RSpec.describe Langfuse::PromptCache do
   let(:cache) { described_class.new(ttl: 2, max_size: 3) }
   let(:test_data) { { "id" => "123", "name" => "test", "prompt" => "Hello {{name}}" } }
 
+  describe "CacheEntry" do
+    describe "#fresh?" do
+      it "returns true when current time is before fresh_until" do
+        entry = described_class::CacheEntry.new("data", Time.now + 10, Time.now + 20)
+        expect(entry.fresh?).to be true
+      end
+
+      it "returns false when current time is at or after fresh_until" do
+        entry = described_class::CacheEntry.new("data", Time.now - 1, Time.now + 10)
+        expect(entry.fresh?).to be false
+      end
+    end
+
+    describe "#stale?" do
+      it "returns true when current time is between fresh_until and stale_until" do
+        entry = described_class::CacheEntry.new("data", Time.now - 1, Time.now + 10)
+        expect(entry.stale?).to be true
+      end
+
+      it "returns false when entry is still fresh" do
+        entry = described_class::CacheEntry.new("data", Time.now + 10, Time.now + 20)
+        expect(entry.stale?).to be false
+      end
+
+      it "returns false when entry is expired" do
+        entry = described_class::CacheEntry.new("data", Time.now - 10, Time.now - 1)
+        expect(entry.stale?).to be false
+      end
+    end
+
+    describe "#expired?" do
+      it "returns true when current time is at or after stale_until" do
+        entry = described_class::CacheEntry.new("data", Time.now - 10, Time.now - 1)
+        expect(entry.expired?).to be true
+      end
+
+      it "returns false when entry is still fresh" do
+        entry = described_class::CacheEntry.new("data", Time.now + 10, Time.now + 20)
+        expect(entry.expired?).to be false
+      end
+
+      it "returns false when entry is stale but not expired" do
+        entry = described_class::CacheEntry.new("data", Time.now - 1, Time.now + 10)
+        expect(entry.expired?).to be false
+      end
+    end
+  end
+
   describe "#initialize" do
     it "sets default TTL" do
       cache = described_class.new

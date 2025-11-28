@@ -15,9 +15,38 @@ module Langfuse
   #
   class PromptCache
     # Cache entry with data and expiration time
-    CacheEntry = Struct.new(:data, :expires_at) do
+    #
+    # Supports stale-while-revalidate pattern:
+    # - fresh_until: Time until entry is considered fresh (can be served immediately)
+    # - stale_until: Time until entry is considered stale (serve while revalidating in background)
+    # - After stale_until: Entry is expired (must revalidate synchronously)
+    CacheEntry = Struct.new(:data, :fresh_until, :stale_until) do
+      # Check if the cache entry is still fresh
+      #
+      # @return [Boolean] true if current time is before fresh_until
+      def fresh?
+        Time.now < fresh_until
+      end
+
+      # Check if the cache entry is stale but not expired
+      #
+      # Stale entries can be served immediately while a background
+      # revalidation occurs (stale-while-revalidate pattern)
+      #
+      # @return [Boolean] true if current time is between fresh_until and stale_until
+      def stale?
+        now = Time.now
+        now >= fresh_until && now < stale_until
+      end
+
+      # Check if the cache entry has expired
+      #
+      # Expired entries should not be served and must be revalidated
+      # synchronously before use.
+      #
+      # @return [Boolean] true if current time is at or after stale_until
       def expired?
-        Time.now > expires_at
+        Time.now >= stale_until
       end
     end
 
@@ -58,8 +87,10 @@ module Langfuse
         # Evict oldest entry if at max size
         evict_oldest if @cache.size >= max_size
 
-        expires_at = Time.now + ttl
-        @cache[key] = CacheEntry.new(value, expires_at)
+        now = Time.now
+        fresh_until = now + ttl
+        stale_until = now + ttl
+        @cache[key] = CacheEntry.new(value, fresh_until, stale_until)
         value
       end
     end
@@ -123,8 +154,8 @@ module Langfuse
     def evict_oldest
       return if @cache.empty?
 
-      # Find entry with earliest expiration
-      oldest_key = @cache.min_by { |_key, entry| entry.expires_at }&.first
+      # Find entry with earliest expiration (using stale_until as expiration time)
+      oldest_key = @cache.min_by { |_key, entry| entry.stale_until }&.first
       @cache.delete(oldest_key) if oldest_key
     end
   end
