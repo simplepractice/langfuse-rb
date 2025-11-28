@@ -418,7 +418,6 @@ RSpec.describe Langfuse::ApiClient do
         ).to have_been_made.once
       end
     end
-    # rubocop:enable RSpec/MultipleMemoizedHelpers
 
     context "with SWR caching integration" do
       let(:logger) { Logger.new($stdout, level: Logger::WARN) }
@@ -750,6 +749,7 @@ RSpec.describe Langfuse::ApiClient do
         end
       end
     end
+    # rubocop:enable RSpec/MultipleMemoizedHelpers
 
     context "with retry middleware configuration" do
       # NOTE: Direct retry behavior testing is challenging with WebMock due to
