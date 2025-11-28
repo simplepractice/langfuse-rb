@@ -46,6 +46,15 @@ module Langfuse
     # @return [Integer] Lock timeout in seconds for distributed cache stampede protection
     attr_accessor :cache_lock_timeout
 
+    # @return [Boolean] Enable stale-while-revalidate caching
+    attr_accessor :cache_stale_while_revalidate
+
+    # @return [Integer] Stale TTL in seconds (grace period for serving stale data)
+    attr_accessor :cache_stale_ttl
+
+    # @return [Integer] Number of background threads for cache refresh
+    attr_accessor :cache_refresh_threads
+
     # @return [Boolean] Use async processing for traces (requires ActiveJob)
     attr_accessor :tracing_async
 
@@ -65,6 +74,9 @@ module Langfuse
     DEFAULT_CACHE_MAX_SIZE = 1000
     DEFAULT_CACHE_BACKEND = :memory
     DEFAULT_CACHE_LOCK_TIMEOUT = 10
+    DEFAULT_CACHE_STALE_WHILE_REVALIDATE = false
+    DEFAULT_CACHE_STALE_TTL = 300
+    DEFAULT_CACHE_REFRESH_THREADS = 5
     DEFAULT_TRACING_ASYNC = true
     DEFAULT_BATCH_SIZE = 50
     DEFAULT_FLUSH_INTERVAL = 10
@@ -83,6 +95,9 @@ module Langfuse
       @cache_max_size = DEFAULT_CACHE_MAX_SIZE
       @cache_backend = DEFAULT_CACHE_BACKEND
       @cache_lock_timeout = DEFAULT_CACHE_LOCK_TIMEOUT
+      @cache_stale_while_revalidate = DEFAULT_CACHE_STALE_WHILE_REVALIDATE
+      @cache_stale_ttl = DEFAULT_CACHE_STALE_TTL
+      @cache_refresh_threads = DEFAULT_CACHE_REFRESH_THREADS
       @tracing_async = DEFAULT_TRACING_ASYNC
       @batch_size = DEFAULT_BATCH_SIZE
       @flush_interval = DEFAULT_FLUSH_INTERVAL
@@ -110,6 +125,8 @@ module Langfuse
               "cache_lock_timeout must be positive"
       end
 
+      validate_swr_config!
+
       validate_cache_backend!
     end
     # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
@@ -130,6 +147,21 @@ module Langfuse
 
       raise ConfigurationError,
             "cache_backend must be one of #{valid_backends.inspect}, got #{cache_backend.inspect}"
+    end
+
+    def validate_swr_config!
+      if cache_stale_ttl.nil? || cache_stale_ttl.negative?
+        raise ConfigurationError, "cache_stale_ttl must be non-negative"
+      end
+
+      if cache_refresh_threads.nil? || cache_refresh_threads <= 0
+        raise ConfigurationError, "cache_refresh_threads must be positive"
+      end
+
+      return unless cache_stale_while_revalidate && cache_backend != :rails
+
+      raise ConfigurationError,
+            "cache_stale_while_revalidate requires cache_backend to be :rails"
     end
   end
 end

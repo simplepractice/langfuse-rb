@@ -10,6 +10,9 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_ttl).to eq(60)
       expect(config.cache_max_size).to eq(1000)
       expect(config.cache_backend).to eq(:memory)
+      expect(config.cache_stale_while_revalidate).to be false
+      expect(config.cache_stale_ttl).to eq(300)
+      expect(config.cache_refresh_threads).to eq(5)
     end
 
     it "reads from environment variables" do
@@ -206,6 +209,88 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.not_to raise_error
       end
     end
+
+    context "when cache_stale_ttl is invalid" do
+      it "raises ConfigurationError when nil" do
+        config.cache_stale_ttl = nil
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_stale_ttl must be non-negative"
+        )
+      end
+
+      it "raises ConfigurationError when negative" do
+        config.cache_stale_ttl = -1
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_stale_ttl must be non-negative"
+        )
+      end
+
+      it "allows zero" do
+        config.cache_stale_ttl = 0
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "allows positive values" do
+        config.cache_stale_ttl = 300
+        expect { config.validate! }.not_to raise_error
+      end
+    end
+
+    context "when cache_refresh_threads is invalid" do
+      it "raises ConfigurationError when nil" do
+        config.cache_refresh_threads = nil
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_refresh_threads must be positive"
+        )
+      end
+
+      it "raises ConfigurationError when zero" do
+        config.cache_refresh_threads = 0
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_refresh_threads must be positive"
+        )
+      end
+
+      it "raises ConfigurationError when negative" do
+        config.cache_refresh_threads = -1
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_refresh_threads must be positive"
+        )
+      end
+
+      it "allows positive values" do
+        config.cache_refresh_threads = 5
+        expect { config.validate! }.not_to raise_error
+      end
+    end
+
+    context "when validating stale-while-revalidate with cache backend" do
+      it "allows SWR with Rails cache backend" do
+        config.cache_backend = :rails
+        config.cache_stale_while_revalidate = true
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "allows SWR disabled with any cache backend" do
+        config.cache_backend = :memory
+        config.cache_stale_while_revalidate = false
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "rejects SWR with memory cache backend" do
+        config.cache_backend = :memory
+        config.cache_stale_while_revalidate = true
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_stale_while_revalidate requires cache_backend to be :rails"
+        )
+      end
+    end
   end
 
   describe "attribute setters" do
@@ -250,6 +335,67 @@ RSpec.describe Langfuse::Config do
       custom_logger = Logger.new($stdout)
       config.logger = custom_logger
       expect(config.logger).to eq(custom_logger)
+    end
+
+    it "allows setting cache_stale_while_revalidate" do
+      config.cache_stale_while_revalidate = true
+      expect(config.cache_stale_while_revalidate).to be true
+    end
+
+    it "allows setting cache_stale_ttl" do
+      config.cache_stale_ttl = 600
+      expect(config.cache_stale_ttl).to eq(600)
+    end
+
+    it "allows setting cache_refresh_threads" do
+      config.cache_refresh_threads = 10
+      expect(config.cache_refresh_threads).to eq(10)
+    end
+  end
+
+  describe "stale-while-revalidate integration" do
+    it "works with all configuration options together" do
+      config = described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+        c.base_url = "https://test.langfuse.com"
+        c.timeout = 10
+        c.cache_ttl = 120
+        c.cache_backend = :rails
+        c.cache_stale_while_revalidate = true
+        c.cache_stale_ttl = 240
+        c.cache_refresh_threads = 8
+      end
+
+      expect { config.validate! }.not_to raise_error
+
+      expect(config.cache_ttl).to eq(120)
+      expect(config.cache_stale_while_revalidate).to be true
+      expect(config.cache_stale_ttl).to eq(240)
+      expect(config.cache_refresh_threads).to eq(8)
+    end
+
+    it "maintains backward compatibility when SWR is disabled" do
+      config = described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+        c.cache_ttl = 60
+        c.cache_backend = :rails
+      end
+
+      expect { config.validate! }.not_to raise_error
+
+      expect(config.cache_stale_while_revalidate).to be false
+      expect(config.cache_stale_ttl).to eq(300) # Default
+      expect(config.cache_refresh_threads).to eq(5) # Default
+    end
+  end
+
+  describe "constants" do
+    it "defines correct SWR default values" do
+      expect(Langfuse::Config::DEFAULT_CACHE_STALE_WHILE_REVALIDATE).to be false
+      expect(Langfuse::Config::DEFAULT_CACHE_STALE_TTL).to eq(300)
+      expect(Langfuse::Config::DEFAULT_CACHE_REFRESH_THREADS).to eq(5)
     end
   end
 end
