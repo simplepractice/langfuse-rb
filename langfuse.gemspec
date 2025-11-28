@@ -33,6 +33,9 @@ Gem::Specification.new do |spec|
   spec.add_dependency "faraday-retry", "~> 2.0"
   spec.add_dependency "mustache", "~> 1.1"
 
+  # Runtime dependencies - Concurrency (for SWR caching)
+  spec.add_dependency "concurrent-ruby", "~> 1.2"
+
   # Runtime dependencies - OpenTelemetry (for tracing)
   spec.add_dependency "opentelemetry-api", "~> 1.2"
   spec.add_dependency "opentelemetry-common", "~> 0.21"
