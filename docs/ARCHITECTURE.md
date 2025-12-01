@@ -68,6 +68,7 @@ All components use proper synchronization:
 
 - `PromptCache` uses Monitor
 - `RailsCacheAdapter` uses Redis atomic operations
+- `ScoreClient` uses Queue and Mutex for thread-safe batching
 - OpenTelemetry handles context propagation
 
 ## Core Components
@@ -174,33 +175,101 @@ text = client.compile_prompt("name", variables: { name: "Alice" })
 - Factory for prompt clients
 - Cache backend selection
 - High-level API methods
+- Score creation and management (delegates to ScoreClient)
 
 ### 6. Tracing Layer (OpenTelemetry-based)
 
-#### Tracer
+#### Observations System
+
+The SDK uses an observation-based model where all tracing operations create "observations" - wrappers around OpenTelemetry spans with Langfuse-specific functionality.
+
+**Observation Types:**
+- **Span** - General-purpose operation tracking
+- **Generation** - LLM calls (OpenAI, Anthropic, etc.)
+- **Event** - Point-in-time occurrences
+- **Embedding** - Vector embedding generation
+- **Agent** - Agent-based workflows
+- **Tool** - External tool/API calls
+- **Chain** - Multi-step workflows
+- **Retriever** - Document retrieval operations
+- **Evaluator** - Quality assessment operations
+- **Guardrail** - Safety/compliance checks
+
+**Block-based API (auto-ends):**
 
 ```ruby
-Langfuse.trace(name: "user-request") do |trace|
-  trace.generation(name: "gpt4", model: "gpt-4") do |gen|
+Langfuse.observe("user-request") do |span|
+  span.start_observation("llm-call", { model: "gpt-4" }, as_type: :generation) do |gen|
     gen.output = "Response"
     gen.usage = { prompt_tokens: 10, completion_tokens: 20 }
   end
 end
 ```
 
-#### Exporter
-
-Converts OpenTelemetry spans to Langfuse events:
+**Stateful API (manual end):**
 
 ```ruby
-exporter = Langfuse::Exporter.new(public_key, secret_key)
-# Automatically called by OTel BatchSpanProcessor
+span = Langfuse.start_observation("user-request")
+gen = span.start_observation("llm-call", { model: "gpt-4" }, as_type: :generation)
+gen.output = "Response"
+gen.usage = { prompt_tokens: 10, completion_tokens: 20 }
+gen.end
+span.end
+```
+
+**Key Components:**
+
+- **BaseObservation** - Base class for all observation types
+- **OtelSetup** - Initializes OpenTelemetry SDK with OTLP exporter
+- **SpanProcessor** - Propagates trace-level attributes to child spans
+- **OtelAttributes** - Converts Langfuse attributes to OpenTelemetry format
+
+**Responsibilities:**
+- Wrap OpenTelemetry spans with Langfuse-specific functionality
+- Convert OTel spans → Langfuse ingestion format via OTLP
+- Handle parent-child relationships
+- Batch export for efficiency
+
+### 7. Score Client (`Langfuse::ScoreClient`)
+
+Handles creation and batching of score events:
+
+```ruby
+score_client = ScoreClient.new(api_client: api_client, config: config)
+score_client.create(name: "quality", value: 0.85, trace_id: "abc123...")
+```
+
+**Features:**
+- Thread-safe queuing with `Queue`
+- Automatic batching (configurable batch_size and flush_interval)
+- Background flush timer thread
+- Integration with OpenTelemetry spans (extracts trace_id/observation_id)
+
+**Responsibilities:**
+- Queue score events for batching
+- Extract trace/observation IDs from active OTel spans
+- Batch and send scores to ingestion API
+- Handle graceful shutdown and flush
+
+### 8. Attribute Propagation (`Langfuse::Propagation`)
+
+Propagates trace-level attributes (user_id, session_id, metadata, tags) to all child spans:
+
+```ruby
+Langfuse.propagate_attributes(user_id: "user_123", session_id: "session_abc") do
+  Langfuse.observe("operation") do |span|
+    # span automatically has user_id and session_id
+    span.start_observation("child") do |child|
+      # child also inherits user_id and session_id
+    end
+  end
+end
 ```
 
 **Responsibilities:**
-- Convert OTel spans → Langfuse ingestion format
-- Handle trace/span/generation types
-- Batch export for efficiency
+- Set attributes on current span
+- Propagate attributes to all new child spans via SpanProcessor
+- Support cross-service propagation via OpenTelemetry baggage
 
 ## Key Design Decisions
 
@@ -301,6 +370,38 @@ client.prompts.compile("name", variables: {})
 - ❌ Global state (can be problematic in tests)
 - ✅ Mitigated with `Langfuse.reset!` method
 
+### 7. Observation-Based Tracing Model
+
+**Decision:** Use unified observation model instead of separate trace/span/generation classes
+
+**Why?**
+- Aligns with Langfuse JavaScript SDK architecture
+- Single `start_observation()` method with `as_type` parameter
+- Flexible - supports 10+ observation types (span, generation, event, embedding, agent, tool, chain, retriever, evaluator, guardrail)
+- Consistent API for all observation types
+
+**Trade-offs:**
+- ✅ Consistent API across all observation types
+- ✅ Easy to add new observation types
+- ✅ Aligns with Langfuse platform model
+- ❌ Slightly more complex than separate classes
+
+### 8. OTLP Export Instead of Custom Exporter
+
+**Decision:** Use OpenTelemetry OTLP exporter instead of custom Langfuse exporter
+
+**Why?**
+- Standard OpenTelemetry protocol (OTLP)
+- Langfuse server handles OTLP → Langfuse format conversion
+- Future-proof (OTLP is industry standard)
+- Automatic batching via BatchSpanProcessor
+
+**Trade-offs:**
+- ✅ Standard protocol (OTLP)
+- ✅ Server-side conversion (simpler SDK)
+- ✅ Works with any OTLP-compatible backend
+- ❌ Requires Langfuse server to support OTLP (which it does)
+
 ## Data Flow
 
 ### Prompt Fetching
@@ -339,17 +440,34 @@ Result: 1 API call instead of N
 
 ```
 User Code
-  └─> Langfuse.trace(name: "query") do |trace|
-       ├─> Langfuse::Tracer creates OTel root span
-       └─> trace.generation(name: "gpt4", model: "gpt-4") do |gen|
-            ├─> Langfuse::Generation wraps OTel child span
-            ├─> Sets Langfuse attributes (model, type="generation")
-            └─> gen.usage = {...} → Sets token attributes
+  └─> Langfuse.observe("query") do |span|
+       ├─> Langfuse.start_observation() creates OTel root span
+       ├─> BaseObservation wraps OTel span
+       └─> span.start_observation("llm-call", { model: "gpt-4" }, as_type: :generation) do |gen|
+            ├─> BaseObservation wraps OTel child span
+            ├─> OtelAttributes.create_observation_attributes() sets Langfuse attributes
+            └─> gen.usage = {...} → Sets token attributes via OTel span.set_attribute()
        ├─> OTel BatchSpanProcessor collects spans
-       └─> Langfuse::Exporter converts spans to events
-            ├─> Convert OTel span → Langfuse ingestion format
-            ├─> Batch events (50 spans per batch)
-            └─> POST /api/public/ingestion
+       ├─> SpanProcessor propagates trace-level attributes to new spans
+       └─> OTLP Exporter sends spans to Langfuse
+            ├─> POST /api/public/otel/v1/traces (OTLP format)
+            ├─> Batch export (50 spans per batch, configurable)
+            └─> Langfuse server converts OTLP → Langfuse ingestion format
+```
+
+### Score Creation
+
+```
+User Code
+  └─> Langfuse.create_score(name: "quality", value: 0.85, trace_id: "abc123")
+       ├─> ScoreClient.create() validates and normalizes score
+       ├─> Build score event hash
+       ├─> Queue event (thread-safe Queue)
+       ├─> Check if batch_size reached → trigger flush
+       └─> Background flush timer (every flush_interval seconds)
+            ├─> Collect queued events
+            ├─> ApiClient.send_batch() → POST /api/public/ingestion
+            └─> Retry on transient errors (429, 503, 504)
 ```
 
 ## Technology Choices
@@ -386,9 +504,16 @@ User Code
 
 **Why OpenTelemetry?**
 - CNCF standard for distributed tracing
-- Automatic context propagation
+- Automatic context propagation (W3C Trace Context)
 - Works with existing APM tools
 - Future-proof (industry direction)
+- OTLP export protocol (standardized)
+
+**Components:**
+- **OTLP Exporter** - Sends spans to Langfuse via `/api/public/otel/v1/traces`
+- **BatchSpanProcessor** - Batches spans for efficient export
+- **SpanProcessor** - Custom processor for attribute propagation
+- **W3C TraceContext Propagator** - Distributed tracing across services
 
 ## Performance Considerations
 

@@ -897,4 +897,161 @@ RSpec.describe Langfuse::Client do
       end
     end
   end
+
+  describe "#trace_url" do
+    let(:client) { described_class.new(valid_config) }
+
+    it "generates trace URL with default base_url" do
+      trace_id = "a" * 32 # 32 hex characters
+      url = client.trace_url(trace_id)
+
+      expect(url).to eq("https://cloud.langfuse.com/traces/#{trace_id}")
+    end
+
+    it "generates trace URL with custom base_url" do
+      custom_config = Langfuse::Config.new do |config|
+        config.public_key = "pk_test_123"
+        config.secret_key = "sk_test_456"
+        config.base_url = "https://custom.langfuse.com"
+      end
+      custom_client = described_class.new(custom_config)
+      trace_id = "b" * 32
+
+      url = custom_client.trace_url(trace_id)
+
+      expect(url).to eq("https://custom.langfuse.com/traces/#{trace_id}")
+    end
+
+    it "handles trace IDs of any length" do
+      trace_id = "abc123def456"
+      url = client.trace_url(trace_id)
+
+      expect(url).to eq("https://cloud.langfuse.com/traces/#{trace_id}")
+    end
+  end
+
+  describe "#create_score" do
+    let(:client) { described_class.new(valid_config) }
+
+    before do
+      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+        .to_return(status: 200, body: "", headers: {})
+    end
+
+    it "delegates to score_client" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:create).with(
+        name: "quality",
+        value: 0.85,
+        trace_id: "abc123",
+        observation_id: nil,
+        comment: nil,
+        metadata: nil,
+        data_type: :numeric
+      )
+
+      client.create_score(name: "quality", value: 0.85, trace_id: "abc123")
+    end
+
+    it "passes all parameters to score_client" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:create).with(
+        name: "quality",
+        value: 0.85,
+        trace_id: "abc123",
+        observation_id: "def456",
+        comment: "High quality",
+        metadata: { source: "manual" },
+        data_type: :boolean
+      )
+
+      client.create_score(
+        name: "quality",
+        value: 0.85,
+        trace_id: "abc123",
+        observation_id: "def456",
+        comment: "High quality",
+        metadata: { source: "manual" },
+        data_type: :boolean
+      )
+    end
+  end
+
+  describe "#score_active_observation" do
+    let(:client) { described_class.new(valid_config) }
+    let(:tracer) { OpenTelemetry.tracer_provider.tracer("test") }
+    let(:span) { tracer.start_span("test-span") }
+
+    before do
+      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+        .to_return(status: 200, body: "", headers: {})
+    end
+
+    it "delegates to score_client" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:score_active_observation).with(
+        name: "accuracy",
+        value: 0.92,
+        comment: nil,
+        metadata: nil,
+        data_type: :numeric
+      )
+
+      OpenTelemetry::Context.with_current(
+        OpenTelemetry::Trace.context_with_span(span)
+      ) do
+        client.score_active_observation(name: "accuracy", value: 0.92)
+      end
+    end
+  end
+
+  describe "#score_active_trace" do
+    let(:client) { described_class.new(valid_config) }
+    let(:tracer) { OpenTelemetry.tracer_provider.tracer("test") }
+    let(:span) { tracer.start_span("test-span") }
+
+    before do
+      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+        .to_return(status: 200, body: "", headers: {})
+    end
+
+    it "delegates to score_client" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:score_active_trace).with(
+        name: "overall_quality",
+        value: 5,
+        comment: nil,
+        metadata: nil,
+        data_type: :numeric
+      )
+
+      OpenTelemetry::Context.with_current(
+        OpenTelemetry::Trace.context_with_span(span)
+      ) do
+        client.score_active_trace(name: "overall_quality", value: 5)
+      end
+    end
+  end
+
+  describe "#flush_scores" do
+    let(:client) { described_class.new(valid_config) }
+
+    it "delegates to score_client" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:flush)
+
+      client.flush_scores
+    end
+  end
+
+  describe "#shutdown" do
+    let(:client) { described_class.new(valid_config) }
+
+    it "delegates to score_client shutdown" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:shutdown)
+
+      client.shutdown
+    end
+  end
 end

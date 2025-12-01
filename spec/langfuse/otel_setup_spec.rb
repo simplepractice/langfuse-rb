@@ -196,18 +196,11 @@ RSpec.describe Langfuse::OtelSetup do
       end
     end
 
-    it "allows creating traces with Langfuse.trace" do
-      result = Langfuse.trace(name: "test-trace", user_id: "user-123") do |trace|
-        expect(trace).to be_a(Langfuse::Trace)
-        "test_result"
-      end
-
-      expect(result).to eq("test_result")
-    end
-
     it "sends spans to Langfuse API" do
-      Langfuse.trace(name: "test-trace") do |trace|
-        trace.span(name: "test-span") { |span| }
+      # Create a span directly using OpenTelemetry
+      otel_tracer = OpenTelemetry.tracer_provider.tracer("test")
+      otel_tracer.in_span("test-span") do |_span|
+        # Span is automatically sent when it ends
       end
 
       # Force flush to send immediately

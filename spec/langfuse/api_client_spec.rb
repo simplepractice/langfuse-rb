@@ -77,7 +77,7 @@ RSpec.describe Langfuse::ApiClient do
 
     it "includes User-Agent header" do
       conn = api_client.connection
-      expect(conn.headers["User-Agent"]).to eq("langfuse-ruby/#{Langfuse::VERSION}")
+      expect(conn.headers["User-Agent"]).to eq("langfuse-rb/#{Langfuse::VERSION}")
     end
 
     it "includes Content-Type header" do
@@ -122,7 +122,7 @@ RSpec.describe Langfuse::ApiClient do
   describe "#user_agent" do
     it "includes gem name and version" do
       user_agent = api_client.send(:user_agent)
-      expect(user_agent).to eq("langfuse-ruby/#{Langfuse::VERSION}")
+      expect(user_agent).to eq("langfuse-rb/#{Langfuse::VERSION}")
     end
   end
 
@@ -442,9 +442,9 @@ RSpec.describe Langfuse::ApiClient do
         expect(options[:backoff_factor]).to eq(2)
       end
 
-      it "configures retry for GET requests only" do
+      it "configures retry for GET and POST requests" do
         options = api_client.send(:retry_options)
-        expect(options[:methods]).to eq([:get])
+        expect(options[:methods]).to contain_exactly(:get, :post)
       end
 
       it "configures retry for transient error status codes" do
@@ -480,6 +480,344 @@ RSpec.describe Langfuse::ApiClient do
         # Verify only 1 attempt
         expect(
           a_request(:get, "#{base_url}/api/public/v2/prompts/#{prompt_name}")
+        ).to have_been_made.once
+      end
+    end
+
+    context "with Faraday error handling" do
+      it "handles Faraday::RetriableResponse (retries exhausted)" do
+        # Create a mock response with body
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+
+        # Stub the connection to raise the error
+        allow(api_client.connection).to receive(:get).and_raise(retriable_error)
+
+        expect(api_client.logger).to receive(:error).with(/Retries exhausted - 503/)
+        expect do
+          api_client.get_prompt(prompt_name)
+        end.to raise_error(Langfuse::ApiError, /API request failed \(503\): Service unavailable/)
+      end
+
+      it "handles generic Faraday::Error" do
+        faraday_error = Faraday::Error.new("Connection failed")
+
+        # Stub the connection to raise the error
+        allow(api_client.connection).to receive(:get).and_raise(faraday_error)
+
+        expect(api_client.logger).to receive(:error).with(/Faraday error: Connection failed/)
+        expect do
+          api_client.get_prompt(prompt_name)
+        end.to raise_error(Langfuse::ApiError, /HTTP request failed: Connection failed/)
+      end
+    end
+
+    # rubocop:disable RSpec/MultipleMemoizedHelpers
+    context "with Rails cache backend (fetch_with_lock)" do
+      let(:rails_cache) do
+        # Create a simple object that responds to fetch_with_lock
+        Class.new do
+          def respond_to?(method, include_private: false)
+            method == :fetch_with_lock || super
+          end
+
+          def fetch_with_lock(_key)
+            result = yield if block_given?
+            @cached_value ||= result
+            @cached_value || result
+          end
+
+          def get(_key)
+            @cached_value
+          end
+
+          def set(_key, value)
+            @cached_value = value
+          end
+        end.new
+      end
+
+      let(:rails_cached_client) do
+        described_class.new(
+          public_key: public_key,
+          secret_key: secret_key,
+          base_url: base_url,
+          cache: rails_cache
+        )
+      end
+
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/prompts/#{prompt_name}")
+          .to_return(
+            status: 200,
+            body: prompt_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "uses fetch_with_lock for distributed locking" do
+        cache_key = Langfuse::PromptCache.build_key(prompt_name)
+        expect(rails_cache).to receive(:fetch_with_lock).with(cache_key).and_call_original
+
+        result = rails_cached_client.get_prompt(prompt_name)
+        expect(result).to eq(prompt_response)
+      end
+
+      it "calls fetch_prompt_from_api within the lock block" do
+        expect(rails_cached_client).to receive(:fetch_prompt_from_api).with(
+          prompt_name,
+          version: nil,
+          label: nil
+        ).and_call_original
+
+        rails_cached_client.get_prompt(prompt_name)
+      end
+    end
+    # rubocop:enable RSpec/MultipleMemoizedHelpers
+  end
+
+  describe "#send_batch" do
+    let(:events) do
+      [
+        {
+          id: SecureRandom.uuid,
+          type: "score-create",
+          timestamp: Time.now.utc.iso8601(3),
+          body: {
+            name: "quality",
+            value: 0.85,
+            trace_id: "abc123",
+            data_type: "NUMERIC"
+          }
+        },
+        {
+          id: SecureRandom.uuid,
+          type: "score-create",
+          timestamp: Time.now.utc.iso8601(3),
+          body: {
+            name: "accuracy",
+            value: 0.92,
+            trace_id: "def456",
+            data_type: "NUMERIC"
+          }
+        }
+      ]
+    end
+
+    context "with valid events" do
+      it "sends batch to ingestion endpoint" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .with(
+            body: { batch: events }.to_json,
+            headers: {
+              "Authorization" => /^Basic /,
+              "Content-Type" => "application/json",
+              "User-Agent" => "langfuse-rb/#{Langfuse::VERSION}"
+            }
+          )
+          .to_return(status: 200, body: "", headers: {})
+
+        expect { api_client.send_batch(events) }.not_to raise_error
+      end
+
+      it "handles 201 Created response" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(status: 201, body: "", headers: {})
+
+        expect { api_client.send_batch(events) }.not_to raise_error
+      end
+
+      it "handles 204 No Content response" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(status: 204, body: "", headers: {})
+
+        expect { api_client.send_batch(events) }.not_to raise_error
+      end
+    end
+
+    context "with validation errors" do
+      it "raises ArgumentError for non-array input" do
+        expect do
+          api_client.send_batch("not an array")
+        end.to raise_error(ArgumentError, "events must be an array")
+      end
+
+      it "raises ArgumentError for empty array" do
+        expect do
+          api_client.send_batch([])
+        end.to raise_error(ArgumentError, "events array cannot be empty")
+      end
+    end
+
+    context "with API errors" do
+      it "raises UnauthorizedError for 401" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 401,
+            body: { error: "Unauthorized" }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::UnauthorizedError, "Authentication failed. Check your API keys.")
+      end
+
+      it "raises ApiError for other error statuses" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 500,
+            body: { error: "Internal Server Error" }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, /Batch send failed/)
+      end
+
+      it "handles network errors" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_raise(Faraday::ConnectionFailed.new("Connection failed"))
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, /Batch send failed/)
+      end
+    end
+
+    context "with retry logic for batch operations" do
+      # NOTE: Direct retry behavior testing is challenging with WebMock due to
+      # known incompatibilities. These tests verify the middleware is properly
+      # configured and test retry behavior using mocks. Actual retry behavior
+      # for status codes is tested in integration tests.
+
+      it "retries on transient network errors (ConnectionFailed)" do
+        # First attempt fails with connection error, second succeeds
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_raise(Faraday::ConnectionFailed.new("Connection failed"))
+          .then
+          .to_return(status: 200, body: "", headers: {})
+
+        expect { api_client.send_batch(events) }.not_to raise_error
+
+        # Verify retry happened (should be 2 requests)
+        expect(
+          a_request(:post, "#{base_url}/api/public/ingestion")
+        ).to have_been_made.times(2)
+      end
+
+      it "retries on timeout errors" do
+        # First attempt times out, second succeeds
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_timeout
+          .then
+          .to_return(status: 200, body: "", headers: {})
+
+        expect { api_client.send_batch(events) }.not_to raise_error
+
+        # Verify retry happened
+        expect(
+          a_request(:post, "#{base_url}/api/public/ingestion")
+        ).to have_been_made.times(2)
+      end
+
+      it "configures retry for POST requests to batch endpoint" do
+        options = api_client.send(:retry_options)
+        expect(options[:methods]).to include(:post)
+      end
+
+      it "configures retry for transient error status codes (429, 503, 504)" do
+        options = api_client.send(:retry_options)
+        expect(options[:retry_statuses]).to include(429, 503, 504)
+      end
+
+      it "handles Faraday::RetriableResponse after retries exhausted for 429" do
+        # Simulate retry middleware exhausting retries for 429
+        mock_response = instance_double(
+          Faraday::Response,
+          status: 429,
+          body: { "error" => "Rate limit exceeded" }
+        )
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+
+        allow(api_client.connection).to receive(:post).and_raise(retriable_error)
+
+        expect(api_client.logger).to receive(:error).with(/Retries exhausted - 429/)
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, /Batch send failed \(429\)/)
+      end
+
+      it "handles Faraday::RetriableResponse after retries exhausted for 503" do
+        # Simulate retry middleware exhausting retries for 503
+        mock_response = instance_double(
+          Faraday::Response,
+          status: 503,
+          body: { "error" => "Service unavailable" }
+        )
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+
+        allow(api_client.connection).to receive(:post).and_raise(retriable_error)
+
+        expect(api_client.logger).to receive(:error).with(/Retries exhausted - 503/)
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, /Batch send failed \(503\)/)
+      end
+
+      it "handles Faraday::RetriableResponse after retries exhausted for 504" do
+        # Simulate retry middleware exhausting retries for 504
+        mock_response = instance_double(
+          Faraday::Response,
+          status: 504,
+          body: { "error" => "Gateway timeout" }
+        )
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+
+        allow(api_client.connection).to receive(:post).and_raise(retriable_error)
+
+        expect(api_client.logger).to receive(:error).with(/Retries exhausted - 504/)
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, /Batch send failed \(504\)/)
+      end
+
+      it "does not retry on non-retriable errors (401)" do
+        # 401 should not be retried
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 401,
+            body: { error: "Unauthorized" }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::UnauthorizedError)
+
+        # Should only attempt once
+        expect(
+          a_request(:post, "#{base_url}/api/public/ingestion")
+        ).to have_been_made.once
+      end
+
+      it "does not retry on non-retriable errors (400)" do
+        # 400 should not be retried
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 400,
+            body: { error: "Bad Request" }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, /Batch send failed \(400\)/)
+
+        # Should only attempt once
+        expect(
+          a_request(:post, "#{base_url}/api/public/ingestion")
         ).to have_been_made.once
       end
     end

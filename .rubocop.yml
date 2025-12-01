@@ -9,6 +9,7 @@ AllCops:
     - 'vendor/**/*'
     - 'tmp/**/*'
     - 'bin/**/*'
+    - 'scripts/**/*'
 
 # Style preferences
 Style/StringLiterals:

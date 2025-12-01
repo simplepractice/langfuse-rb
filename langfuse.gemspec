@@ -3,28 +3,27 @@
 require_relative "lib/langfuse/version"
 
 Gem::Specification.new do |spec|
-  spec.name = "langfuse"
+  spec.name = "langfuse-rb"
   spec.version = Langfuse::VERSION
-  spec.authors = ["Langfuse"]
-  spec.email = ["developers@langfuse.com"]
+  spec.authors = ["SimplePractice"]
+  spec.email = ["open-source-langfuse-rb@simplepractice.com"]
 
   spec.summary = "Ruby SDK for Langfuse - LLM observability and prompt management"
   spec.description = "Official Ruby SDK for Langfuse, providing LLM tracing, observability, " \
                      "and prompt management capabilities"
-  spec.homepage = "https://github.com/langfuse/langfuse-ruby"
+  spec.homepage = "https://github.com/simplepractice/langfuse-rb"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2.0"
 
   spec.metadata["homepage_uri"] = spec.homepage
-  spec.metadata["source_code_uri"] = "https://github.com/langfuse/langfuse-ruby"
-  spec.metadata["changelog_uri"] = "https://github.com/langfuse/langfuse-ruby/blob/main/CHANGELOG.md"
+  spec.metadata["source_code_uri"] = "https://github.com/simplepractice/langfuse-rb"
+  spec.metadata["changelog_uri"] = "https://github.com/simplepractice/langfuse-rb/blob/main/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
   # Specify which files should be added to the gem when it is released.
   spec.files = Dir.glob(%w[
                           lib/**/*.rb
-                          README.md
-                          LICENSE
+                          README.md LICENSE
                           CHANGELOG.md
                         ])
   spec.require_paths = ["lib"]

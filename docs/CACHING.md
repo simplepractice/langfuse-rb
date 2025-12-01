@@ -2,6 +2,8 @@
 
 Complete guide to caching strategies in the Langfuse Ruby SDK.
 
+For configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -9,7 +11,6 @@ Complete guide to caching strategies in the Langfuse Ruby SDK.
 - [Rails.cache Backend](#railscache-backend-distributed)
 - [Stampede Protection](#stampede-protection)
 - [Cache Warming](#cache-warming)
-- [Configuration](#configuration)
 - [Performance Considerations](#performance-considerations)
 - [Best Practices](#best-practices)
 
@@ -288,32 +289,11 @@ RUN bundle exec rake langfuse:warm_cache_all
 
 ## Configuration
 
-### All Configuration Options
-
-```ruby
-Langfuse.configure do |config|
-  # Backend Selection
-  config.cache_backend = :memory      # :memory (default) or :rails
-
-  # TTL (applies to both backends)
-  config.cache_ttl = 60               # Seconds (default: 60, 0 = disabled)
-
-  # In-memory backend only
-  config.cache_max_size = 1000        # Max prompts (default: 1000)
-
-  # Rails.cache backend only
-  config.cache_lock_timeout = 10      # Lock timeout in seconds (default: 10)
-end
-```
-
-### Defaults
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `cache_backend` | `:memory` | Cache backend (`:memory` or `:rails`) |
-| `cache_ttl` | `60` | Time-to-live in seconds |
-| `cache_max_size` | `1000` | Max prompts in memory (in-memory only) |
-| `cache_lock_timeout` | `10` | Lock timeout in seconds (Rails.cache only) |
+See [CONFIGURATION.md](CONFIGURATION.md) for all cache-related configuration options:
+- `cache_backend` - `:memory` or `:rails`
+- `cache_ttl` - Time-to-live in seconds
+- `cache_max_size` - Max prompts (in-memory only)
+- `cache_lock_timeout` - Lock timeout (Rails.cache only)
 
 ## Performance Considerations
 

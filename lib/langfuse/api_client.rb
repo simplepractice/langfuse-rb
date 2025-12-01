@@ -20,6 +20,7 @@ module Langfuse
   #     logger: Logger.new($stdout)
   #   )
   #
+  # rubocop:disable Metrics/ClassLength
   class ApiClient
     attr_reader :public_key, :secret_key, :base_url, :timeout, :logger, :cache
 
@@ -127,6 +128,45 @@ module Langfuse
       end
     end
 
+    # Send a batch of events to the Langfuse ingestion API
+    #
+    # Sends events (scores, traces, observations) to the ingestion endpoint.
+    # Retries transient errors (429, 503, 504, network errors) with exponential backoff.
+    # Batch operations are idempotent (events have unique IDs), so retries are safe.
+    #
+    # @param events [Array<Hash>] Array of event hashes to send
+    # @return [void]
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors after retries exhausted
+    #
+    # @example
+    #   events = [
+    #     {
+    #       id: SecureRandom.uuid,
+    #       type: "score-create",
+    #       timestamp: Time.now.iso8601,
+    #       body: { name: "quality", value: 0.85, trace_id: "abc123..." }
+    #     }
+    #   ]
+    #   api_client.send_batch(events)
+    def send_batch(events)
+      raise ArgumentError, "events must be an array" unless events.is_a?(Array)
+      raise ArgumentError, "events array cannot be empty" if events.empty?
+
+      path = "/api/public/ingestion"
+      payload = { batch: events }
+
+      response = connection.post(path, payload)
+      handle_batch_response(response)
+    rescue Faraday::RetriableResponse => e
+      # Retry middleware exhausted all retries - handle the final response
+      logger.error("Langfuse batch send failed: Retries exhausted - #{e.response.status}")
+      handle_batch_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Langfuse batch send failed: #{e.message}")
+      raise ApiError, "Batch send failed: #{e.message}"
+    end
+
     private
 
     # Fetch a prompt from the API (without caching)
@@ -175,7 +215,7 @@ module Langfuse
     # Retries transient errors with exponential backoff:
     # - Max 2 retries (3 total attempts)
     # - Exponential backoff (0.05s * 2^retry_count)
-    # - Only retries GET requests (safe to retry)
+    # - Retries GET requests and POST requests to batch endpoint (idempotent operations)
     # - Retries on: 429 (rate limit), 503 (service unavailable), 504 (gateway timeout)
     # - Does NOT retry on: 4xx errors (except 429), 5xx errors (except 503, 504)
     #
@@ -185,7 +225,7 @@ module Langfuse
         max: 2,
         interval: 0.05,
         backoff_factor: 2,
-        methods: [:get],
+        methods: %i[get post],
         retry_statuses: [429, 503, 504],
         exceptions: [Faraday::TimeoutError, Faraday::ConnectionFailed]
       }
@@ -214,7 +254,7 @@ module Langfuse
     #
     # @return [String]
     def user_agent
-      "langfuse-ruby/#{Langfuse::VERSION}"
+      "langfuse-rb/#{Langfuse::VERSION}"
     end
 
     # Build query parameters for prompt request
@@ -250,14 +290,41 @@ module Langfuse
       end
     end
 
+    # Handle HTTP response for batch requests
+    #
+    # @param response [Faraday::Response] The HTTP response
+    # @return [void]
+    # @raise [UnauthorizedError] if status is 401
+    # @raise [ApiError] for other error statuses
+    def handle_batch_response(response)
+      case response.status
+      when 200, 201, 204, 207
+        nil
+      when 401
+        raise UnauthorizedError, "Authentication failed. Check your API keys."
+      else
+        error_message = extract_error_message(response)
+        raise ApiError, "Batch send failed (#{response.status}): #{error_message}"
+      end
+    end
+
     # Extract error message from response body
     #
     # @param response [Faraday::Response] The HTTP response
     # @return [String] The error message
     def extract_error_message(response)
-      return "Unknown error" unless response.body.is_a?(Hash)
+      body_hash = case response.body
+                  in Hash => h then h
+                  in String => s then begin
+                    JSON.parse(s)
+                  rescue StandardError
+                    {}
+                  end
+                  else {}
+                  end
 
-      response.body["message"] || response.body["error"] || "Unknown error"
+      %w[message error].filter_map { |key| body_hash[key] }.first || "Unknown error"
     end
   end
 end
+# rubocop:enable Metrics/ClassLength

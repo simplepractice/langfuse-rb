@@ -55,6 +55,11 @@ module Langfuse
         @tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
         @tracer_provider.add_span_processor(processor)
 
+        # Add span processor for propagated attributes
+        # This must be added AFTER the BatchSpanProcessor to ensure attributes are set before export
+        span_processor = SpanProcessor.new
+        @tracer_provider.add_span_processor(span_processor)
+
         # Set as global tracer provider
         OpenTelemetry.tracer_provider = @tracer_provider
 

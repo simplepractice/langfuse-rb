@@ -39,6 +39,9 @@ module Langfuse
         logger: config.logger,
         cache: cache
       )
+
+      # Initialize score client for batching score events
+      @score_client = ScoreClient.new(api_client: @api_client, config: config)
     end
 
     # Fetch a prompt and return the appropriate client
@@ -136,7 +139,127 @@ module Langfuse
       prompt.compile(**variables)
     end
 
+    # Generate URL for viewing a trace in Langfuse UI
+    #
+    # @param trace_id [String] The trace ID (hex-encoded, 32 characters)
+    # @return [String] URL to view the trace
+    #
+    # @example
+    #   url = client.trace_url("abc123...")
+    #   puts "View trace at: #{url}"
+    def trace_url(trace_id)
+      "#{config.base_url}/traces/#{trace_id}"
+    end
+
+    # Create a score event and queue it for batching
+    #
+    # @param name [String] Score name (required)
+    # @param value [Numeric, Integer, String] Score value (type depends on data_type)
+    # @param trace_id [String, nil] Trace ID to associate with the score
+    # @param observation_id [String, nil] Observation ID to associate with the score
+    # @param comment [String, nil] Optional comment
+    # @param metadata [Hash, nil] Optional metadata hash
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @return [void]
+    # @raise [ArgumentError] if validation fails
+    #
+    # @example Numeric score
+    #   client.create_score(name: "quality", value: 0.85, trace_id: "abc123")
+    #
+    # @example Boolean score
+    #   client.create_score(name: "passed", value: true, trace_id: "abc123", data_type: :boolean)
+    #
+    # @example Categorical score
+    #   client.create_score(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
+    # rubocop:disable Metrics/ParameterLists
+    def create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil,
+                     data_type: :numeric)
+      @score_client.create(
+        name: name,
+        value: value,
+        trace_id: trace_id,
+        observation_id: observation_id,
+        comment: comment,
+        metadata: metadata,
+        data_type: data_type
+      )
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Create a score for the currently active observation (from OTel span)
+    #
+    # Extracts observation_id and trace_id from the active OpenTelemetry span.
+    #
+    # @param name [String] Score name (required)
+    # @param value [Numeric, Integer, String] Score value
+    # @param comment [String, nil] Optional comment
+    # @param metadata [Hash, nil] Optional metadata hash
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @return [void]
+    # @raise [ArgumentError] if no active span or validation fails
+    #
+    # @example
+    #   Langfuse.observe("operation") do |obs|
+    #     client.score_active_observation(name: "accuracy", value: 0.92)
+    #   end
+    def score_active_observation(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+      @score_client.score_active_observation(
+        name: name,
+        value: value,
+        comment: comment,
+        metadata: metadata,
+        data_type: data_type
+      )
+    end
+
+    # Create a score for the currently active trace (from OTel span)
+    #
+    # Extracts trace_id from the active OpenTelemetry span.
+    #
+    # @param name [String] Score name (required)
+    # @param value [Numeric, Integer, String] Score value
+    # @param comment [String, nil] Optional comment
+    # @param metadata [Hash, nil] Optional metadata hash
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @return [void]
+    # @raise [ArgumentError] if no active span or validation fails
+    #
+    # @example
+    #   Langfuse.observe("operation") do |obs|
+    #     client.score_active_trace(name: "overall_quality", value: 5)
+    #   end
+    def score_active_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+      @score_client.score_active_trace(
+        name: name,
+        value: value,
+        comment: comment,
+        metadata: metadata,
+        data_type: data_type
+      )
+    end
+
+    # Force flush all queued score events
+    #
+    # Sends all queued score events to the API immediately.
+    #
+    # @return [void]
+    #
+    # @example
+    #   client.flush_scores
+    def flush_scores
+      @score_client.flush
+    end
+
+    # Shutdown the client and flush any pending scores
+    #
+    # @return [void]
+    def shutdown
+      @score_client.shutdown
+    end
+
     private
+
+    attr_reader :score_client
 
     # Check if caching is enabled in configuration
     #

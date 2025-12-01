@@ -2,9 +2,10 @@
 
 Complete guide for integrating the Langfuse Ruby SDK into your Rails application.
 
+For basic setup and configuration options, see [GETTING_STARTED.md](GETTING_STARTED.md) and [CONFIGURATION.md](CONFIGURATION.md).
+
 ## Table of Contents
 
-- [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage Patterns](#usage-patterns)
 - [Background Jobs](#background-jobs)
@@ -12,85 +13,20 @@ Complete guide for integrating the Langfuse Ruby SDK into your Rails application
 - [Deployment](#deployment)
 - [Best Practices](#best-practices)
 
-## Installation
-
-Add to your `Gemfile`:
-
-```ruby
-gem 'langfuse'
-```
-
-Then run:
-
-```bash
-bundle install
-```
-
 ## Configuration
 
-### Create an Initializer
+See [GETTING_STARTED.md](GETTING_STARTED.md#rails) for Rails-specific setup and [CONFIGURATION.md](CONFIGURATION.md) for all options.
 
-Create `config/initializers/langfuse.rb`:
+**Quick reference:**
 
 ```ruby
 # config/initializers/langfuse.rb
 Langfuse.configure do |config|
-  # Required: Authentication
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-
-  # Optional: API Settings
-  config.base_url = ENV.fetch('LANGFUSE_BASE_URL', 'https://cloud.langfuse.com')
-  config.timeout = 5  # seconds
-
-  # Optional: Caching (recommended for production)
-  config.cache_ttl = Rails.env.production? ? 300 : 60  # 5 min in prod, 1 min in dev
-  config.cache_max_size = 1000
-
-  # Optional: Logging
-  config.logger = Rails.logger
-
-  # Optional: Enable tracing
-  config.tracing_enabled = ENV.fetch('LANGFUSE_TRACING_ENABLED', 'false') == 'true'
-end
-```
-
-### Environment Variables
-
-Add to your `.env` (development) or environment configuration:
-
-```bash
-# .env
-LANGFUSE_PUBLIC_KEY=pk_...
-LANGFUSE_SECRET_KEY=sk_...
-LANGFUSE_BASE_URL=https://cloud.langfuse.com
-LANGFUSE_TRACING_ENABLED=true
-```
-
-### Credentials
-
-For production, use Rails credentials:
-
-```bash
-# Edit credentials
-rails credentials:edit
-```
-
-Add:
-
-```yaml
-langfuse:
-  public_key: pk_...
-  secret_key: sk_...
-```
-
-Then in your initializer:
-
-```ruby
-Langfuse.configure do |config|
   config.public_key = Rails.application.credentials.dig(:langfuse, :public_key)
   config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
-  # ... other config
+  config.cache_backend = :rails  # Use Rails.cache (Redis)
+  config.cache_ttl = Rails.env.production? ? 300 : 60
+  # Logger auto-detected as Rails.logger
 end
 ```
 
@@ -127,35 +63,35 @@ class AiAssistantService
   end
 
   def generate_response(question)
-    Langfuse.trace(
-      name: "ai-assistant",
+    Langfuse.propagate_attributes(
       user_id: @user.id.to_s,
-      input: { question: question }
-    ) do |trace|
-      # Get prompt from Langfuse
-      prompt = @client.get_prompt("assistant-chat", label: Rails.env)
+      metadata: { question: question }
+    ) do
+      Langfuse.observe("ai-assistant", input: { question: question }) do |trace|
+        # Get prompt from Langfuse
+        prompt = @client.get_prompt("assistant-chat", label: Rails.env)
 
-      # Compile with user context
-      messages = prompt.compile(
-        user_name: @user.name,
-        user_context: @user.context_summary
-      )
+        # Compile with user context
+        messages = prompt.compile(
+          user_name: @user.name,
+          user_context: @user.context_summary
+        )
 
-      # Call LLM with tracing
-      response = trace.generation(
-        name: "gpt4-response",
-        model: "gpt-4",
-        prompt: prompt,
-        model_parameters: { temperature: 0.7 }
-      ) do |gen|
-        result = call_openai(messages)
-        gen.output = result[:content]
-        gen.usage = result[:usage]
-        result[:content]
+        # Call LLM with tracing
+        response = trace.start_observation("gpt4-response", as_type: :generation) do |gen|
+          gen.model = "gpt-4"
+          gen.model_parameters = { temperature: 0.7 }
+          gen.input = messages
+
+          result = call_openai(messages)
+          gen.output = result[:content]
+          gen.usage = result[:usage]
+          result[:content]
+        end
+
+        trace.update(output: { response: response })
+        response
       end
-
-      trace.output = { response: response }
-      response
     end
   end
 
@@ -211,24 +147,26 @@ end
 class ProcessDocumentJob < ApplicationJob
   queue_as :default
 
-  def perform(document_id, trace_context = nil)
+  def perform(document_id, trace_id = nil)
     document = Document.find(document_id)
 
-    # Continue trace from web request if context provided
-    Langfuse.trace(
-      name: "process-document-job",
-      context: trace_context,
-      metadata: { document_id: document_id, queue: :default }
-    ) do |trace|
-      trace.span(name: "extract-text") do |span|
-        text = extract_text(document)
-        span.output = { text_length: text.length }
-      end
+    # Create new observation with metadata linking to original trace
+    Langfuse.propagate_attributes(
+      metadata: { document_id: document_id, queue: :default, original_trace_id: trace_id }
+    ) do
+      Langfuse.observe("process-document-job", input: { document_id: document_id }) do |trace|
+        text = trace.start_observation("extract-text") do |span|
+          text = extract_text(document)
+          span.update(output: { text_length: text.length })
+          text
+        end
 
-      trace.generation(name: "summarize", model: "gpt-4") do |gen|
-        summary = generate_summary(text)
-        gen.output = summary
-        document.update!(summary: summary)
+        trace.start_observation("summarize", as_type: :generation) do |gen|
+          gen.model = "gpt-4"
+          summary = generate_summary(text)
+          gen.update(output: summary)
+          document.update!(summary: summary)
+        end
       end
     end
   end
@@ -240,14 +178,16 @@ end
 ```ruby
 class DocumentsController < ApplicationController
   def create
-    Langfuse.trace(name: "document-upload") do |trace|
+    Langfuse.observe("document-upload", input: document_params) do |trace|
       document = Document.create!(document_params)
 
-      # Extract trace context to pass to background job
-      context = trace.inject_context
-      ProcessDocumentJob.perform_later(document.id, context)
+      # Get trace ID to pass to background job
+      trace_id = trace.trace_id
+      ProcessDocumentJob.perform_later(document.id, trace_id)
 
-      trace.event(name: "job-enqueued", metadata: { document_id: document.id })
+      trace.start_observation("job-enqueued", as_type: :event) do |event|
+        event.update(input: { document_id: document.id })
+      end
 
       render json: document, status: :created
     end
@@ -257,17 +197,7 @@ end
 
 ### ActiveJob Configuration
 
-For async tracing with ActiveJob:
-
-```ruby
-# config/initializers/langfuse.rb
-Langfuse.configure do |config|
-  # ... other config
-
-  config.tracing_async = true  # Enable async processing
-  config.job_queue = :langfuse  # Custom queue name (optional)
-end
-```
+OpenTelemetry automatically handles async tracing. No additional configuration needed for ActiveJob integration.
 
 ## Testing
 
@@ -407,9 +337,8 @@ end
 Add environment variables:
 
 ```bash
-heroku config:set LANGFUSE_PUBLIC_KEY=pk_...
-heroku config:set LANGFUSE_SECRET_KEY=sk_...
-heroku config:set LANGFUSE_TRACING_ENABLED=true
+heroku config:set LANGFUSE_PUBLIC_KEY=pk-lf-...
+heroku config:set LANGFUSE_SECRET_KEY=sk-lf-...
 ```
 
 ### Docker
@@ -423,7 +352,6 @@ services:
     environment:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-      - LANGFUSE_TRACING_ENABLED=true
 ```
 
 ### Kubernetes
@@ -455,8 +383,6 @@ env:
       secretKeyRef:
         name: langfuse-secrets
         key: secret-key
-  - name: LANGFUSE_TRACING_ENABLED
-    value: "true"
 ```
 
 ### Health Checks
@@ -589,13 +515,16 @@ end
 ### 7. Use Tracing for LLM Observability
 
 ```ruby
-# Always wrap LLM calls in traces for observability
+# Always wrap LLM calls in observations for observability
 def generate_content(prompt_text)
-  Langfuse.trace(name: "generate-content", user_id: current_user.id) do |trace|
-    trace.generation(name: "openai", model: "gpt-4") do |gen|
-      result = call_openai(prompt_text)
-      gen.output = result
-      result
+  Langfuse.propagate_attributes(user_id: current_user.id.to_s) do
+    Langfuse.observe("generate-content", input: { prompt: prompt_text }) do |span|
+      span.start_observation("openai", as_type: :generation) do |gen|
+        gen.model = "gpt-4"
+        result = call_openai(prompt_text)
+        gen.update(output: result)
+        result
+      end
     end
   end
 end

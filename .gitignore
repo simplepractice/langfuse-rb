@@ -28,3 +28,12 @@ Thumbs.db
 
 # Internal development progress tracking
 PROGRESS.md
+
+langfuse-js/
+langfuse-python/
+
+# Environment variables
+*.env
+
+# Use for testing against UI
+scripts/
