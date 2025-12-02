@@ -154,14 +154,9 @@ module Langfuse
         raise ConfigurationError, "cache_stale_ttl must be non-negative"
       end
 
-      if cache_refresh_threads.nil? || cache_refresh_threads <= 0
-        raise ConfigurationError, "cache_refresh_threads must be positive"
-      end
+      return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
 
-      return unless cache_stale_while_revalidate && cache_backend != :rails
-
-      raise ConfigurationError,
-            "cache_stale_while_revalidate requires cache_backend to be :rails"
+      raise ConfigurationError, "cache_refresh_threads must be positive"
     end
   end
 end

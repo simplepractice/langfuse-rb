@@ -274,15 +274,25 @@ module Langfuse
     def create_cache
       case config.cache_backend
       when :memory
-        PromptCache.new(
-          ttl: config.cache_ttl,
-          max_size: config.cache_max_size
-        )
+        create_memory_cache
       when :rails
         create_rails_cache_adapter
       else
         raise ConfigurationError, "Unknown cache backend: #{config.cache_backend}"
       end
+    end
+
+    # Create in-memory cache with SWR support if enabled
+    #
+    # @return [PromptCache]
+    def create_memory_cache
+      PromptCache.new(
+        ttl: config.cache_ttl,
+        max_size: config.cache_max_size,
+        stale_ttl: config.cache_stale_while_revalidate ? config.cache_stale_ttl : nil,
+        refresh_threads: config.cache_refresh_threads,
+        logger: config.logger
+      )
     end
 
     def create_rails_cache_adapter

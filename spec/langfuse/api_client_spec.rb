@@ -320,7 +320,7 @@ RSpec.describe Langfuse::ApiClient do
 
     # rubocop:disable RSpec/MultipleMemoizedHelpers
     context "with caching enabled" do
-      let(:cache) { Langfuse::PromptCache.new(ttl: 60) }
+      let(:cache) { instance_double(Langfuse::PromptCache) }
       let(:cached_client) do
         described_class.new(
           public_key: public_key,
@@ -340,23 +340,33 @@ RSpec.describe Langfuse::ApiClient do
       end
 
       it "stores response in cache" do
-        cached_client.get_prompt(prompt_name)
         cache_key = Langfuse::PromptCache.build_key(prompt_name)
-        expect(cache.get(cache_key)).to eq(prompt_response)
+
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key, prompt_response)
+
+        cached_client.get_prompt(prompt_name)
       end
 
       it "returns cached response on second call" do
-        # First call - hits API
+        cache_key = Langfuse::PromptCache.build_key(prompt_name)
+
+        # First call - cache miss
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key, prompt_response)
         first_result = cached_client.get_prompt(prompt_name)
 
-        # Second call - should use cache
+        # Second call - cache hit
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(prompt_response)
         second_result = cached_client.get_prompt(prompt_name)
 
         expect(second_result).to eq(first_result)
-        # Verify API was only called once
-        expect(
-          a_request(:get, "#{base_url}/api/public/v2/prompts/#{prompt_name}")
-        ).to have_been_made.once
       end
 
       it "builds correct cache key with version" do
@@ -368,9 +378,15 @@ RSpec.describe Langfuse::ApiClient do
             headers: { "Content-Type" => "application/json" }
           )
 
-        cached_client.get_prompt(prompt_name, version: 2)
         cache_key = Langfuse::PromptCache.build_key(prompt_name, version: 2)
-        expect(cache.get(cache_key)).not_to be_nil
+        versioned_response = prompt_response.merge("version" => 2)
+
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key, versioned_response)
+
+        cached_client.get_prompt(prompt_name, version: 2)
       end
 
       it "builds correct cache key with label" do
@@ -382,9 +398,14 @@ RSpec.describe Langfuse::ApiClient do
             headers: { "Content-Type" => "application/json" }
           )
 
-        cached_client.get_prompt(prompt_name, label: "production")
         cache_key = Langfuse::PromptCache.build_key(prompt_name, label: "production")
-        expect(cache.get(cache_key)).not_to be_nil
+
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key, prompt_response)
+
+        cached_client.get_prompt(prompt_name, label: "production")
       end
 
       it "caches different versions separately" do
@@ -404,18 +425,26 @@ RSpec.describe Langfuse::ApiClient do
             headers: { "Content-Type" => "application/json" }
           )
 
+        cache_key_v1 = Langfuse::PromptCache.build_key(prompt_name, version: 1)
+        cache_key_v2 = Langfuse::PromptCache.build_key(prompt_name, version: 2)
+        v1_response = prompt_response.merge("version" => 1)
+        v2_response = prompt_response.merge("version" => 2)
+
+        # First call for version 1
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key_v1).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key_v1, v1_response)
+
         cached_client.get_prompt(prompt_name, version: 1)
+
+        # First call for version 2
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key_v2).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key_v2, v2_response)
+
         cached_client.get_prompt(prompt_name, version: 2)
-
-        expect(
-          a_request(:get, "#{base_url}/api/public/v2/prompts/#{prompt_name}")
-            .with(query: { version: "1" })
-        ).to have_been_made.once
-
-        expect(
-          a_request(:get, "#{base_url}/api/public/v2/prompts/#{prompt_name}")
-            .with(query: { version: "2" })
-        ).to have_been_made.once
       end
     end
 
@@ -448,7 +477,9 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(swr_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
+            .and_return(true)
+          allow(swr_cache).to receive(:swr_enabled?)
             .and_return(true)
 
           expect(Langfuse::PromptCache).to receive(:build_key)
@@ -480,7 +511,9 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(swr_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
+            .and_return(true)
+          allow(swr_cache).to receive(:swr_enabled?)
             .and_return(true)
 
           expect(Langfuse::PromptCache).to receive(:build_key)
@@ -515,7 +548,9 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(swr_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
+            .and_return(true)
+          allow(swr_cache).to receive(:swr_enabled?)
             .and_return(true)
 
           expect(Langfuse::PromptCache).to receive(:build_key)
@@ -544,7 +579,7 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(stampede_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
             .and_return(false)
           allow(stampede_cache).to receive(:respond_to?)
             .with(:fetch_with_lock)
@@ -581,7 +616,7 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(simple_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
             .and_return(false)
           allow(simple_cache).to receive(:respond_to?)
             .with(:fetch_with_lock)
@@ -618,7 +653,7 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(simple_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
             .and_return(false)
           allow(simple_cache).to receive(:respond_to?)
             .with(:fetch_with_lock)
@@ -671,12 +706,11 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(swr_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
             .and_return(true)
 
           expect(swr_cache).to receive(:fetch_with_stale_while_revalidate)
-          allow(swr_cache).to receive(:fetch_with_stale_while_revalidate)
-            .and_return(prompt_data)
+          allow(swr_cache).to receive_messages(swr_enabled?: true, fetch_with_stale_while_revalidate: prompt_data)
 
           client.get_prompt("test")
         end
@@ -692,7 +726,7 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(rails_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
             .and_return(false)
           allow(rails_cache).to receive(:respond_to?)
             .with(:fetch_with_lock)
@@ -734,7 +768,9 @@ RSpec.describe Langfuse::ApiClient do
           )
 
           allow(swr_cache).to receive(:respond_to?)
-            .with(:fetch_with_stale_while_revalidate)
+            .with(:swr_enabled?)
+            .and_return(true)
+          allow(swr_cache).to receive(:swr_enabled?)
             .and_return(true)
 
           allow(swr_cache).to receive(:fetch_with_stale_while_revalidate)

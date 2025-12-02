@@ -276,19 +276,22 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.not_to raise_error
       end
 
-      it "allows SWR disabled with any cache backend" do
+      it "allows SWR with memory cache backend" do
         config.cache_backend = :memory
+        config.cache_stale_while_revalidate = true
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "allows SWR disabled with Rails cache backend" do
+        config.cache_backend = :rails
         config.cache_stale_while_revalidate = false
         expect { config.validate! }.not_to raise_error
       end
 
-      it "rejects SWR with memory cache backend" do
+      it "allows SWR disabled with memory cache backend" do
         config.cache_backend = :memory
-        config.cache_stale_while_revalidate = true
-        expect { config.validate! }.to raise_error(
-          Langfuse::ConfigurationError,
-          "cache_stale_while_revalidate requires cache_backend to be :rails"
-        )
+        config.cache_stale_while_revalidate = false
+        expect { config.validate! }.not_to raise_error
       end
     end
   end

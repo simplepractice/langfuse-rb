@@ -105,9 +105,9 @@ module Langfuse
     # @raise [ApiError] for other API errors
     def get_prompt(name, version: nil, label: nil)
       raise ArgumentError, "Cannot specify both version and label" if version && label
+      return fetch_prompt_from_api(name, version: version, label: label) if cache.nil?
 
       cache_key = PromptCache.build_key(name, version: version, label: label)
-
       fetch_with_appropriate_caching_strategy(cache_key, name, version, label)
     end
 
@@ -164,26 +164,19 @@ module Langfuse
         fetch_with_swr_cache(cache_key, name, version, label)
       elsif distributed_cache_available?
         fetch_with_distributed_cache(cache_key, name, version, label)
-      elsif simple_cache_available?
-        fetch_with_simple_cache(cache_key, name, version, label)
       else
-        fetch_prompt_from_api(name, version: version, label: label)
+        fetch_with_simple_cache(cache_key, name, version, label)
       end
     end
 
     # Check if SWR cache is available
     def swr_cache_available?
-      cache&.respond_to?(:fetch_with_stale_while_revalidate)
+      cache.respond_to?(:swr_enabled?) && cache.swr_enabled?
     end
 
     # Check if distributed cache is available
     def distributed_cache_available?
-      cache&.respond_to?(:fetch_with_lock)
-    end
-
-    # Check if simple cache is available
-    def simple_cache_available?
-      !cache.nil?
+      cache.respond_to?(:fetch_with_lock)
     end
 
     # Fetch with SWR cache

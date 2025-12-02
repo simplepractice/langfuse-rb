@@ -502,11 +502,12 @@ RSpec.describe Langfuse::RailsCacheAdapter do
       expect(adapter).to respond_to(:fetch_with_lock)
     end
 
-    it "provides distributed lock capability not available in PromptCache" do
+    it "both PromptCache and RailsCacheAdapter support fetch_with_lock for stampede protection" do
       memory_cache = Langfuse::PromptCache.new(ttl: 60)
       rails_cache = adapter
 
-      expect(memory_cache).not_to respond_to(:fetch_with_lock)
+      # Both caches now support fetch_with_lock via StaleWhileRevalidate module
+      expect(memory_cache).to respond_to(:fetch_with_lock)
       expect(rails_cache).to respond_to(:fetch_with_lock)
     end
   end

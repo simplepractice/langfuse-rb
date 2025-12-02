@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-require "concurrent"
-require "logger"
 require_relative "prompt_cache"
+require_relative "stale_while_revalidate"
 
 module Langfuse
-  # rubocop:disable Metrics/ClassLength
   # Rails.cache adapter for distributed caching with Redis
   #
   # Wraps Rails.cache to provide distributed caching for prompts across
@@ -17,6 +15,8 @@ module Langfuse
   #   adapter.get("greeting:1") # => prompt_data
   #
   class RailsCacheAdapter
+    include StaleWhileRevalidate
+
     attr_reader :ttl, :namespace, :lock_timeout, :stale_ttl, :thread_pool, :logger
 
     # Initialize a new Rails.cache adapter
@@ -28,15 +28,16 @@ module Langfuse
     # @param refresh_threads [Integer] Number of background refresh threads (default: 5)
     # @param logger [Logger, nil] Logger instance for error reporting (default: nil, creates new logger)
     # @raise [ConfigurationError] if Rails.cache is not available
-    def initialize(ttl: 60, namespace: "langfuse", lock_timeout: 10, stale_ttl: nil, refresh_threads: 5, logger: nil)
+    def initialize(ttl: 60, namespace: "langfuse", lock_timeout: 10, stale_ttl: nil, refresh_threads: 5,
+                   logger: default_logger)
       validate_rails_cache!
 
       @ttl = ttl
       @namespace = namespace
       @lock_timeout = lock_timeout
       @stale_ttl = stale_ttl
-      @logger = logger || default_logger
-      @thread_pool = initialize_thread_pool(refresh_threads) if stale_ttl
+      @logger = logger
+      initialize_swr(refresh_threads: refresh_threads) if stale_ttl
     end
 
     # Get a value from the cache
@@ -55,92 +56,6 @@ module Langfuse
     def set(key, value, expires_in: ttl)
       Rails.cache.write(namespaced_key(key), value, expires_in:)
       value
-    end
-
-    # Fetch a value from cache with Stale-While-Revalidate support
-    #
-    # This method implements SWR caching: serves stale data immediately while
-    # refreshing in the background. Falls back to fetch_with_lock if SWR is disabled.
-    #
-    # Three cache states:
-    # - FRESH: Return immediately, no action needed
-    # - STALE: Return stale data + trigger background refresh
-    # - EXPIRED: Must fetch fresh data synchronously
-    #
-    # @param key [String] Cache key
-    # @yield Block to execute to fetch fresh data
-    # @return [Object] Cached, stale, or freshly fetched value
-    #
-    # @example
-    #   adapter.fetch_with_stale_while_revalidate("greeting:v1") do
-    #     api_client.get_prompt("greeting")
-    #   end
-    def fetch_with_stale_while_revalidate(key, &)
-      # TODO: perhaps this should raise an error to make it more explicit that SWR is disabled?
-      return fetch_with_lock(key, &) unless stale_ttl
-
-      entry = get(key)
-
-      if entry&.fresh?
-        # FRESH - return immediately
-        logger.debug("CACHE HIT!")
-        entry.data
-      elsif entry&.stale?
-        # REVALIDATE - return stale + refresh in background
-        logger.debug("CACHE STALE!")
-        schedule_refresh(key, &)
-        entry.data # Instant response! ✨
-      else
-        # MISS - must fetch synchronously
-        logger.debug("CACHE MISS!")
-        fetch_and_cache(key, &)
-      end
-    end
-
-    # Fetch a value from cache with distributed lock for stampede protection
-    #
-    # This method prevents cache stampedes (thundering herd) by ensuring only one
-    # process fetches from the source when the cache is empty. Other processes wait
-    # for the first one to populate the cache.
-    #
-    # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries max, ~350ms total).
-    # If cache is still empty after waiting, falls back to fetching from source.
-    #
-    # @param key [String] Cache key
-    # @yield Block to execute if cache miss (should fetch fresh data)
-    # @return [Object] Cached or freshly fetched value
-    #
-    # @example
-    #   adapter.fetch_with_lock("greeting:v1") do
-    #     api_client.get_prompt("greeting")
-    #   end
-    def fetch_with_lock(key)
-      # 1. Check cache first (fast path - no lock needed)
-      cached = get(key)
-      return cached if cached
-
-      # 2. Cache miss - try to acquire distributed lock
-      lock_key = "#{namespaced_key(key)}:lock"
-
-      if acquire_lock(lock_key)
-        begin
-          # We got the lock - fetch from source and populate cache
-          value = yield
-          set(key, value)
-          value
-        ensure
-          # Always release lock, even if block raises
-          release_lock(lock_key)
-        end
-      else
-        # Someone else has the lock - wait for them to populate cache
-        cached = wait_for_cache(key)
-        return cached if cached
-
-        # Cache still empty after waiting - fall back to fetching ourselves
-        # (This handles cases where lock holder crashed or took too long)
-        yield
-      end
     end
 
     # Clear the entire Langfuse cache namespace
@@ -184,86 +99,62 @@ module Langfuse
       PromptCache.build_key(name, version: version, label: label)
     end
 
-    # Shutdown the thread pool gracefully
-    #
-    # @return [void]
-    def shutdown
-      return unless thread_pool
-
-      thread_pool.shutdown
-      thread_pool.wait_for_termination(5) # Wait up to 5 seconds
-    end
-
     private
 
-    # Initialize thread pool for background refresh operations
-    #
-    # @param refresh_threads [Integer] Maximum number of refresh threads
-    # @return [Concurrent::CachedThreadPool]
-    def initialize_thread_pool(refresh_threads)
-      Concurrent::CachedThreadPool.new(
-        max_threads: refresh_threads,
-        min_threads: 2,
-        max_queue: 50,
-        fallback_policy: :discard # Drop oldest if queue full
-      )
-    end
+    # Implementation of StaleWhileRevalidate abstract methods
 
-    # Schedule a background refresh for a cache key
-    #
-    # Prevents duplicate refreshes by using a refresh lock. If another process
-    # is already refreshing this key, this method returns immediately.
-    #
-    # Errors during refresh are caught and logged to prevent thread crashes.
+    # Get value from cache (SWR interface)
     #
     # @param key [String] Cache key
-    # @yield Block to execute to fetch fresh data
-    # @return [void]
-    def schedule_refresh(key)
-      # Prevent duplicate refreshes
-      refresh_lock_key = "#{namespaced_key(key)}:refreshing"
-      return unless acquire_refresh_lock(refresh_lock_key)
-
-      thread_pool.post do
-        value = yield
-        set_cache_entry(key, value)
-      rescue StandardError => e
-        logger.error("Langfuse cache refresh failed for key '#{key}': #{e.class} - #{e.message}")
-      ensure
-        release_lock(refresh_lock_key)
-      end
+    # @return [Object, nil] Cached value
+    def cache_get(key)
+      get(key)
     end
 
-    # Fetch data and cache it with SWR metadata
-    #
-    # @param key [String] Cache key
-    # @yield Block to execute to fetch fresh data
-    # @return [Object] Freshly fetched value
-    def fetch_and_cache(key)
-      value = yield
-      set_cache_entry(key, value)
-    end
-
-    # Set value in cache with SWR metadata
+    # Set value in cache (SWR interface)
     #
     # @param key [String] Cache key
     # @param value [Object] Value to cache
+    # @param expires_in [Integer] TTL in seconds
     # @return [Object] The cached value
-    def set_cache_entry(key, value)
-      now = Time.now
-      fresh_until = now + ttl
-      stale_until = fresh_until + stale_ttl
-      entry = PromptCache::CacheEntry.new(value, fresh_until, stale_until)
-
-      set(key, entry, expires_in: total_ttl)
-
-      value
+    def cache_set(key, value, expires_in:)
+      set(key, value, expires_in: expires_in)
     end
 
-    # Acquire a refresh lock to prevent duplicate background refreshes
+    # Build lock key with namespace
     #
-    # TODO: check if we can reuse the same lock acquisition logic for cache refreshes and
-    # fetches with lock.
+    # @param key [String] Cache key
+    # @return [String] Namespaced lock key
+    def build_lock_key(key)
+      "#{namespaced_key(key)}:lock"
+    end
+
+    # Build refresh lock key with namespace
+    #
+    # @param key [String] Cache key
+    # @return [String] Namespaced refresh lock key
+    def build_refresh_lock_key(key)
+      "#{namespaced_key(key)}:refreshing"
+    end
+
+    # Acquire a fetch lock using Rails.cache
+    #
+    # Uses the configured lock_timeout for fetch operations.
+    #
+    # @param lock_key [String] Full lock key (already namespaced)
+    # @return [Boolean] true if lock was acquired, false if already held
+    def acquire_fetch_lock(lock_key)
+      Rails.cache.write(
+        lock_key,
+        true,
+        unless_exist: true, # Atomic: only write if key doesn't exist
+        expires_in: lock_timeout # Use configured lock timeout
+      )
+    end
+
+    # Acquire a refresh lock using Rails.cache
+    #
+    # Uses REFRESH_LOCK_TIMEOUT for background refresh operations.
     #
     # @param lock_key [String] Full lock key (already namespaced)
     # @return [Boolean] true if lock was acquired, false if already held
@@ -272,9 +163,19 @@ module Langfuse
         lock_key,
         true,
         unless_exist: true, # Atomic: only write if key doesn't exist
-        expires_in: 60 # Short-lived lock for background refreshes
+        expires_in: REFRESH_LOCK_TIMEOUT # Short-lived lock for background refreshes
       )
     end
+
+    # Release a refresh lock
+    #
+    # @param lock_key [String] Full lock key (already namespaced)
+    # @return [void]
+    def release_refresh_lock(lock_key)
+      Rails.cache.delete(lock_key)
+    end
+
+    # Rails.cache-specific helper methods
 
     # Add namespace prefix to cache key
     #
@@ -282,49 +183,6 @@ module Langfuse
     # @return [String] Namespaced cache key
     def namespaced_key(key)
       "#{namespace}:#{key}"
-    end
-
-    # Acquire a distributed lock using Rails.cache
-    #
-    # Uses atomic "write if not exists" operation to ensure only one process
-    # can acquire the lock.
-    #
-    # @param lock_key [String] Full lock key (already namespaced)
-    # @return [Boolean] true if lock was acquired, false if already held by another process
-    def acquire_lock(lock_key)
-      Rails.cache.write(
-        lock_key,
-        true,
-        unless_exist: true, # Atomic: only write if key doesn't exist
-        expires_in: lock_timeout # Auto-expire to prevent deadlocks
-      )
-    end
-
-    # Release a distributed lock
-    #
-    # @param lock_key [String] Full lock key (already namespaced)
-    # @return [void]
-    def release_lock(lock_key)
-      Rails.cache.delete(lock_key)
-    end
-
-    # Wait for cache to be populated by lock holder
-    #
-    # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries, ~350ms total).
-    # This gives the lock holder time to fetch and populate the cache.
-    #
-    # @param key [String] Cache key (not namespaced)
-    # @return [Object, nil] Cached value if found, nil if still empty after waiting
-    def wait_for_cache(key)
-      intervals = [0.05, 0.1, 0.2] # 50ms, 100ms, 200ms (exponential backoff)
-
-      intervals.each do |interval|
-        sleep(interval)
-        cached = get(key)
-        return cached if cached
-      end
-
-      nil # Cache still empty after all retries
     end
 
     # Validate that Rails.cache is available
@@ -348,10 +206,5 @@ module Langfuse
         Logger.new($stdout, level: Logger::WARN)
       end
     end
-
-    def total_ttl
-      ttl + stale_ttl
-    end
   end
-  # rubocop:enable Metrics/ClassLength
 end
