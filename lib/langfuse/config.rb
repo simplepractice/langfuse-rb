@@ -46,10 +46,10 @@ module Langfuse
     # @return [Integer] Lock timeout in seconds for distributed cache stampede protection
     attr_accessor :cache_lock_timeout
 
-    # @return [Boolean] Enable stale-while-revalidate caching
+    # @return [Boolean] Enable stale-while-revalidate caching (when true, sets cache_stale_ttl to cache_ttl if not customized)
     attr_accessor :cache_stale_while_revalidate
 
-    # @return [Integer] Stale TTL in seconds (grace period for serving stale data)
+    # @return [Integer] Stale TTL in seconds (grace period for serving stale data, default: 0 when SWR disabled, cache_ttl when SWR enabled)
     attr_accessor :cache_stale_ttl
 
     # @return [Integer] Number of background threads for cache refresh
@@ -95,7 +95,7 @@ module Langfuse
       @cache_backend = DEFAULT_CACHE_BACKEND
       @cache_lock_timeout = DEFAULT_CACHE_LOCK_TIMEOUT
       @cache_stale_while_revalidate = DEFAULT_CACHE_STALE_WHILE_REVALIDATE
-      @cache_stale_ttl = @cache_ttl # Default to same as cache_ttl (SWR disabled, entries expire not go stale)
+      @cache_stale_ttl = 0 # Default to 0 (SWR disabled, entries expire immediately after TTL)
       @cache_refresh_threads = DEFAULT_CACHE_REFRESH_THREADS
       @tracing_async = DEFAULT_TRACING_ASYNC
       @batch_size = DEFAULT_BATCH_SIZE
@@ -104,6 +104,9 @@ module Langfuse
       @logger = default_logger
 
       yield(self) if block_given?
+
+      # Apply SWR defaults after yield to allow customization
+      apply_swr_defaults!
     end
 
     # Validate the configuration
@@ -150,11 +153,22 @@ module Langfuse
     end
 
     def validate_swr_config!
-      raise ConfigurationError, "cache_stale_ttl must be non-negative" if cache_stale_ttl.negative?
+      if cache_stale_ttl.nil? || cache_stale_ttl.negative?
+        raise ConfigurationError,
+              "cache_stale_ttl must be non-negative"
+      end
 
       return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
 
       raise ConfigurationError, "cache_refresh_threads must be positive"
+    end
+
+    def apply_swr_defaults!
+      # When SWR is enabled and stale_ttl hasn't been customized (still 0), default to cache_ttl
+      return unless cache_stale_while_revalidate
+      return if cache_stale_ttl != 0 # User has customized it
+
+      @cache_stale_ttl = cache_ttl
     end
   end
 end

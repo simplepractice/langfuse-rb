@@ -289,7 +289,7 @@ module Langfuse
       PromptCache.new(
         ttl: config.cache_ttl,
         max_size: config.cache_max_size,
-        stale_ttl: config.cache_stale_while_revalidate ? config.cache_stale_ttl : nil,
+        stale_ttl: config.cache_stale_ttl,
         refresh_threads: config.cache_refresh_threads,
         logger: config.logger
       )
@@ -299,7 +299,7 @@ module Langfuse
       RailsCacheAdapter.new(
         ttl: config.cache_ttl,
         lock_timeout: config.cache_lock_timeout,
-        stale_ttl: config.cache_stale_while_revalidate ? config.cache_stale_ttl : nil,
+        stale_ttl: config.cache_stale_ttl,
         refresh_threads: config.cache_refresh_threads,
         logger: config.logger
       )

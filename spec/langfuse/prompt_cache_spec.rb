@@ -84,9 +84,9 @@ RSpec.describe Langfuse::PromptCache do
         expect(cache.stale_ttl).to eq(Langfuse::StaleWhileRevalidate::THOUSAND_YEARS_IN_SECONDS)
       end
 
-      it "defaults nil to ttl value" do
-        cache = described_class.new(ttl: 60, stale_ttl: nil)
-        expect(cache.stale_ttl).to eq(60)
+      it "defaults to 0 when not specified (SWR disabled)" do
+        cache = described_class.new(ttl: 60)
+        expect(cache.stale_ttl).to eq(0)
       end
     end
   end

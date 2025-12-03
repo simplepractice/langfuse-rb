@@ -148,9 +148,9 @@ RSpec.describe Langfuse::Client do
         client = described_class.new(config_with_rails_cache)
         adapter = client.api_client.cache
 
-        # When SWR disabled, stale_ttl defaults to ttl (no stale period, immediate expiration)
-        expect(adapter.stale_ttl).to eq(120) # Same as cache_ttl
-        expect(adapter.thread_pool).to be_nil # Thread pool not initialized when stale_ttl == ttl
+        # When SWR disabled, stale_ttl defaults to 0 (no stale period, immediate expiration)
+        expect(adapter.stale_ttl).to eq(0)
+        expect(adapter.thread_pool).to be_nil # Thread pool not initialized when stale_ttl <= ttl
       end
     end
 
