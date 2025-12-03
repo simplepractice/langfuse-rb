@@ -53,8 +53,9 @@ Langfuse.configure do |config|
   config.public_key = Rails.application.credentials.dig(:langfuse, :public_key)
   config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
 
-  # Optional: Rails-specific settings
+  # Optional: Performance optimization
   config.cache_backend = :rails  # Use Rails.cache (requires Redis)
+  config.cache_stale_while_revalidate = true  # Serve stale data while refreshing (recommended for production)
   # Logger auto-detected as Rails.logger
 end
 ```

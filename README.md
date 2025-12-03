@@ -12,7 +12,7 @@
 
 - 🎯 **Prompt Management** - Centralized prompt versioning with Mustache templating
 - 📊 **LLM Tracing** - Zero-boilerplate observability built on OpenTelemetry
-- ⚡ **Performance** - In-memory or Redis-backed caching with stampede protection
+- ⚡ **Performance** - In-memory or Redis-backed caching with stampede protection, both supporting stale-while-revalidate cache strategy
 - 💬 **Chat & Text Prompts** - First-class support for both formats
 - 🔄 **Automatic Retries** - Built-in exponential backoff for resilient API calls
 - 🛡️ **Fallback Support** - Graceful degradation when API unavailable
@@ -41,6 +41,10 @@ Langfuse.configure do |config|
   config.secret_key = ENV['LANGFUSE_SECRET_KEY']
   # Optional: for self-hosted instances
   config.base_url = ENV.fetch('LANGFUSE_BASE_URL', 'https://cloud.langfuse.com')
+
+  # Optional: Enable stale-while-revalidate for best performance
+  config.cache_backend = :rails  # or :memory
+  config.cache_stale_while_revalidate = true
 end
 ```
 

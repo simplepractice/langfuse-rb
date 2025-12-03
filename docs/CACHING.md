@@ -9,6 +9,7 @@ For configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
 - [Overview](#overview)
 - [In-Memory Cache](#in-memory-cache-default)
 - [Rails.cache Backend](#railscache-backend-distributed)
+- [Stale-While-Revalidate (SWR)](#stale-while-revalidate-swr)
 - [Stampede Protection](#stampede-protection)
 - [Cache Warming](#cache-warming)
 - [Performance Considerations](#performance-considerations)
@@ -48,6 +49,7 @@ end
 ### When to Use
 
 ✅ **Perfect for:**
+
 - Single-process applications
 - Scripts and background jobs
 - Smaller deployments (< 10 processes)
@@ -55,6 +57,7 @@ end
 - When you want zero external dependencies
 
 ❌ **Not ideal for:**
+
 - Large-scale deployments (100+ processes)
 - Multiple servers sharing the same cache
 - When you need cache consistency across processes
@@ -106,12 +109,14 @@ end
 ### When to Use
 
 ✅ **Perfect for:**
+
 - Large Rails apps with many worker processes (Passenger, Puma, Unicorn)
 - Multiple servers sharing the same cache
 - Deploying with 100+ processes
 - Already using Redis for Rails.cache
 
 ❌ **Not ideal for:**
+
 - Single-process applications
 - Scripts without Rails
 - When you want to avoid Redis dependency
@@ -129,6 +134,198 @@ end
 # First process to request populates cache
 # Other 1,199 processes read from Redis
 prompt = Langfuse.client.get_prompt("greeting")
+```
+
+## Stale-While-Revalidate (SWR)
+
+Stale-While-Revalidate is an advanced caching pattern that serves slightly outdated (stale) data immediately while refreshing it in the background. This dramatically reduces latency spikes when cache expires.
+
+### The Problem
+
+Without SWR, the first request after cache expiration must wait for the API:
+
+```
+Cache expires at T=5min
+→ Request arrives at T=5min+1s
+→ Cache check: MISS (expired)
+→ Call Langfuse API: ~100ms ⏳ (user waits)
+→ Return fresh data
+Total latency: ~100ms
+```
+
+### The Solution
+
+With SWR enabled, serve stale data instantly while refreshing asynchronously:
+
+```
+Cache expires at T=5min (fresh_until)
+→ Request arrives at T=5min+1s
+→ Cache check: STALE (expired but still servable)
+→ Return stale data immediately: ~1ms ✨ (user gets instant response)
+→ Trigger background refresh (doesn't block user)
+→ Background: Fetch from API, update cache
+Total latency: ~1ms
+```
+
+### Configuration
+
+#### Basic SWR Setup
+
+```ruby
+Langfuse.configure do |config|
+  config.cache_backend = :memory  # Works with both :memory and :rails
+  config.cache_ttl = 300  # Fresh for 5 minutes
+  config.cache_stale_while_revalidate = true  # Enable SWR
+  # cache_stale_ttl automatically set to 300 (same as cache_ttl)
+end
+```
+
+#### Custom Stale TTL
+
+```ruby
+Langfuse.configure do |config|
+  config.cache_backend = :rails
+  config.cache_ttl = 300  # Fresh for 5 minutes
+  config.cache_stale_while_revalidate = true
+  config.cache_stale_ttl = 600  # Serve stale for up to 10 more minutes
+end
+```
+
+#### Never-Expiring Cache
+
+```ruby
+Langfuse.configure do |config|
+  config.cache_backend = :memory
+  config.cache_ttl = 300  # Still refreshes every 5 minutes
+  config.cache_stale_while_revalidate = true
+  config.cache_stale_ttl = Float::INFINITY  # Never expire (serve stale forever)
+end
+```
+
+### Cache States
+
+SWR introduces three cache states instead of two:
+
+1. **FRESH** (`Time.now < fresh_until`):
+   - Return data immediately
+   - No background refresh
+   - Latency: ~1ms
+
+2. **STALE** (`fresh_until <= Time.now < stale_until`):
+   - Return stale data immediately ✨
+   - Trigger background refresh (async)
+   - Latency: ~1ms
+
+3. **EXPIRED** (`Time.now >= stale_until`):
+   - Must fetch fresh data synchronously
+   - Waits for API call
+   - Latency: ~100ms
+
+### Backend Compatibility
+
+#### ✅ Works with `:memory` Backend
+
+```ruby
+Langfuse.configure do |config|
+  config.cache_backend = :memory
+  config.cache_ttl = 60
+  config.cache_stale_while_revalidate = true
+  config.cache_refresh_threads = 5  # Background refresh threads
+end
+
+# First call: Fresh from API (~100ms)
+prompt1 = Langfuse.client.get_prompt("greeting")
+
+# Within 60s: Fresh from cache (~1ms)
+prompt2 = Langfuse.client.get_prompt("greeting")
+
+# After 60s: Stale from cache (~1ms) + background refresh
+prompt3 = Langfuse.client.get_prompt("greeting")
+
+# After refresh completes: Fresh from cache again
+prompt4 = Langfuse.client.get_prompt("greeting")
+```
+
+**Features:**
+
+- Thread-safe background refresh
+- In-memory thread pool (default 5 threads)
+- No external dependencies
+
+#### ✅ Works with `:rails` Backend
+
+```ruby
+Langfuse.configure do |config|
+  config.cache_backend = :rails
+  config.cache_ttl = 300
+  config.cache_stale_while_revalidate = true
+  config.cache_stale_ttl = 300
+  config.cache_refresh_threads = 10  # More threads for high-traffic apps
+end
+```
+
+**Features:**
+
+- Distributed stale data across all processes
+- Prevents duplicate refreshes with distributed locks
+
+### Thread Pool Sizing
+
+The `cache_refresh_threads` setting controls how many prompts can be refreshed in parallel:
+
+```ruby
+# Small apps (< 25 prompts)
+config.cache_refresh_threads = 2
+
+# Medium apps (25-100 prompts) - DEFAULT
+config.cache_refresh_threads = 5
+
+# Large apps (> 100 prompts)
+config.cache_refresh_threads = 10
+```
+
+**Calculation Formula:**
+
+```
+threads = (prompts × api_latency) / desired_refresh_time
+
+Example:
+- 50 prompts
+- 200ms API latency
+- Want refresh within 5 seconds
+
+threads = (50 × 0.2) / 5 = 2 minimum
+Add 25% buffer: 2 × 1.25 = 3 threads
+```
+
+### Latency Impact
+
+**Without SWR:**
+
+```
+- 99% of requests: 1ms (cached, fresh)
+- 1% of requests: 100ms (cache miss/expired)
+- P99 latency: 100ms
+```
+
+**With SWR:**
+
+```
+- 99.9% of requests: 1ms (fresh or stale)
+- 0.1% of requests: 100ms (truly expired)
+- P99 latency: 1ms ✨ (100x improvement!)
+```
+
+#### Log Background Refreshes
+
+```ruby
+# The SDK automatically logs refresh activity at DEBUG level
+config.logger.level = Logger::DEBUG
+
+# Output:
+# CACHE HIT! (fresh)
+# CACHE STALE! (triggering background refresh)
+# CACHE MISS! (expired, fetching synchronously)
 ```
 
 ## Stampede Protection
@@ -176,9 +373,11 @@ end
 **SimplePractice Example** (1,200 processes, 50 prompts):
 
 Without stampede protection:
+
 - Cache miss: 1,200 × 50 = 60,000 API calls 💥
 
 With stampede protection:
+
 - Cache miss: 1 × 50 = 50 API calls ✨
 
 **Latency Profile:**
@@ -290,6 +489,7 @@ RUN bundle exec rake langfuse:warm_cache_all
 ## Configuration
 
 See [CONFIGURATION.md](CONFIGURATION.md) for all cache-related configuration options:
+
 - `cache_backend` - `:memory` or `:rails`
 - `cache_ttl` - Time-to-live in seconds
 - `cache_max_size` - Max prompts (in-memory only)
@@ -300,10 +500,12 @@ See [CONFIGURATION.md](CONFIGURATION.md) for all cache-related configuration opt
 ### Latency Comparison
 
 **In-Memory Cache:**
+
 - Cache hit: ~1ms
 - Cache miss: ~100ms (API call)
 
 **Rails.cache (Redis):**
+
 - Cache hit: ~1-2ms (Redis read)
 - Cache miss (lock holder): ~100ms (API call)
 - Cache miss (waiting): ~50-350ms (wait + Redis read)
@@ -311,21 +513,25 @@ See [CONFIGURATION.md](CONFIGURATION.md) for all cache-related configuration opt
 ### Memory Usage
 
 **In-Memory Cache:**
+
 - ~10KB per prompt (varies by size)
 - 1,000 prompts = ~10MB
 - Multiplied by number of processes
 
 **Rails.cache:**
+
 - Single copy in Redis
 - No per-process memory overhead
 
 ### Cache Eviction
 
 **In-Memory Cache:**
+
 - TTL expiration + LRU eviction
 - Evicts least recently used when max_size reached
 
 **Rails.cache:**
+
 - TTL expiration only
 - No max_size limit (Redis manages memory)
 
@@ -341,7 +547,19 @@ config.cache_backend = :memory
 config.cache_backend = :rails
 ```
 
-### 2. Set Appropriate TTL
+### 2. Enable SWR for Production
+
+```ruby
+# Development: disabled for predictable behavior
+config.cache_stale_while_revalidate = !Rails.env.development?
+
+# Production: enabled for best performance
+if Rails.env.production?
+  config.cache_stale_ttl = config.cache_ttl  # Auto-set, but can customize
+end
+```
+
+### 3. Set Appropriate TTL
 
 ```ruby
 # Development: short TTL for fast iteration
@@ -351,21 +569,21 @@ config.cache_ttl = Rails.env.development? ? 30 : 300
 config.cache_ttl = Rails.env.production? ? 600 : 60
 ```
 
-### 3. Warm Cache on Deployment
+### 4. Warm Cache on Deployment
 
 ```bash
 # In your deploy script
 bundle exec rake langfuse:warm_cache_all
 ```
 
-### 4. Monitor Cache Performance
+### 5. Monitor Cache Performance
 
 ```ruby
 # Log cache hits/misses
 Rails.logger.info "Fetching prompt: #{name} (cache: #{cache_hit? ? 'HIT' : 'MISS'})"
 ```
 
-### 5. Handle Cache Failures Gracefully
+### 6. Handle Cache Failures Gracefully
 
 ```ruby
 # Always provide fallbacks for critical prompts
@@ -376,7 +594,7 @@ prompt = Langfuse.client.get_prompt(
 )
 ```
 
-### 6. Clear Cache When Needed
+### 7. Clear Cache When Needed
 
 ```ruby
 # Rails console
@@ -386,7 +604,7 @@ Langfuse.client.instance_variable_get(:@api_client).cache&.clear
 rake langfuse:clear_cache
 ```
 
-### 7. Test Cache Behavior
+### 8. Test Cache Behavior
 
 ```ruby
 # RSpec example
@@ -409,6 +627,7 @@ end
 **Symptom**: Every request hits the API
 
 **Solutions**:
+
 1. Check `cache_ttl > 0`
 2. Verify cache backend is configured correctly
 3. For Rails.cache, ensure Redis is running
@@ -418,6 +637,7 @@ end
 **Symptom**: Application memory grows over time
 
 **Solutions**:
+
 1. Reduce `cache_max_size` (in-memory cache)
 2. Switch to Rails.cache backend
 3. Reduce `cache_ttl`
@@ -427,6 +647,7 @@ end
 **Symptom**: Changes in Langfuse UI not reflected
 
 **Solutions**:
+
 1. Wait for TTL to expire
 2. Clear cache manually: `rake langfuse:clear_cache`
 3. Reduce `cache_ttl` in development
@@ -436,6 +657,7 @@ end
 **Symptom**: Still seeing many API calls
 
 **Solutions**:
+
 1. Ensure `cache_backend = :rails` (stampede protection only works with Rails.cache)
 2. Verify Redis is accessible
 3. Check `cache_lock_timeout` is sufficient
@@ -443,6 +665,7 @@ end
 ## Additional Resources
 
 - [Main README](../README.md) - SDK overview
+- [Configuration Reference](CONFIGURATION.md) - All config options including SWR
 - [Rails Integration Guide](RAILS.md) - Rails-specific patterns
 - [Tracing Guide](TRACING.md) - LLM observability
 - [Architecture Guide](ARCHITECTURE.md) - Design decisions
