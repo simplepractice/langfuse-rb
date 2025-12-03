@@ -11,7 +11,7 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_max_size).to eq(1000)
       expect(config.cache_backend).to eq(:memory)
       expect(config.cache_stale_while_revalidate).to be false
-      expect(config.cache_stale_ttl).to eq(300)
+      expect(config.cache_stale_ttl).to eq(60) # Defaults to cache_ttl
       expect(config.cache_refresh_threads).to eq(5)
     end
 
@@ -158,8 +158,21 @@ RSpec.describe Langfuse::Config do
         )
       end
 
+      it "raises ConfigurationError when Float::INFINITY" do
+        config.cache_ttl = Float::INFINITY
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_ttl cannot be Float::INFINITY"
+        )
+      end
+
       it "allows zero (disabled cache)" do
         config.cache_ttl = 0
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "allows positive values" do
+        config.cache_ttl = 300
         expect { config.validate! }.not_to raise_error
       end
     end
@@ -211,14 +224,6 @@ RSpec.describe Langfuse::Config do
     end
 
     context "when cache_stale_ttl is invalid" do
-      it "raises ConfigurationError when nil" do
-        config.cache_stale_ttl = nil
-        expect { config.validate! }.to raise_error(
-          Langfuse::ConfigurationError,
-          "cache_stale_ttl must be non-negative"
-        )
-      end
-
       it "raises ConfigurationError when negative" do
         config.cache_stale_ttl = -1
         expect { config.validate! }.to raise_error(
@@ -389,7 +394,7 @@ RSpec.describe Langfuse::Config do
       expect { config.validate! }.not_to raise_error
 
       expect(config.cache_stale_while_revalidate).to be false
-      expect(config.cache_stale_ttl).to eq(300) # Default
+      expect(config.cache_stale_ttl).to eq(60) # Defaults to cache_ttl
       expect(config.cache_refresh_threads).to eq(5) # Default
     end
   end
@@ -397,7 +402,6 @@ RSpec.describe Langfuse::Config do
   describe "constants" do
     it "defines correct SWR default values" do
       expect(Langfuse::Config::DEFAULT_CACHE_STALE_WHILE_REVALIDATE).to be false
-      expect(Langfuse::Config::DEFAULT_CACHE_STALE_TTL).to eq(300)
       expect(Langfuse::Config::DEFAULT_CACHE_REFRESH_THREADS).to eq(5)
     end
   end

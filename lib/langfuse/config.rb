@@ -75,7 +75,6 @@ module Langfuse
     DEFAULT_CACHE_BACKEND = :memory
     DEFAULT_CACHE_LOCK_TIMEOUT = 10
     DEFAULT_CACHE_STALE_WHILE_REVALIDATE = false
-    DEFAULT_CACHE_STALE_TTL = 300
     DEFAULT_CACHE_REFRESH_THREADS = 5
     DEFAULT_TRACING_ASYNC = true
     DEFAULT_BATCH_SIZE = 50
@@ -96,7 +95,7 @@ module Langfuse
       @cache_backend = DEFAULT_CACHE_BACKEND
       @cache_lock_timeout = DEFAULT_CACHE_LOCK_TIMEOUT
       @cache_stale_while_revalidate = DEFAULT_CACHE_STALE_WHILE_REVALIDATE
-      @cache_stale_ttl = DEFAULT_CACHE_STALE_TTL
+      @cache_stale_ttl = @cache_ttl # Default to same as cache_ttl (SWR disabled, entries expire not go stale)
       @cache_refresh_threads = DEFAULT_CACHE_REFRESH_THREADS
       @tracing_async = DEFAULT_TRACING_ASYNC
       @batch_size = DEFAULT_BATCH_SIZE
@@ -117,6 +116,7 @@ module Langfuse
       raise ConfigurationError, "secret_key is required" if secret_key.nil? || secret_key.empty?
       raise ConfigurationError, "base_url cannot be empty" if base_url.nil? || base_url.empty?
       raise ConfigurationError, "timeout must be positive" if timeout.nil? || timeout <= 0
+      raise ConfigurationError, "cache_ttl cannot be Float::INFINITY" if cache_ttl == Float::INFINITY
       raise ConfigurationError, "cache_ttl must be non-negative" if cache_ttl.nil? || cache_ttl.negative?
       raise ConfigurationError, "cache_max_size must be positive" if cache_max_size.nil? || cache_max_size <= 0
 
@@ -150,9 +150,7 @@ module Langfuse
     end
 
     def validate_swr_config!
-      if cache_stale_ttl.nil? || cache_stale_ttl.negative?
-        raise ConfigurationError, "cache_stale_ttl must be non-negative"
-      end
+      raise ConfigurationError, "cache_stale_ttl must be non-negative" if cache_stale_ttl.negative?
 
       return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
 

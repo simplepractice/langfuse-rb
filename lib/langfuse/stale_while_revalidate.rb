@@ -18,11 +18,11 @@ module Langfuse
   #   class MyCache
   #     include Langfuse::StaleWhileRevalidate
   #
-  #     def initialize(ttl: 60, stale_ttl: 30)
+  #     def initialize(ttl: 60, stale_ttl: nil)
   #       @ttl = ttl
-  #       @stale_ttl = stale_ttl
+  #       @stale_ttl = StaleWhileRevalidate.normalize_stale_ttl(stale_ttl || ttl)
   #       @logger = Logger.new($stdout)
-  #       initialize_swr if stale_ttl
+  #       initialize_swr
   #     end
   #
   #     def cache_get(key)
@@ -46,6 +46,26 @@ module Langfuse
     # Default timeout for refresh locks (in seconds)
     # Refresh locks are short-lived to prevent duplicate background refreshes
     REFRESH_LOCK_TIMEOUT = 60
+
+    # Number of seconds in 1000 years (accounting for leap years)
+    THOUSAND_YEARS_IN_SECONDS = (1000 * 365.25 * 24 * 60 * 60).to_i
+
+    # Normalize stale_ttl value
+    #
+    # Converts Float::INFINITY to 1000 years in seconds for practical "never expire"
+    # behavior while keeping the value finite for calculations.
+    #
+    # @param stale_ttl [Integer, Float::INFINITY] Stale TTL value (required, no nil allowed)
+    # @return [Integer] Normalized stale TTL in seconds
+    #
+    # @example
+    #   StaleWhileRevalidate.normalize_stale_ttl(300) # => 300
+    #   StaleWhileRevalidate.normalize_stale_ttl(Float::INFINITY) # => 31557600000
+    def self.normalize_stale_ttl(stale_ttl)
+      return THOUSAND_YEARS_IN_SECONDS if stale_ttl == Float::INFINITY
+
+      stale_ttl
+    end
 
     # Initialize SWR infrastructure
     #
@@ -145,9 +165,12 @@ module Langfuse
 
     # Check if SWR is enabled
     #
-    # @return [Boolean] true if stale_ttl is configured
+    # SWR is enabled when stale_ttl > ttl, meaning there's a grace period
+    # where stale data can be served while revalidating in the background.
+    #
+    # @return [Boolean] true if stale_ttl is greater than ttl
     def swr_enabled?
-      !stale_ttl.nil? && stale_ttl.positive?
+      stale_ttl > ttl
     end
 
     # Shutdown the cache refresh thread pool gracefully
@@ -358,7 +381,7 @@ module Langfuse
 
     # Get stale TTL value
     #
-    # @return [Integer, nil] Stale TTL in seconds, or nil if disabled
+    # @return [Integer] Stale TTL in seconds
     # @raise [NotImplementedError] if not implemented by including class
     def stale_ttl
       @stale_ttl || raise(NotImplementedError, "#{self.class} must provide @stale_ttl")

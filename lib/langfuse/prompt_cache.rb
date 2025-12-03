@@ -59,18 +59,18 @@ module Langfuse
     #
     # @param ttl [Integer] Time-to-live in seconds (default: 60)
     # @param max_size [Integer] Maximum cache size (default: 1000)
-    # @param stale_ttl [Integer, nil] Stale TTL for SWR (default: nil, disabled)
+    # @param stale_ttl [Integer, Float::INFINITY, nil] Stale TTL for SWR (default: same as ttl, SWR disabled). Use Float::INFINITY for 1000 years, e.g. non-expiring cache.
     # @param refresh_threads [Integer] Number of background refresh threads (default: 5)
     # @param logger [Logger, nil] Logger instance for error reporting (default: nil, creates new logger)
     def initialize(ttl: 60, max_size: 1000, stale_ttl: nil, refresh_threads: 5, logger: default_logger)
       @ttl = ttl
       @max_size = max_size
-      @stale_ttl = stale_ttl
+      @stale_ttl = StaleWhileRevalidate.normalize_stale_ttl(stale_ttl || ttl)
       @logger = logger
       @cache = {}
       @monitor = Monitor.new
       @locks = {} # Track locks for in-memory locking
-      initialize_swr(refresh_threads: refresh_threads) if stale_ttl
+      initialize_swr(refresh_threads: refresh_threads) if @stale_ttl > @ttl
     end
 
     # Get a value from the cache

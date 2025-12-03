@@ -72,6 +72,23 @@ RSpec.describe Langfuse::PromptCache do
       cache = described_class.new(max_size: 500)
       expect(cache.max_size).to eq(500)
     end
+
+    context "with stale_ttl" do
+      it "sets custom stale_ttl" do
+        cache = described_class.new(stale_ttl: 300)
+        expect(cache.stale_ttl).to eq(300)
+      end
+
+      it "converts Float::INFINITY to 1000 years in seconds" do
+        cache = described_class.new(stale_ttl: Float::INFINITY)
+        expect(cache.stale_ttl).to eq(Langfuse::StaleWhileRevalidate::THOUSAND_YEARS_IN_SECONDS)
+      end
+
+      it "defaults nil to ttl value" do
+        cache = described_class.new(ttl: 60, stale_ttl: nil)
+        expect(cache.stale_ttl).to eq(60)
+      end
+    end
   end
 
   describe "#get and #set" do
