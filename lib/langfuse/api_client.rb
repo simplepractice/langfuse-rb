@@ -20,7 +20,7 @@ module Langfuse
   #     logger: Logger.new($stdout)
   #   )
   #
-  class ApiClient
+  class ApiClient # rubocop:disable Metrics/ClassLength
     attr_reader :public_key, :secret_key, :base_url, :timeout, :logger, :cache
 
     # Initialize a new API client
