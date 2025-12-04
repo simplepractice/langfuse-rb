@@ -88,6 +88,88 @@ RSpec.describe Langfuse::PromptCache do
         cache = described_class.new(ttl: 60)
         expect(cache.stale_ttl).to eq(0)
       end
+
+      it "enables SWR when stale_ttl equals ttl" do
+        cache = described_class.new(ttl: 60, stale_ttl: 60)
+        expect(cache.swr_enabled?).to be true
+      end
+
+      it "enables SWR when stale_ttl is any positive number" do
+        cache = described_class.new(ttl: 60, stale_ttl: 1)
+        expect(cache.swr_enabled?).to be true
+      end
+
+      it "disables SWR when stale_ttl is 0" do
+        cache = described_class.new(ttl: 60, stale_ttl: 0)
+        expect(cache.swr_enabled?).to be false
+      end
+
+      it "disables SWR when stale_ttl is negative" do
+        cache = described_class.new(ttl: 60, stale_ttl: -10)
+        expect(cache.swr_enabled?).to be false
+      end
+    end
+
+    context "with thread pool initialization (SWR enabled)" do
+      it "enables SWR behavior when stale_ttl is greater than ttl" do
+        cache = described_class.new(ttl: 60, stale_ttl: 120)
+        expect(cache.swr_enabled?).to be true
+        # Verify fetch_with_stale_while_revalidate is used (not fetch_with_lock)
+        expect(cache).not_to receive(:fetch_with_lock)
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "enables SWR behavior when stale_ttl equals ttl" do
+        cache = described_class.new(ttl: 60, stale_ttl: 60)
+        expect(cache.swr_enabled?).to be true
+        expect(cache).not_to receive(:fetch_with_lock)
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "enables SWR behavior for any positive stale_ttl value" do
+        cache = described_class.new(ttl: 60, stale_ttl: 1)
+        expect(cache.swr_enabled?).to be true
+        expect(cache).not_to receive(:fetch_with_lock)
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "accepts custom refresh_threads parameter" do
+        # Can't verify thread pool size directly, but can verify it doesn't error
+        expect do
+          described_class.new(ttl: 60, stale_ttl: 120, refresh_threads: 10)
+        end.not_to raise_error
+      end
+    end
+
+    context "with thread pool initialization (SWR disabled)" do
+      it "does not enable SWR when stale_ttl is 0" do
+        cache = described_class.new(ttl: 60, stale_ttl: 0)
+        expect(cache.swr_enabled?).to be false
+        # Should fall back to fetch_with_lock
+        expect(cache).to receive(:fetch_with_lock).and_call_original
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "does not enable SWR when stale_ttl is negative" do
+        cache = described_class.new(ttl: 60, stale_ttl: -10)
+        expect(cache.swr_enabled?).to be false
+        expect(cache).to receive(:fetch_with_lock).and_call_original
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "does not enable SWR when stale_ttl is not provided" do
+        cache = described_class.new(ttl: 60)
+        expect(cache.swr_enabled?).to be false
+        expect(cache).to receive(:fetch_with_lock).and_call_original
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "ignores refresh_threads when stale_ttl is not provided" do
+        cache = described_class.new(ttl: 60, refresh_threads: 20)
+        expect(cache.swr_enabled?).to be false
+        expect(cache).to receive(:fetch_with_lock).and_call_original
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
     end
   end
 
@@ -266,6 +348,22 @@ RSpec.describe Langfuse::PromptCache do
 
       threads.each(&:join)
       expect(cache.size).to be <= 3 # max_size is 3
+    end
+  end
+
+  describe "#shutdown" do
+    it "shuts down gracefully when SWR is enabled" do
+      cache = described_class.new(ttl: 60, stale_ttl: 120)
+      expect(cache.swr_enabled?).to be true
+
+      expect { cache.shutdown }.not_to raise_error
+    end
+
+    it "does not raise an error when SWR is disabled" do
+      cache = described_class.new(ttl: 60, stale_ttl: 0)
+      expect(cache.swr_enabled?).to be false
+
+      expect { cache.shutdown }.not_to raise_error
     end
   end
 end

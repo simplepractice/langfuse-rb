@@ -37,7 +37,7 @@ module Langfuse
       @lock_timeout = lock_timeout
       @stale_ttl = StaleWhileRevalidate.normalize_stale_ttl(stale_ttl)
       @logger = logger
-      initialize_swr(refresh_threads: refresh_threads) if @stale_ttl > @ttl
+      initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
     end
 
     # Get a value from the cache

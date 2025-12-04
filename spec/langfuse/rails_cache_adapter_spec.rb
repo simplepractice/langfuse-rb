@@ -42,8 +42,26 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
       context "when stale TTL is provided (SWR enabled)" do
         it "creates an adapter with custom stale TTL" do
-          adapter = described_class.new(stale_ttl: 300)
+          adapter = described_class.new(ttl: 60, stale_ttl: 300)
           expect(adapter.stale_ttl).to eq(300)
+        end
+
+        it "enables SWR when stale_ttl is greater than ttl" do
+          adapter = described_class.new(ttl: 60, stale_ttl: 120)
+          expect(adapter.swr_enabled?).to be true
+          expect(adapter.thread_pool).not_to be_nil
+        end
+
+        it "enables SWR and initializes thread pool when stale_ttl equals ttl" do
+          adapter = described_class.new(ttl: 60, stale_ttl: 60)
+          expect(adapter.swr_enabled?).to be true
+          expect(adapter.thread_pool).not_to be_nil
+        end
+
+        it "enables SWR and initializes thread pool for any positive stale_ttl value" do
+          adapter = described_class.new(ttl: 60, stale_ttl: 1)
+          expect(adapter.swr_enabled?).to be true
+          expect(adapter.thread_pool).not_to be_nil
         end
 
         it "converts Float::INFINITY to 1000 years in seconds" do
@@ -95,6 +113,18 @@ RSpec.describe Langfuse::RailsCacheAdapter do
         it "ignores refresh_threads when stale_ttl is not provided" do
           # refresh_threads should have no effect without stale_ttl
           adapter = described_class.new(ttl: 60, refresh_threads: 20)
+          expect(adapter.thread_pool).to be_nil
+        end
+
+        it "disables SWR when stale_ttl is 0" do
+          adapter = described_class.new(ttl: 60, stale_ttl: 0)
+          expect(adapter.swr_enabled?).to be false
+          expect(adapter.thread_pool).to be_nil
+        end
+
+        it "disables SWR when stale_ttl is negative" do
+          adapter = described_class.new(ttl: 60, stale_ttl: -10)
+          expect(adapter.swr_enabled?).to be false
           expect(adapter.thread_pool).to be_nil
         end
       end

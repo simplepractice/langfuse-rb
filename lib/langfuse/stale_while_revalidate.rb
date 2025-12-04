@@ -170,7 +170,7 @@ module Langfuse
     #
     # @return [Boolean] true if stale_ttl is greater than ttl
     def swr_enabled?
-      stale_ttl > ttl
+      stale_ttl.positive?
     end
 
     # Shutdown the cache refresh thread pool gracefully

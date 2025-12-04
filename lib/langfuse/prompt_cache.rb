@@ -70,7 +70,7 @@ module Langfuse
       @cache = {}
       @monitor = Monitor.new
       @locks = {} # Track locks for in-memory locking
-      initialize_swr(refresh_threads: refresh_threads) if @stale_ttl > @ttl
+      initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
     end
 
     # Get a value from the cache
