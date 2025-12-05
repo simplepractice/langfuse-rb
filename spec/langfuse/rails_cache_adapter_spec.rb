@@ -559,11 +559,15 @@ RSpec.describe Langfuse::RailsCacheAdapter do
     end
 
     context "when SWR is disabled" do
-      it "falls back to fetch_with_lock" do
+      it "raises ConfigurationError" do
         cache_key = "test_key"
         new_data = "new_value"
-        expect(adapter_without_swr).to receive(:fetch_with_lock).with(cache_key)
-        adapter_without_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+        expect do
+          adapter_without_swr.fetch_with_stale_while_revalidate(cache_key) { new_data }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
       end
     end
 

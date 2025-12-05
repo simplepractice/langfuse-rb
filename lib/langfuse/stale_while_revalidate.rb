@@ -81,7 +81,7 @@ module Langfuse
     # Fetch a value from cache with Stale-While-Revalidate support
     #
     # This method implements SWR caching: serves stale data immediately while
-    # refreshing in the background. Falls back to fetch_with_lock if SWR is disabled.
+    # refreshing in the background. Requires SWR to be enabled (stale_ttl must be positive).
     #
     # Three cache states:
     # - FRESH: Return immediately, no action needed
@@ -91,13 +91,14 @@ module Langfuse
     # @param key [String] Cache key
     # @yield Block to execute to fetch fresh data
     # @return [Object] Cached, stale, or freshly fetched value
+    # @raise [ConfigurationError] if SWR is not enabled (stale_ttl is not positive)
     #
     # @example
     #   cache.fetch_with_stale_while_revalidate("greeting:v1") do
     #     api_client.get_prompt("greeting")
     #   end
     def fetch_with_stale_while_revalidate(key, &)
-      return fetch_with_lock(key, &) unless swr_enabled?
+      raise ConfigurationError, "fetch_with_stale_while_revalidate requires a positive stale_ttl" unless swr_enabled?
 
       entry = cache_get(key)
 

@@ -142,33 +142,48 @@ RSpec.describe Langfuse::PromptCache do
     end
 
     context "with thread pool initialization (SWR disabled)" do
-      it "does not enable SWR when stale_ttl is 0" do
+      it "raises ConfigurationError when stale_ttl is 0" do
         cache = described_class.new(ttl: 60, stale_ttl: 0)
         expect(cache.swr_enabled?).to be false
-        # Should fall back to fetch_with_lock
-        expect(cache).to receive(:fetch_with_lock).and_call_original
-        cache.fetch_with_stale_while_revalidate("test") { "value" }
+        expect do
+          cache.fetch_with_stale_while_revalidate("test") { "value" }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
       end
 
-      it "does not enable SWR when stale_ttl is negative" do
+      it "raises ConfigurationError when stale_ttl is negative" do
         cache = described_class.new(ttl: 60, stale_ttl: -10)
         expect(cache.swr_enabled?).to be false
-        expect(cache).to receive(:fetch_with_lock).and_call_original
-        cache.fetch_with_stale_while_revalidate("test") { "value" }
+        expect do
+          cache.fetch_with_stale_while_revalidate("test") { "value" }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
       end
 
-      it "does not enable SWR when stale_ttl is not provided" do
+      it "raises ConfigurationError when stale_ttl is not provided" do
         cache = described_class.new(ttl: 60)
         expect(cache.swr_enabled?).to be false
-        expect(cache).to receive(:fetch_with_lock).and_call_original
-        cache.fetch_with_stale_while_revalidate("test") { "value" }
+        expect do
+          cache.fetch_with_stale_while_revalidate("test") { "value" }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
       end
 
-      it "ignores refresh_threads when stale_ttl is not provided" do
+      it "raises ConfigurationError even when refresh_threads is provided" do
         cache = described_class.new(ttl: 60, refresh_threads: 20)
         expect(cache.swr_enabled?).to be false
-        expect(cache).to receive(:fetch_with_lock).and_call_original
-        cache.fetch_with_stale_while_revalidate("test") { "value" }
+        expect do
+          cache.fetch_with_stale_while_revalidate("test") { "value" }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
       end
     end
   end
