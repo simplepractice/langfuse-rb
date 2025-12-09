@@ -110,7 +110,7 @@ module Langfuse
         # REVALIDATE - return stale + refresh in background
         logger.debug("CACHE STALE!")
         schedule_refresh(key, &)
-        entry.data # Instant response! ✨
+        entry.data # Instant response!
       else
         # MISS - must fetch synchronously
         logger.debug("CACHE MISS!")
