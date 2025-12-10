@@ -252,9 +252,12 @@ module Langfuse
 
     # Shutdown the client and flush any pending scores
     #
+    # Also shuts down the cache if it supports shutdown (e.g., SWR thread pool).
+    #
     # @return [void]
     def shutdown
       @score_client.shutdown
+      @api_client.shutdown
     end
 
     private

@@ -1189,4 +1189,78 @@ RSpec.describe Langfuse::ApiClient do
       end
     end
   end
+
+  describe "#shutdown" do
+    context "when cache supports shutdown" do
+      let(:swr_cache) do
+        Langfuse::PromptCache.new(
+          ttl: 60,
+          stale_ttl: 120,
+          refresh_threads: 2
+        )
+      end
+      let(:api_client_with_swr) do
+        described_class.new(
+          public_key: public_key,
+          secret_key: secret_key,
+          base_url: base_url,
+          cache: swr_cache
+        )
+      end
+
+      it "calls shutdown on the cache" do
+        expect(swr_cache).to receive(:shutdown).and_call_original
+
+        api_client_with_swr.shutdown
+      end
+
+      it "does not raise an error" do
+        expect { api_client_with_swr.shutdown }.not_to raise_error
+      end
+    end
+
+    context "when cache does not support shutdown" do
+      let(:ttl_cache) do
+        Langfuse::PromptCache.new(
+          ttl: 60,
+          stale_ttl: 0
+        )
+      end
+      let(:api_client_with_ttl_only) do
+        described_class.new(
+          public_key: public_key,
+          secret_key: secret_key,
+          base_url: base_url,
+          cache: ttl_cache
+        )
+      end
+
+      it "does not raise an error" do
+        expect { api_client_with_ttl_only.shutdown }.not_to raise_error
+      end
+
+      it "calls shutdown on the cache (which returns early when no thread pool)" do
+        # shutdown is safe to call even when stale_ttl is 0 (no thread pool)
+        # The method returns early if @thread_pool is nil
+        expect(ttl_cache).to receive(:shutdown).and_call_original
+
+        api_client_with_ttl_only.shutdown
+      end
+    end
+
+    context "when cache is nil" do
+      let(:api_client_no_cache) do
+        described_class.new(
+          public_key: public_key,
+          secret_key: secret_key,
+          base_url: base_url,
+          cache: nil
+        )
+      end
+
+      it "does not raise an error" do
+        expect { api_client_no_cache.shutdown }.not_to raise_error
+      end
+    end
+  end
 end

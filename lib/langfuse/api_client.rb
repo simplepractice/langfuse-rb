@@ -150,6 +150,10 @@ module Langfuse
       raise ApiError, "Batch send failed: #{e.message}"
     end
 
+    def shutdown
+      cache.shutdown if cache.respond_to?(:shutdown)
+    end
+
     private
 
     # Fetch prompt using the most appropriate caching strategy available
