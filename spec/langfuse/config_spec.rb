@@ -280,6 +280,15 @@ RSpec.describe Langfuse::Config do
     end
 
     context "when validating stale-while-revalidate with cache backend" do
+      it "raises ConfigurationError when SWR is enabled but cache_stale_ttl is nil" do
+        config.cache_stale_while_revalidate = true
+        config.cache_stale_ttl = nil
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          /cache_stale_ttl cannot be nil when cache_stale_while_revalidate is enabled/
+        )
+      end
+
       it "allows SWR with Rails cache backend" do
         config.cache_backend = :rails
         config.cache_stale_while_revalidate = true
@@ -406,21 +415,6 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_stale_while_revalidate).to be false
       expect(config.cache_stale_ttl).to eq(0) # Defaults to 0 (SWR disabled)
       expect(config.cache_refresh_threads).to eq(5) # Default
-    end
-
-    it "automatically sets stale_ttl to cache_ttl when SWR is enabled without explicit stale_ttl" do
-      config = described_class.new do |c|
-        c.public_key = "pk_test"
-        c.secret_key = "sk_test"
-        c.cache_ttl = 120
-        c.cache_stale_while_revalidate = true
-        # Not setting cache_stale_ttl explicitly
-      end
-
-      expect { config.validate! }.not_to raise_error
-
-      expect(config.cache_stale_while_revalidate).to be true
-      expect(config.cache_stale_ttl).to eq(120) # Auto-defaults to cache_ttl
     end
 
     it "allows customizing stale_ttl when SWR is enabled" do

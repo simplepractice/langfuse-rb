@@ -108,9 +108,6 @@ module Langfuse
       @logger = default_logger
 
       yield(self) if block_given?
-
-      # Apply SWR defaults after yield to allow customization
-      apply_swr_defaults!
     end
 
     # Validate the configuration
@@ -173,23 +170,35 @@ module Langfuse
     end
 
     def validate_swr_config!
-      # Allow :indefinite symbol, but validate numeric values
-      if cache_stale_ttl.nil? || (cache_stale_ttl.is_a?(Integer) && cache_stale_ttl.negative?)
+      validate_swr_stale_ttl!
+      validate_refresh_threads!
+    end
+
+    def validate_swr_stale_ttl!
+      # Check if SWR is enabled but stale_ttl is nil
+      if cache_stale_while_revalidate && cache_stale_ttl.nil?
+        raise ConfigurationError,
+              "cache_stale_ttl cannot be nil when cache_stale_while_revalidate is enabled. " \
+              "Set it to cache_ttl for a logical default, or use :indefinite for never-expiring cache."
+      end
+
+      # Validate that cache_stale_ttl is not nil (unless already caught by SWR check)
+      if cache_stale_ttl.nil?
         raise ConfigurationError,
               "cache_stale_ttl must be non-negative or :indefinite"
       end
 
+      # Validate numeric values are non-negative
+      return unless cache_stale_ttl.is_a?(Integer) && cache_stale_ttl.negative?
+
+      raise ConfigurationError,
+            "cache_stale_ttl must be non-negative or :indefinite"
+    end
+
+    def validate_refresh_threads!
       return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
 
       raise ConfigurationError, "cache_refresh_threads must be positive"
-    end
-
-    def apply_swr_defaults!
-      # When SWR is enabled and stale_ttl hasn't been customized (still 0), default to cache_ttl
-      return unless cache_stale_while_revalidate
-      return if cache_stale_ttl != 0 # User has customized it
-
-      @cache_stale_ttl = cache_ttl
     end
   end
 end
