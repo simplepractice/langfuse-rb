@@ -41,7 +41,6 @@ module Langfuse
   #       # Implementation-specific lock release
   #     end
   #   end
-  # rubocop:disable Metrics/ModuleLength
   module StaleWhileRevalidate
     # Number of seconds in 1000 years (accounting for leap years)
     THOUSAND_YEARS_IN_SECONDS = (1000 * 365.25 * 24 * 60 * 60).to_i
@@ -111,55 +110,6 @@ module Langfuse
         # MISS - must fetch synchronously
         logger.debug("CACHE MISS!")
         fetch_and_cache(key, &)
-      end
-    end
-
-    # Fetch a value from cache with lock for stampede protection
-    #
-    # This method prevents cache stampedes (thundering herd) by ensuring only one
-    # process/thread fetches from the source when the cache is empty. Others wait
-    # for the first one to populate the cache.
-    #
-    # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries max, ~350ms total).
-    # If cache is still empty after waiting, falls back to fetching from source.
-    #
-    # @param key [String] Cache key
-    # @yield Block to execute if cache miss (should fetch fresh data)
-    # @return [Object] Cached or freshly fetched value
-    #
-    # @example
-    #   cache.fetch_with_lock("greeting:v1") do
-    #     api_client.get_prompt("greeting")
-    #   end
-    #
-    # TODO: Revert changes to this method to the original implementation
-    # since this path is only taken if SWR is not enabled
-    def fetch_with_lock(key)
-      # 1. Check cache first (fast path - no lock needed)
-      cached = cache_get(key)
-      return cached if cached
-
-      # 2. Cache miss - try to acquire lock
-      lock_key = build_lock_key(key)
-
-      if acquire_lock(lock_key)
-        begin
-          # We got the lock - fetch from source and populate cache
-          value = yield
-          cache_set_simple(key, value)
-          value
-        ensure
-          # Always release lock, even if block raises
-          release_lock(lock_key)
-        end
-      else
-        # Someone else has the lock - wait for them to populate cache
-        cached = wait_for_cache(key)
-        return cached if cached
-
-        # Cache still empty after waiting - fall back to fetching ourselves
-        # (This handles cases where lock holder crashed or took too long)
-        yield
       end
     end
 
@@ -249,18 +199,6 @@ module Langfuse
       value
     end
 
-    # Set value in cache without SWR metadata (simple value)
-    #
-    # Used by fetch_with_lock when SWR is disabled.
-    #
-    # @param key [String] Cache key
-    # @param value [Object] Value to cache
-    # @return [Object] The cached value
-    def cache_set_simple(key, value)
-      cache_set(key, value, expires_in: ttl)
-      value
-    end
-
     # Build a lock key for fetch operations
     #
     # Can be overridden by including class if custom key format is needed.
@@ -269,25 +207,6 @@ module Langfuse
     # @return [String] Lock key
     def build_lock_key(key)
       "#{key}:lock"
-    end
-
-    # Wait for cache to be populated by lock holder
-    #
-    # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries, ~350ms total).
-    # This gives the lock holder time to fetch and populate the cache.
-    #
-    # @param key [String] Cache key
-    # @return [Object, nil] Cached value if found, nil if still empty after waiting
-    def wait_for_cache(key)
-      intervals = [0.05, 0.1, 0.2] # 50ms, 100ms, 200ms (exponential backoff)
-
-      intervals.each do |interval|
-        sleep(interval)
-        cached = cache_get(key)
-        return cached if cached
-      end
-
-      nil # Cache still empty after all retries
     end
 
     # Calculate total TTL (fresh + stale)
@@ -361,5 +280,4 @@ module Langfuse
       @logger || raise(NotImplementedError, "#{self.class} must provide @logger")
     end
   end
-  # rubocop:enable Metrics/ModuleLength
 end
