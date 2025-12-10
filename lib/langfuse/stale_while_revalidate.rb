@@ -11,8 +11,8 @@ module Langfuse
   # Including classes must implement:
   # - cache_get(key) - Read from cache
   # - cache_set(key, value, expires_in:) - Write to cache
-  # - acquire_refresh_lock(lock_key) - Acquire lock for background refresh
-  # - release_refresh_lock(lock_key) - Release refresh lock
+  # - acquire_lock(lock_key) - Acquire lock for background refresh
+  # - release_lock(lock_key) - Release refresh lock
   #
   # @example
   #   class MyCache
@@ -33,20 +33,16 @@ module Langfuse
   #       @storage[key] = value
   #     end
   #
-  #     def acquire_refresh_lock(lock_key)
+  #     def acquire_lock(lock_key)
   #       # Implementation-specific lock acquisition
   #     end
   #
-  #     def release_refresh_lock(lock_key)
+  #     def release_lock(lock_key)
   #       # Implementation-specific lock release
   #     end
   #   end
   # rubocop:disable Metrics/ModuleLength
   module StaleWhileRevalidate
-    # Default timeout for refresh locks (in seconds)
-    # Refresh locks are short-lived to prevent duplicate background refreshes
-    REFRESH_LOCK_TIMEOUT = 60
-
     # Number of seconds in 1000 years (accounting for leap years)
     THOUSAND_YEARS_IN_SECONDS = (1000 * 365.25 * 24 * 60 * 60).to_i
 
@@ -135,6 +131,9 @@ module Langfuse
     #   cache.fetch_with_lock("greeting:v1") do
     #     api_client.get_prompt("greeting")
     #   end
+    #
+    # TODO: Revert changes to this method to the original implementation
+    # since this path is only taken if SWR is not enabled
     def fetch_with_lock(key)
       # 1. Check cache first (fast path - no lock needed)
       cached = cache_get(key)
@@ -143,7 +142,7 @@ module Langfuse
       # 2. Cache miss - try to acquire lock
       lock_key = build_lock_key(key)
 
-      if acquire_fetch_lock(lock_key)
+      if acquire_lock(lock_key)
         begin
           # We got the lock - fetch from source and populate cache
           value = yield
@@ -151,7 +150,7 @@ module Langfuse
           value
         ensure
           # Always release lock, even if block raises
-          release_fetch_lock(lock_key)
+          release_lock(lock_key)
         end
       else
         # Someone else has the lock - wait for them to populate cache
@@ -201,7 +200,7 @@ module Langfuse
 
     # Schedule a background refresh for a cache key
     #
-    # Prevents duplicate refreshes by using a refresh lock. If another process/thread
+    # Prevents duplicate refreshes by using a fetch lock. If another process/thread
     # is already refreshing this key, this method returns immediately.
     #
     # Errors during refresh are caught and logged to prevent thread crashes.
@@ -211,8 +210,8 @@ module Langfuse
     # @return [void]
     def schedule_refresh(key, &block)
       # Prevent duplicate refreshes
-      refresh_lock_key = build_refresh_lock_key(key)
-      return unless acquire_refresh_lock(refresh_lock_key)
+      lock_key = build_lock_key(key)
+      return unless acquire_lock(lock_key)
 
       @thread_pool.post do
         value = yield block
@@ -220,7 +219,7 @@ module Langfuse
       rescue StandardError => e
         logger.error("Langfuse cache refresh failed for key '#{key}': #{e.class} - #{e.message}")
       ensure
-        release_refresh_lock(refresh_lock_key)
+        release_lock(lock_key)
       end
     end
 
@@ -272,40 +271,6 @@ module Langfuse
       "#{key}:lock"
     end
 
-    # Build a lock key for refresh operations
-    #
-    # Can be overridden by including class if custom key format is needed.
-    #
-    # @param key [String] Cache key
-    # @return [String] Refresh lock key
-    def build_refresh_lock_key(key)
-      "#{key}:refreshing"
-    end
-
-    # Acquire a lock for fetch operations
-    #
-    # Default implementation delegates to acquire_refresh_lock.
-    # Can be overridden by including class if different lock timeout is needed.
-    #
-    # @param lock_key [String] Lock key
-    # @return [Boolean] true if lock was acquired
-    def acquire_fetch_lock(lock_key)
-      # For fetch operations, implementations might want to use a different timeout
-      # than refresh operations (e.g., lock_timeout vs REFRESH_LOCK_TIMEOUT)
-      acquire_refresh_lock(lock_key)
-    end
-
-    # Release a lock for fetch operations
-    #
-    # Default implementation delegates to release_refresh_lock.
-    # Can be overridden by including class if different behavior is needed.
-    #
-    # @param lock_key [String] Lock key
-    # @return [void]
-    def release_fetch_lock(lock_key)
-      release_refresh_lock(lock_key)
-    end
-
     # Wait for cache to be populated by lock holder
     #
     # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries, ~350ms total).
@@ -354,22 +319,22 @@ module Langfuse
       raise NotImplementedError, "#{self.class} must implement #cache_set"
     end
 
-    # Acquire a refresh lock
+    # Acquire a lock
     #
     # @param lock_key [String] Lock key
     # @return [Boolean] true if lock was acquired
     # @raise [NotImplementedError] if not implemented by including class
-    def acquire_refresh_lock(_lock_key)
-      raise NotImplementedError, "#{self.class} must implement #acquire_refresh_lock"
+    def acquire_lock(_lock_key)
+      raise NotImplementedError, "#{self.class} must implement #acquire_lock"
     end
 
-    # Release a refresh lock
+    # Release a lock
     #
     # @param lock_key [String] Lock key
     # @return [void]
     # @raise [NotImplementedError] if not implemented by including class
-    def release_refresh_lock(_lock_key)
-      raise NotImplementedError, "#{self.class} must implement #release_refresh_lock"
+    def release_lock(_lock_key)
+      raise NotImplementedError, "#{self.class} must implement #release_lock"
     end
 
     # Get TTL value

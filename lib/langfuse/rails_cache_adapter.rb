@@ -123,27 +123,23 @@ module Langfuse
 
     # Build lock key with namespace
     #
+    # Used for both fetch operations (stampede protection) and refresh operations
+    # (preventing duplicate background refreshes).
+    #
     # @param key [String] Cache key
     # @return [String] Namespaced lock key
     def build_lock_key(key)
       "#{namespaced_key(key)}:lock"
     end
 
-    # Build refresh lock key with namespace
+    # Acquire a lock using Rails.cache
     #
-    # @param key [String] Cache key
-    # @return [String] Namespaced refresh lock key
-    def build_refresh_lock_key(key)
-      "#{namespaced_key(key)}:refreshing"
-    end
-
-    # Acquire a fetch lock using Rails.cache
-    #
-    # Uses the configured lock_timeout for fetch operations.
+    # Used for both fetch operations and refresh operations.
+    # Uses the configured lock_timeout for all locking scenarios.
     #
     # @param lock_key [String] Full lock key (already namespaced)
     # @return [Boolean] true if lock was acquired, false if already held
-    def acquire_fetch_lock(lock_key)
+    def acquire_lock(lock_key)
       Rails.cache.write(
         lock_key,
         true,
@@ -152,26 +148,13 @@ module Langfuse
       )
     end
 
-    # Acquire a refresh lock using Rails.cache
+    # Release a lock
     #
-    # Uses REFRESH_LOCK_TIMEOUT for background refresh operations.
-    #
-    # @param lock_key [String] Full lock key (already namespaced)
-    # @return [Boolean] true if lock was acquired, false if already held
-    def acquire_refresh_lock(lock_key)
-      Rails.cache.write(
-        lock_key,
-        true,
-        unless_exist: true, # Atomic: only write if key doesn't exist
-        expires_in: REFRESH_LOCK_TIMEOUT # Short-lived lock for background refreshes
-      )
-    end
-
-    # Release a refresh lock
+    # Used for both fetch and refresh operations.
     #
     # @param lock_key [String] Full lock key (already namespaced)
     # @return [void]
-    def release_refresh_lock(lock_key)
+    def release_lock(lock_key)
       Rails.cache.delete(lock_key)
     end
 

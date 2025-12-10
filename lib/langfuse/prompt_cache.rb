@@ -190,11 +190,15 @@ module Langfuse
       end
     end
 
-    # Acquire a refresh lock using in-memory locking
+    # Acquire a lock using in-memory locking
+    #
+    # Prevents duplicate background refreshes from different threads within
+    # the same process. This is NOT distributed locking - it only works
+    # within a single process. For distributed locking, use RailsCacheAdapter.
     #
     # @param lock_key [String] Lock key
     # @return [Boolean] true if lock was acquired, false if already held
-    def acquire_refresh_lock(lock_key)
+    def acquire_lock(lock_key)
       @monitor.synchronize do
         return false if @locks[lock_key]
 
@@ -203,11 +207,11 @@ module Langfuse
       end
     end
 
-    # Release a refresh lock
+    # Release a lock
     #
     # @param lock_key [String] Lock key
     # @return [void]
-    def release_refresh_lock(lock_key)
+    def release_lock(lock_key)
       @monitor.synchronize do
         @locks.delete(lock_key)
       end

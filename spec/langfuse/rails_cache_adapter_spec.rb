@@ -760,17 +760,17 @@ RSpec.describe Langfuse::RailsCacheAdapter do
     context "when refresh lock is acquired" do
       it "schedules refresh in thread pool" do
         cache_key = "test_key"
-        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+        lock_key = "langfuse:#{cache_key}:lock"
         refreshed_value = "refreshed_value"
 
         # Mock lock acquisition succeeds
         allow(mock_cache).to receive(:write)
-          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .with(lock_key, true, unless_exist: true, expires_in: 10)
           .and_return(true)
 
         # Mock lock release
         allow(mock_cache).to receive(:delete)
-          .with(refresh_lock_key)
+          .with(lock_key)
 
         # Mock thread pool to execute immediately for testing
         allow(adapter_with_swr.thread_pool).to receive(:post).and_yield
@@ -796,11 +796,11 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
       it "releases the refresh lock after completion" do
         cache_key = "test_key"
-        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+        lock_key = "langfuse:#{cache_key}:lock"
 
         # Mock lock acquisition succeeds
         allow(mock_cache).to receive(:write)
-          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .with(lock_key, true, unless_exist: true, expires_in: 10)
           .and_return(true)
 
         # Mock cache write
@@ -813,14 +813,13 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
         # Verify lock is released
         expect(mock_cache).to receive(:delete)
-          .with(refresh_lock_key)
+          .with(lock_key)
 
         adapter_with_swr.send(:schedule_refresh, cache_key) { "refreshed_value" }
       end
 
       it "logs error and releases lock when refresh block raises error" do
         cache_key = "test_key"
-        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
         mock_logger = instance_double(Logger)
 
         adapter_with_logger = described_class.new(
@@ -829,10 +828,11 @@ RSpec.describe Langfuse::RailsCacheAdapter do
           refresh_threads: refresh_threads,
           logger: mock_logger
         )
+        lock_key = "langfuse:#{cache_key}:lock"
 
         # Mock lock acquisition succeeds
         allow(mock_cache).to receive(:write)
-          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .with(lock_key, true, unless_exist: true, expires_in: 10)
           .and_return(true)
 
         # Mock thread pool to execute immediately
@@ -841,9 +841,9 @@ RSpec.describe Langfuse::RailsCacheAdapter do
         expect(mock_logger).to receive(:error)
           .with(/Langfuse cache refresh failed for key 'test_key': RuntimeError - test error/)
 
-        # Verify lock is released even on error
+        # Verify lock is released even after error
         expect(mock_cache).to receive(:delete)
-          .with(refresh_lock_key)
+          .with(lock_key)
 
         # Error should be caught and logged, not raised
         expect do
@@ -853,7 +853,6 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
       it "logs error with correct exception class and message" do
         cache_key = "greeting:1"
-        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
         mock_logger = instance_double(Logger)
 
         adapter_with_logger = described_class.new(
@@ -862,10 +861,11 @@ RSpec.describe Langfuse::RailsCacheAdapter do
           refresh_threads: refresh_threads,
           logger: mock_logger
         )
+        lock_key = "langfuse:greeting:1:lock"
 
         # Mock lock acquisition succeeds
         allow(mock_cache).to receive(:write)
-          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .with(lock_key, true, unless_exist: true, expires_in: 10)
           .and_return(true)
 
         # Mock thread pool to execute immediately
@@ -874,9 +874,9 @@ RSpec.describe Langfuse::RailsCacheAdapter do
         expect(mock_logger).to receive(:error)
           .with("Langfuse cache refresh failed for key 'greeting:1': ArgumentError - Invalid prompt data")
 
-        # Verify lock is released even on error
+        # Verify lock is released even after error
         expect(mock_cache).to receive(:delete)
-          .with(refresh_lock_key)
+          .with(lock_key)
 
         # Custom exception type
         adapter_with_logger.send(:schedule_refresh, cache_key) do
@@ -888,11 +888,11 @@ RSpec.describe Langfuse::RailsCacheAdapter do
     context "when refresh lock is not acquired" do
       it "does not schedule refresh" do
         cache_key = "test_key"
-        refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+        lock_key = "langfuse:#{cache_key}:lock"
 
         # Mock lock acquisition fails
         allow(mock_cache).to receive(:write)
-          .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+          .with(lock_key, true, unless_exist: true, expires_in: 10)
           .and_return(false)
 
         expect(adapter_with_swr.thread_pool).not_to receive(:post)
@@ -1003,7 +1003,7 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
     it "uses Rails.cache to acquire locks atomically" do
       cache_key = "test_key"
-      refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+      lock_key = "langfuse:#{cache_key}:lock"
 
       # Simulate stale entry to trigger refresh
       stale_entry = Langfuse::PromptCache::CacheEntry.new(
@@ -1021,16 +1021,16 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
       # Mock lock release
       allow(mock_cache).to receive(:delete)
-        .with(refresh_lock_key)
+        .with(lock_key)
 
       # Mock cache write (double-namespaced due to implementation)
       allow(mock_cache).to receive(:write)
         .with("langfuse:#{cache_key}", anything, expires_in: 180)
         .and_return(true)
 
-      # Verify lock acquisition is attempted with correct parameters
+      # Verify lock acquisition is attempted with correct parameters (unified lock)
       expect(mock_cache).to receive(:write)
-        .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+        .with(lock_key, true, unless_exist: true, expires_in: 10)
         .and_return(true)
 
       adapter_with_swr.fetch_with_stale_while_revalidate(cache_key) { "new_data" }
@@ -1038,11 +1038,11 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
     it "prevents duplicate refreshes when lock is not available" do
       cache_key = "test_key"
-      refresh_lock_key = "langfuse:#{cache_key}:refreshing"
+      lock_key = "langfuse:#{cache_key}:lock"
 
-      # Lock acquisition fails (already held by another process)
-      allow(mock_cache).to receive(:write)
-        .with(refresh_lock_key, true, unless_exist: true, expires_in: 60)
+      # Expect lock acquisition attempt to fail (someone else has the lock)
+      expect(mock_cache).to receive(:write)
+        .with(lock_key, true, unless_exist: true, expires_in: 10)
         .and_return(false)
 
       # Simulate stale entry
