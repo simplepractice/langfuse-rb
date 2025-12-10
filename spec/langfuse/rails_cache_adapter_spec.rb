@@ -956,12 +956,14 @@ RSpec.describe Langfuse::RailsCacheAdapter do
         cache_key = "test_key"
         value = "test_value"
         namespaced_key = "langfuse:#{cache_key}"
+        total_ttl = ttl + stale_ttl
 
         # Regular set() stores the value directly, not wrapped in CacheEntry
+        # When SWR is enabled, uses ttl + stale_ttl for expiration
         expect(mock_cache).to receive(:write) do |key, stored_value, options|
           expect(key).to eq(namespaced_key)
           expect(stored_value).to eq(value)
-          expect(options[:expires_in]).to eq(ttl)
+          expect(options[:expires_in]).to eq(total_ttl)
           true
         end
 

@@ -10,7 +10,7 @@ module Langfuse
   #
   # Including classes must implement:
   # - cache_get(key) - Read from cache
-  # - cache_set(key, value, expires_in:) - Write to cache
+  # - cache_set(key, value) - Write to cache
   # - acquire_lock(lock_key) - Acquire lock for background refresh
   # - release_lock(lock_key) - Release refresh lock
   #
@@ -29,7 +29,7 @@ module Langfuse
   #       @storage[key]
   #     end
   #
-  #     def cache_set(key, value, expires_in:)
+  #     def cache_set(key, value)
   #       @storage[key] = value
   #     end
   #
@@ -194,7 +194,7 @@ module Langfuse
       stale_until = fresh_until + stale_ttl
       entry = PromptCache::CacheEntry.new(value, fresh_until, stale_until)
 
-      cache_set(key, entry, expires_in: total_ttl)
+      cache_set(key, entry)
 
       value
     end
@@ -231,10 +231,9 @@ module Langfuse
     #
     # @param key [String] Cache key
     # @param value [Object] Value to cache
-    # @param expires_in [Integer] TTL in seconds
     # @return [Object] The cached value
     # @raise [NotImplementedError] if not implemented by including class
-    def cache_set(_key, _value, expires_in:)
+    def cache_set(_key, _value)
       raise NotImplementedError, "#{self.class} must implement #cache_set"
     end
 

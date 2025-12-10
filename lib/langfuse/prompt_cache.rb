@@ -91,16 +91,15 @@ module Langfuse
     #
     # @param key [String] Cache key
     # @param value [Object] Value to cache
-    # @param expires_in [Integer] Optional TTL override (default: uses @ttl)
     # @return [Object] The cached value
-    def set(key, value, expires_in: ttl)
+    def set(key, value)
       @monitor.synchronize do
         # Evict oldest entry if at max size
         evict_oldest if @cache.size >= max_size
 
         now = Time.now
-        fresh_until = now + expires_in
-        stale_until = now + expires_in
+        fresh_until = now + ttl
+        stale_until = fresh_until + stale_ttl
         @cache[key] = CacheEntry.new(value, fresh_until, stale_until)
         value
       end
@@ -164,7 +163,7 @@ module Langfuse
     # Get value from cache (SWR interface)
     #
     # @param key [String] Cache key
-    # @return [Object, nil] Cached value
+    # @return [PromptCache::CacheEntry, nil] Cached value
     def cache_get(key)
       @monitor.synchronize do
         @cache[key]
@@ -174,17 +173,13 @@ module Langfuse
     # Set value in cache (SWR interface)
     #
     # @param key [String] Cache key
-    # @param value [Object] Value to cache
-    # @param expires_in [Integer] TTL in seconds
-    # @return [Object] The cached value
-    def cache_set(key, value, expires_in: nil)
+    # @param value [PromptCache::CacheEntry] Value to cache
+    # @return [PromptCache::CacheEntry] The cached value
+    def cache_set(key, value)
       @monitor.synchronize do
         # Evict oldest entry if at max size
         evict_oldest if @cache.size >= max_size
 
-        # NOTE: expires_in is accepted for interface compatibility with StaleWhileRevalidate
-        # but not used here since CacheEntry objects manage their own expiration times
-        _ = expires_in
         @cache[key] = value
         value
       end

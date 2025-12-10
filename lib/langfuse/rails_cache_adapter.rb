@@ -53,7 +53,9 @@ module Langfuse
     # @param key [String] Cache key
     # @param value [Object] Value to cache
     # @return [Object] The cached value
-    def set(key, value, expires_in: ttl)
+    def set(key, value)
+      # Calculate expiration: use total_ttl if SWR enabled, otherwise just ttl
+      expires_in = swr_enabled? ? total_ttl : ttl
       Rails.cache.write(namespaced_key(key), value, expires_in:)
       value
     end
@@ -160,11 +162,10 @@ module Langfuse
     # Set value in cache (SWR interface)
     #
     # @param key [String] Cache key
-    # @param value [Object] Value to cache
-    # @param expires_in [Integer] TTL in seconds
+    # @param value [Object] Value to cache (expects CacheEntry)
     # @return [Object] The cached value
-    def cache_set(key, value, expires_in:)
-      set(key, value, expires_in: expires_in)
+    def cache_set(key, value)
+      set(key, value)
     end
 
     # Build lock key with namespace
