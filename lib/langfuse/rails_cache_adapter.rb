@@ -24,7 +24,8 @@ module Langfuse
     # @param ttl [Integer] Time-to-live in seconds (default: 60)
     # @param namespace [String] Cache key namespace (default: "langfuse")
     # @param lock_timeout [Integer] Lock timeout in seconds for stampede protection (default: 10)
-    # @param stale_ttl [Integer, Float::INFINITY, nil] Stale TTL for SWR (default: 0, SWR disabled). Use Float::INFINITY for 1000 years, e.g. non-expiring cache.
+    # @param stale_ttl [Integer] Stale TTL for SWR in seconds (default: 0, SWR disabled).
+    #   Note: :indefinite is normalized to 1000 years by Config before being passed here.
     # @param refresh_threads [Integer] Number of background refresh threads (default: 5)
     # @param logger [Logger, nil] Logger instance for error reporting (default: nil, creates new logger)
     # @raise [ConfigurationError] if Rails.cache is not available
@@ -35,7 +36,7 @@ module Langfuse
       @ttl = ttl
       @namespace = namespace
       @lock_timeout = lock_timeout
-      @stale_ttl = StaleWhileRevalidate.normalize_stale_ttl(stale_ttl)
+      @stale_ttl = stale_ttl
       @logger = logger
       initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
     end

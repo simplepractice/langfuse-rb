@@ -49,7 +49,8 @@ module Langfuse
     # @return [Boolean] Enable stale-while-revalidate caching (when true, sets cache_stale_ttl to cache_ttl if not customized)
     attr_accessor :cache_stale_while_revalidate
 
-    # @return [Integer] Stale TTL in seconds (grace period for serving stale data, default: 0 when SWR disabled, cache_ttl when SWR enabled)
+    # @return [Integer, Symbol] Stale TTL in seconds (grace period for serving stale data, default: 0 when SWR disabled, cache_ttl when SWR enabled)
+    #   Accepts :indefinite which is automatically normalized to 1000 years (31,536,000,000 seconds) for practical "never expire" behavior.
     attr_accessor :cache_stale_ttl
 
     # @return [Integer] Number of background threads for cache refresh
@@ -80,6 +81,9 @@ module Langfuse
     DEFAULT_BATCH_SIZE = 50
     DEFAULT_FLUSH_INTERVAL = 10
     DEFAULT_JOB_QUEUE = :default
+
+    # Number of seconds representing indefinite cache duration (~1000 years)
+    INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
 
     # Initialize a new Config object
     #
@@ -119,7 +123,6 @@ module Langfuse
       raise ConfigurationError, "secret_key is required" if secret_key.nil? || secret_key.empty?
       raise ConfigurationError, "base_url cannot be empty" if base_url.nil? || base_url.empty?
       raise ConfigurationError, "timeout must be positive" if timeout.nil? || timeout <= 0
-      raise ConfigurationError, "cache_ttl cannot be Float::INFINITY" if cache_ttl == Float::INFINITY
       raise ConfigurationError, "cache_ttl must be non-negative" if cache_ttl.nil? || cache_ttl.negative?
       raise ConfigurationError, "cache_max_size must be positive" if cache_max_size.nil? || cache_max_size <= 0
 
@@ -133,6 +136,23 @@ module Langfuse
       validate_cache_backend!
     end
     # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+
+    # Normalize stale_ttl value
+    #
+    # Converts :indefinite to 1000 years in seconds for practical "never expire"
+    # behavior while keeping the value finite for calculations.
+    #
+    # @return [Integer] Normalized stale TTL in seconds
+    #
+    # @example
+    #   config.cache_stale_ttl = 300
+    #   config.normalized_stale_ttl # => 300
+    #
+    #   config.cache_stale_ttl = :indefinite
+    #   config.normalized_stale_ttl # => 31536000000
+    def normalized_stale_ttl
+      cache_stale_ttl == :indefinite ? INDEFINITE_SECONDS : cache_stale_ttl
+    end
 
     private
 
@@ -153,9 +173,10 @@ module Langfuse
     end
 
     def validate_swr_config!
-      if cache_stale_ttl.nil? || cache_stale_ttl.negative?
+      # Allow :indefinite symbol, but validate numeric values
+      if cache_stale_ttl.nil? || (cache_stale_ttl.is_a?(Integer) && cache_stale_ttl.negative?)
         raise ConfigurationError,
-              "cache_stale_ttl must be non-negative"
+              "cache_stale_ttl must be non-negative or :indefinite"
       end
 
       return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0

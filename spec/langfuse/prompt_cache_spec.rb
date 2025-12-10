@@ -79,11 +79,6 @@ RSpec.describe Langfuse::PromptCache do
         expect(cache.stale_ttl).to eq(300)
       end
 
-      it "converts Float::INFINITY to 1000 years in seconds" do
-        cache = described_class.new(stale_ttl: Float::INFINITY)
-        expect(cache.stale_ttl).to eq(Langfuse::StaleWhileRevalidate::THOUSAND_YEARS_IN_SECONDS)
-      end
-
       it "defaults to 0 when not specified (SWR disabled)" do
         cache = described_class.new(ttl: 60)
         expect(cache.stale_ttl).to eq(0)

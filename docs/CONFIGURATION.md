@@ -144,13 +144,14 @@ See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for detailed usage.
 
 #### `cache_stale_ttl`
 
-- **Type:** Integer (seconds) or `Float::INFINITY`
+- **Type:** Integer (seconds) or `:indefinite` Symbol
 - **Default:** `0` (SWR disabled)
 - **Description:** Grace period for serving stale data during background refresh
+- **Note:** `:indefinite` is automatically normalized to 1000 years (31,536,000,000 seconds) during config initialization
 
 ```ruby
 config.cache_stale_ttl = 300  # Serve stale data for up to 5 minutes
-config.cache_stale_ttl = Float::INFINITY  # Never expire (1000 years)
+config.cache_stale_ttl = :indefinite  # Never expire (normalized to 1000 years internally)
 ```
 
 **How it works:**
@@ -163,7 +164,7 @@ config.cache_stale_ttl = Float::INFINITY  # Never expire (1000 years)
 
 - Same as `cache_ttl` (default when SWR enabled): Balanced freshness/latency
 - `2x cache_ttl`: More tolerance for API slowdowns
-- `Float::INFINITY`: Maximum performance, eventual consistency, high availability
+- `:indefinite`: Maximum performance, eventual consistency, high availability
 
 **Auto-configuration:**
 When `cache_stale_while_revalidate = true` and `cache_stale_ttl` is not set (still `0`), it automatically defaults to `cache_ttl`.

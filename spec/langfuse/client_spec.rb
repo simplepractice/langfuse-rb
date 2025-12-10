@@ -171,6 +171,44 @@ RSpec.describe Langfuse::Client do
         end.to raise_error(Langfuse::ConfigurationError, /cache_backend must be one of/)
       end
     end
+
+    context "with :indefinite stale_ttl" do
+      it "normalizes :indefinite to INDEFINITE_SECONDS via normalized_stale_ttl method" do
+        config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test_123"
+          c.secret_key = "sk_test_456"
+          c.cache_stale_ttl = :indefinite
+        end
+
+        expect(config.normalized_stale_ttl).to eq(Langfuse::Config::INDEFINITE_SECONDS)
+      end
+
+      it "passes normalized stale_ttl to cache instances" do
+        config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test_123"
+          c.secret_key = "sk_test_456"
+          c.cache_ttl = 60
+          c.cache_stale_ttl = :indefinite
+        end
+
+        client = described_class.new(config)
+        cache = client.api_client.cache
+
+        expect(cache.stale_ttl).to eq(Langfuse::Config::INDEFINITE_SECONDS)
+      end
+
+      it "normalizes :indefinite when set via cache_stale_while_revalidate" do
+        config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test_123"
+          c.secret_key = "sk_test_456"
+          c.cache_ttl = 60
+          c.cache_stale_while_revalidate = true
+          c.cache_stale_ttl = :indefinite
+        end
+
+        expect(config.normalized_stale_ttl).to eq(Langfuse::Config::INDEFINITE_SECONDS)
+      end
+    end
   end
 
   describe "#get_prompt" do

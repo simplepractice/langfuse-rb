@@ -158,14 +158,6 @@ RSpec.describe Langfuse::Config do
         )
       end
 
-      it "raises ConfigurationError when Float::INFINITY" do
-        config.cache_ttl = Float::INFINITY
-        expect { config.validate! }.to raise_error(
-          Langfuse::ConfigurationError,
-          "cache_ttl cannot be Float::INFINITY"
-        )
-      end
-
       it "allows zero (disabled cache)" do
         config.cache_ttl = 0
         expect { config.validate! }.not_to raise_error
@@ -228,7 +220,7 @@ RSpec.describe Langfuse::Config do
         config.cache_stale_ttl = -1
         expect { config.validate! }.to raise_error(
           Langfuse::ConfigurationError,
-          "cache_stale_ttl must be non-negative"
+          "cache_stale_ttl must be non-negative or :indefinite"
         )
       end
 
@@ -236,7 +228,7 @@ RSpec.describe Langfuse::Config do
         config.cache_stale_ttl = nil
         expect { config.validate! }.to raise_error(
           Langfuse::ConfigurationError,
-          "cache_stale_ttl must be non-negative"
+          "cache_stale_ttl must be non-negative or :indefinite"
         )
       end
 
@@ -247,6 +239,11 @@ RSpec.describe Langfuse::Config do
 
       it "allows positive values" do
         config.cache_stale_ttl = 300
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "allows :indefinite symbol" do
+        config.cache_stale_ttl = :indefinite
         expect { config.validate! }.not_to raise_error
       end
     end
@@ -363,6 +360,11 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_stale_ttl).to eq(600)
     end
 
+    it "allows setting cache_stale_ttl to :indefinite" do
+      config.cache_stale_ttl = :indefinite
+      expect(config.cache_stale_ttl).to eq(:indefinite)
+    end
+
     it "allows setting cache_refresh_threads" do
       config.cache_refresh_threads = 10
       expect(config.cache_refresh_threads).to eq(10)
@@ -441,6 +443,49 @@ RSpec.describe Langfuse::Config do
     it "defines correct SWR default values" do
       expect(Langfuse::Config::DEFAULT_CACHE_STALE_WHILE_REVALIDATE).to be false
       expect(Langfuse::Config::DEFAULT_CACHE_REFRESH_THREADS).to eq(5)
+    end
+  end
+
+  describe "#normalized_stale_ttl" do
+    let(:config) do
+      described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+      end
+    end
+
+    it "returns the numeric value unchanged for regular TTL" do
+      config.cache_stale_ttl = 300
+      expect(config.normalized_stale_ttl).to eq(300)
+    end
+
+    it "returns 0 for zero TTL" do
+      config.cache_stale_ttl = 0
+      expect(config.normalized_stale_ttl).to eq(0)
+    end
+
+    it "returns INDEFINITE_SECONDS when cache_stale_ttl is :indefinite" do
+      config.cache_stale_ttl = :indefinite
+      expect(config.normalized_stale_ttl).to eq(Langfuse::Config::INDEFINITE_SECONDS)
+    end
+
+    it "does not mutate the original cache_stale_ttl value" do
+      config.cache_stale_ttl = :indefinite
+      config.normalized_stale_ttl # Call normalization
+      expect(config.cache_stale_ttl).to eq(:indefinite) # Original value preserved
+    end
+
+    it "works with SWR auto-configuration" do
+      config_swr = described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+        c.cache_ttl = 120
+        c.cache_stale_while_revalidate = true
+        c.cache_stale_ttl = :indefinite
+      end
+
+      expect(config_swr.cache_stale_ttl).to eq(:indefinite)
+      expect(config_swr.normalized_stale_ttl).to eq(Langfuse::Config::INDEFINITE_SECONDS)
     end
   end
 end

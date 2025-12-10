@@ -64,11 +64,6 @@ RSpec.describe Langfuse::RailsCacheAdapter do
           expect(adapter.thread_pool).not_to be_nil
         end
 
-        it "converts Float::INFINITY to 1000 years in seconds" do
-          adapter = described_class.new(stale_ttl: Float::INFINITY)
-          expect(adapter.stale_ttl).to eq(Langfuse::StaleWhileRevalidate::THOUSAND_YEARS_IN_SECONDS)
-        end
-
         it "initializes thread pool with default refresh_threads (5)" do
           expect(Concurrent::CachedThreadPool).to receive(:new)
             .with(

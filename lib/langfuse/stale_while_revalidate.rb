@@ -18,11 +18,11 @@ module Langfuse
   #   class MyCache
   #     include Langfuse::StaleWhileRevalidate
   #
-  #     def initialize(ttl: 60, stale_ttl: nil)
+  #     def initialize(ttl: 60, stale_ttl: 0)
   #       @ttl = ttl
-  #       @stale_ttl = StaleWhileRevalidate.normalize_stale_ttl(stale_ttl || ttl)
+  #       @stale_ttl = stale_ttl
   #       @logger = Logger.new($stdout)
-  #       initialize_swr
+  #       initialize_swr if stale_ttl.positive?
   #     end
   #
   #     def cache_get(key)
@@ -42,26 +42,6 @@ module Langfuse
   #     end
   #   end
   module StaleWhileRevalidate
-    # Number of seconds in 1000 years (accounting for leap years)
-    THOUSAND_YEARS_IN_SECONDS = (1000 * 365.25 * 24 * 60 * 60).to_i
-
-    # Normalize stale_ttl value
-    #
-    # Converts Float::INFINITY to 1000 years in seconds for practical "never expire"
-    # behavior while keeping the value finite for calculations.
-    #
-    # @param stale_ttl [Integer, Float::INFINITY] Stale TTL value (required, no nil allowed)
-    # @return [Integer] Normalized stale TTL in seconds
-    #
-    # @example
-    #   StaleWhileRevalidate.normalize_stale_ttl(300) # => 300
-    #   StaleWhileRevalidate.normalize_stale_ttl(Float::INFINITY) # => 31557600000
-    def self.normalize_stale_ttl(stale_ttl)
-      return THOUSAND_YEARS_IN_SECONDS if stale_ttl == Float::INFINITY
-
-      stale_ttl
-    end
-
     # Initialize SWR infrastructure
     #
     # Must be called by including class after setting @stale_ttl, @ttl, and @logger.
@@ -115,10 +95,10 @@ module Langfuse
 
     # Check if SWR is enabled
     #
-    # SWR is enabled when stale_ttl > ttl, meaning there's a grace period
+    # SWR is enabled when stale_ttl is positive, meaning there's a grace period
     # where stale data can be served while revalidating in the background.
     #
-    # @return [Boolean] true if stale_ttl is greater than ttl
+    # @return [Boolean] true if stale_ttl is positive
     def swr_enabled?
       stale_ttl.positive?
     end

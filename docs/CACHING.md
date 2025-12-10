@@ -198,9 +198,11 @@ Langfuse.configure do |config|
   config.cache_backend = :memory
   config.cache_ttl = 300  # Still refreshes every 5 minutes
   config.cache_stale_while_revalidate = true
-  config.cache_stale_ttl = Float::INFINITY  # Never expire (serve stale forever)
+  config.cache_stale_ttl = :indefinite  # Never expire (normalized to 1000 years internally)
 end
 ```
+
+**Note:** `:indefinite` is automatically normalized to 1000 years (31,536,000,000 seconds) during configuration initialization. This provides a practical "never expire" behavior while keeping the value finite for calculations.
 
 ### Cache States
 
