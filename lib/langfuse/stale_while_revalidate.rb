@@ -122,9 +122,9 @@ module Langfuse
     def initialize_thread_pool(refresh_threads)
       Concurrent::CachedThreadPool.new(
         max_threads: refresh_threads,
-        min_threads: 2,
+        min_threads: 0,
         max_queue: 50,
-        fallback_policy: :discard # Drop oldest if queue full
+        fallback_policy: :discard
       )
     end
 

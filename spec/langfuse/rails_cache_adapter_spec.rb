@@ -68,7 +68,7 @@ RSpec.describe Langfuse::RailsCacheAdapter do
           expect(Concurrent::CachedThreadPool).to receive(:new)
             .with(
               max_threads: 5,
-              min_threads: 2,
+              min_threads: 0,
               max_queue: 50,
               fallback_policy: :discard
             ).and_call_original
@@ -85,7 +85,7 @@ RSpec.describe Langfuse::RailsCacheAdapter do
           expect(Concurrent::CachedThreadPool).to receive(:new)
             .with(
               max_threads: 3,
-              min_threads: 2,
+              min_threads: 0,
               max_queue: 50,
               fallback_policy: :discard
             ).and_call_original
