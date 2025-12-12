@@ -62,6 +62,10 @@ end
 - Multiple servers sharing the same cache
 - When you need cache consistency across processes
 
+⚠️ **Memory leak risk:**
+
+- Locks are stored in a hash and only deleted on `release_lock`. If refresh thread crashes/killed externally (e.g., `Thread#kill`), locks can persist forever. Unlike Redis locks (which have TTL), in-memory locks have no timeout, thus lock accumulation can eventually exhaust memory.
+
 ### Example
 
 ```ruby

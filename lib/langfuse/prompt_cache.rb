@@ -192,6 +192,12 @@ module Langfuse
     # the same process. This is NOT distributed locking - it only works
     # within a single process. For distributed locking, use RailsCacheAdapter.
     #
+    # **MEMORY LEAK WARNING**: Locks are stored in a hash and only deleted on
+    # release_lock. If a refresh thread crashes or is killed externally (e.g., Thread#kill)
+    # between acquire_lock and release_lock, the lock persists forever. Unlike Redis locks
+    # which have TTL expiration, in-memory locks have no timeout. For production use with
+    # SWR, prefer RailsCacheAdapter to avoid lock accumulation and potential memory exhaustion.
+    #
     # @param lock_key [String] Lock key
     # @return [Boolean] true if lock was acquired, false if already held
     def acquire_lock(lock_key)
