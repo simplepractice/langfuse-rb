@@ -460,9 +460,15 @@ module Langfuse
 
       # Normalize chat messages to use string keys
       prompt.map do |message|
+        # Convert all keys to symbols first, then extract
+        normalized = message.transform_keys do |k|
+          k.to_sym
+        rescue StandardError
+          k
+        end
         {
-          "role" => message[:role]&.to_s || message["role"],
-          "content" => message[:content] || message["content"]
+          "role" => normalized[:role]&.to_s,
+          "content" => normalized[:content]
         }
       end
     end
