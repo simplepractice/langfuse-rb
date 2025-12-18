@@ -17,6 +17,7 @@ module Langfuse
   #   prompt = client.get_prompt("greeting")
   #   compiled = prompt.compile(name: "Alice")
   #
+  # rubocop:disable Metrics/ClassLength
   class Client
     attr_reader :config, :api_client
 
@@ -137,6 +138,93 @@ module Langfuse
     def compile_prompt(name, variables: {}, version: nil, label: nil, fallback: nil, type: nil)
       prompt = get_prompt(name, version: version, label: label, fallback: fallback, type: type)
       prompt.compile(**variables)
+    end
+
+    # Create a new prompt (or new version if name already exists)
+    #
+    # Creates a new prompt in Langfuse. If a prompt with the same name already
+    # exists, this creates a new version of that prompt.
+    #
+    # @param name [String] The prompt name (required)
+    # @param prompt [String, Array<Hash>] The prompt content (required)
+    #   - For text prompts: a string with {{variable}} placeholders
+    #   - For chat prompts: array of message hashes with role and content
+    # @param type [Symbol] Prompt type (:text or :chat) (required)
+    # @param config [Hash] Optional configuration (model parameters, tools, etc.)
+    # @param labels [Array<String>] Optional labels (e.g., ["production"])
+    # @param tags [Array<String>] Optional tags for categorization
+    # @param commit_message [String, nil] Optional commit message
+    # @return [TextPromptClient, ChatPromptClient] The created prompt client
+    # @raise [ArgumentError] if required parameters are missing or invalid
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example Create a text prompt
+    #   prompt = client.create_prompt(
+    #     name: "greeting",
+    #     prompt: "Hello {{name}}!",
+    #     type: :text,
+    #     labels: ["production"],
+    #     config: { model: "gpt-4o", temperature: 0.7 }
+    #   )
+    #
+    # @example Create a chat prompt
+    #   prompt = client.create_prompt(
+    #     name: "support-bot",
+    #     prompt: [
+    #       { role: "system", content: "You are a {{role}} assistant" },
+    #       { role: "user", content: "{{question}}" }
+    #     ],
+    #     type: :chat,
+    #     labels: ["staging"]
+    #   )
+    # rubocop:disable Metrics/ParameterLists
+    def create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_message: nil)
+      validate_prompt_type!(type)
+      validate_prompt_content!(prompt, type)
+
+      prompt_data = api_client.create_prompt(
+        name: name,
+        prompt: normalize_prompt_content(prompt, type),
+        type: type.to_s,
+        config: config,
+        labels: labels,
+        tags: tags,
+        commit_message: commit_message
+      )
+
+      build_prompt_client(prompt_data)
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Update an existing prompt version's metadata
+    #
+    # Updates the labels of an existing prompt version.
+    # Note: The prompt content itself cannot be changed after creation.
+    #
+    # @param name [String] The prompt name (required)
+    # @param version [Integer] The version number to update (required)
+    # @param labels [Array<String>] New labels (replaces existing). Required.
+    # @return [TextPromptClient, ChatPromptClient] The updated prompt client
+    # @raise [ArgumentError] if labels is not an array
+    # @raise [NotFoundError] if the prompt is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example Update labels to promote to production
+    #   prompt = client.update_prompt(
+    #     name: "greeting",
+    #     version: 2,
+    #     labels: ["production"]
+    #   )
+    def update_prompt(name:, version:, labels:)
+      prompt_data = api_client.update_prompt(
+        name: name,
+        version: version,
+        labels: labels
+      )
+
+      build_prompt_client(prompt_data)
     end
 
     # Generate URL for viewing a trace in Langfuse UI
@@ -314,6 +402,8 @@ module Langfuse
     # @return [TextPromptClient, ChatPromptClient]
     # @raise [ArgumentError] if type is invalid
     def build_fallback_prompt_client(name, fallback, type)
+      validate_prompt_type!(type)
+
       # Create minimal prompt data structure
       prompt_data = {
         "name" => name,
@@ -330,9 +420,58 @@ module Langfuse
         TextPromptClient.new(prompt_data)
       when :chat
         ChatPromptClient.new(prompt_data)
-      else
-        raise ArgumentError, "Invalid type: #{type}. Must be :text or :chat"
+      end
+    end
+
+    # Validate prompt type parameter
+    #
+    # @param type [Symbol] The type to validate
+    # @raise [ArgumentError] if type is invalid
+    def validate_prompt_type!(type)
+      valid_types = %i[text chat]
+      return if valid_types.include?(type)
+
+      raise ArgumentError, "Invalid type: #{type}. Must be :text or :chat"
+    end
+
+    # Validate prompt content matches the declared type
+    #
+    # @param prompt [String, Array] The prompt content
+    # @param type [Symbol] The declared type
+    # @raise [ArgumentError] if content doesn't match type
+    def validate_prompt_content!(prompt, type)
+      case type
+      when :text
+        raise ArgumentError, "Text prompt must be a String" unless prompt.is_a?(String)
+      when :chat
+        raise ArgumentError, "Chat prompt must be an Array" unless prompt.is_a?(Array)
+      end
+    end
+
+    # Normalize prompt content for API request
+    #
+    # Converts Ruby symbol keys to string keys for chat messages
+    #
+    # @param prompt [String, Array] The prompt content
+    # @param type [Symbol] The prompt type
+    # @return [String, Array] Normalized content
+    def normalize_prompt_content(prompt, type)
+      return prompt if type == :text
+
+      # Normalize chat messages to use string keys
+      prompt.map do |message|
+        # Convert all keys to symbols first, then extract
+        normalized = message.transform_keys do |k|
+          k.to_sym
+        rescue StandardError
+          k
+        end
+        {
+          "role" => normalized[:role]&.to_s,
+          "content" => normalized[:content]
+        }
       end
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end

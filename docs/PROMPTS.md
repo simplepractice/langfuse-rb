@@ -9,10 +9,21 @@ Langfuse centralizes prompt management, allowing you to:
 - A/B test prompt variations
 - Roll back to previous versions
 - Manage prompts across environments (dev/staging/prod)
+- **Create and update prompts programmatically** from your Ruby code
 
 The SDK supports two prompt types:
 - **Text Prompts:** Single string templates (e.g., instructions, system messages)
 - **Chat Prompts:** Structured message arrays (e.g., conversation templates)
+
+### Quick Reference
+
+| Method | Description |
+|--------|-------------|
+| `get_prompt(name)` | Fetch a prompt by name |
+| `compile_prompt(name, variables:)` | Fetch and compile in one call |
+| `create_prompt(name:, prompt:, type:)` | Create a new prompt or version |
+| `update_prompt(name:, version:, labels:)` | Update labels on a version |
+| `list_prompts` | List all prompts in your project |
 
 ## Text Prompts
 
@@ -281,6 +292,126 @@ prompt.compile(
 # Context: Customer browsing electronics
 ```
 
+## Creating Prompts
+
+You can create prompts programmatically without using the Langfuse UI.
+
+### `create_prompt` - Create New Prompts
+
+Create a new prompt or add a new version to an existing prompt:
+
+```ruby
+# Create a text prompt
+prompt = client.create_prompt(
+  name: "welcome-email",
+  prompt: "Welcome {{name}}! Thank you for joining {{company}}.",
+  type: :text,
+  config: { model: "gpt-4o", temperature: 0.7 },
+  labels: ["staging"],
+  tags: ["email", "onboarding"]
+)
+
+puts prompt.name       # => "welcome-email"
+puts prompt.version    # => 1
+```
+
+If a prompt with the same name already exists, a new version is created:
+
+```ruby
+# Create version 2 of "welcome-email"
+prompt_v2 = client.create_prompt(
+  name: "welcome-email",
+  prompt: "Hello {{name}}! Welcome to {{company}}. We're glad you're here!",
+  type: :text,
+  labels: ["staging"]
+)
+
+puts prompt_v2.version  # => 2
+```
+
+### Creating Chat Prompts
+
+Chat prompts use an array of message hashes:
+
+```ruby
+prompt = client.create_prompt(
+  name: "support-bot",
+  prompt: [
+    { role: "system", content: "You are a {{role}} support assistant for {{company}}." },
+    { role: "user", content: "{{question}}" }
+  ],
+  type: :chat,
+  config: { model: "gpt-4o", max_tokens: 500 },
+  labels: ["production"]
+)
+```
+
+**Note:** Message roles can use either strings (`"system"`) or symbols (`:system`).
+
+### Commit Messages
+
+Track changes with optional commit messages:
+
+```ruby
+prompt = client.create_prompt(
+  name: "greeting",
+  prompt: "Hi {{name}}, how can I help you today?",
+  type: :text,
+  commit_message: "Added friendlier tone per UX feedback"
+)
+```
+
+Commit messages are visible in the Langfuse UI version history.
+
+## Updating Prompts
+
+### `update_prompt` - Update Labels
+
+Update the labels on an existing prompt version. This is useful for promoting prompts through environments:
+
+```ruby
+# Promote version 3 to production
+prompt = client.update_prompt(
+  name: "greeting",
+  version: 3,
+  labels: ["production"]
+)
+
+puts prompt.labels  # => ["production"]
+```
+
+**Note:** Only labels can be updated. Prompt content is immutable after creation—create a new version instead.
+
+### Promotion Workflow Example
+
+A typical promotion workflow:
+
+```ruby
+# 1. Create new version in staging
+new_prompt = client.create_prompt(
+  name: "checkout-flow",
+  prompt: "Complete your purchase of {{product}}...",
+  type: :text,
+  labels: ["staging"]
+)
+
+# 2. Test in staging environment...
+
+# 3. Promote to production
+client.update_prompt(
+  name: "checkout-flow",
+  version: new_prompt.version,
+  labels: ["production"]
+)
+
+# 4. Remove old production label if needed
+client.update_prompt(
+  name: "checkout-flow",
+  version: old_version,
+  labels: []  # Empty array removes all labels
+)
+```
+
 ## Convenience Methods
 
 ### `compile_prompt` - Fetch and Compile
@@ -437,4 +568,4 @@ See [TRACING.md](TRACING.md) for more tracing patterns.
 - [TRACING.md](TRACING.md) - Tracking prompt usage in traces
 - [CACHING.md](CACHING.md) - Optimizing prompt fetch performance
 - [ERROR_HANDLING.md](ERROR_HANDLING.md) - Handling prompt errors
-- [API_REFERENCE.md](API_REFERENCE.md) - Complete method signatures
+- [API_REFERENCE.md](API_REFERENCE.md) - Complete method signatures for all prompt methods
