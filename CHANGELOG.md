@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Create and update methods for prompts (#36)
 
+
+## [0.2.0] - 2025-12-19
+
+### Added
+- Prompt creation and update methods (`create_prompt`, `update_prompt`)
+- Extended prompt management documentation with create/update examples
+
 ## [0.1.0] - 2025-12-01
 
 ### Added
