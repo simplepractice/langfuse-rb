@@ -1,10 +1,10 @@
-## TL;DR
+#### `TL;DR`
 <!-- One sentence -->
 
-  ## Why
+#### `Why`
 <!-- Motivation/context for this change -->
 
-## Checklist
+#### `Checklist`
 - [ ] Has label
 - [ ] Has linked issue
 - [ ] Tests added for new behavior
