@@ -7,15 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Create and update methods for prompts (#36)
-
-
 ## [0.2.0] - 2025-12-19
 
 ### Added
-- Prompt creation and update methods (`create_prompt`, `update_prompt`)
-- Extended prompt management documentation with create/update examples
+- Prompt creation and update methods (`create_prompt`, `update_prompt`) (#36)
 
 ## [0.1.0] - 2025-12-01
 
@@ -34,5 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from legacy ingestion API to OTLP endpoint
 - Removed `tracing_enabled` configuration flag (#2)
 
-[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/simplepractice/langfuse-rb/releases/tag/v0.1.0
