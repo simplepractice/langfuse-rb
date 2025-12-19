@@ -86,14 +86,15 @@ end
 
 We welcome contributions! Please:
 
-1. Check existing [issues](https://github.com/simplepractice/langfuse-rb/issues) and roadmap
+1. Check existing [issues](https://github.com/simplepractice/langfuse-rb/issues)
 2. Open an issue to discuss your idea
 3. Fork the repo and create a feature branch
 4. Write tests (maintain >95% coverage)
 5. Ensure `bundle exec rspec` and `bundle exec rubocop` pass
 6. Submit a pull request
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+> [!TIP]
+> See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ## Support
 
