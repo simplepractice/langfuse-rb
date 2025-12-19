@@ -101,6 +101,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 - **[Langfuse Documentation](https://langfuse.com/docs)** - Platform documentation
 - **[API Reference](https://api.reference.langfuse.com)** - REST API reference
 
-## License
-
-[MIT](LICENSE)
