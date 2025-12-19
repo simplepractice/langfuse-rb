@@ -2,7 +2,7 @@
 
 # Langfuse Ruby SDK
 
-[![Gem Version](https://badge.fury.io/rb/langfuse.svg)](https://badge.fury.io/rb/langfuse)
+[![Gem Version](https://badge.fury.io/rb/langfuse-rb.svg?icon=si%3Arubygems)](https://badge.fury.io/rb/langfuse-rb)
 [![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.2.0-ruby.svg)](https://www.ruby-lang.org/en/)
 [![Test Coverage](https://img.shields.io/badge/coverage-99.6%25-brightgreen.svg)](coverage)
 
@@ -74,7 +74,7 @@ Langfuse.observe("chat-completion", as_type: :generation) do |gen|
 end
 ```
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > For complete reference see [docs](./docs/) section.
 
 ## Requirements
