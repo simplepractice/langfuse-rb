@@ -3,8 +3,8 @@ PATH
   specs:
     langfuse-rb (0.2.0)
       base64 (~> 0.2)
-      faraday (~> 2.0)
-      faraday-retry (~> 2.0)
+      faraday (>= 1.0, < 3)
+      faraday-retry (>= 1.0, < 3.0)
       mustache (~> 1.1)
       opentelemetry-api (~> 1.2)
       opentelemetry-common (~> 0.21)
@@ -137,6 +137,7 @@ GEM
 
 PLATFORMS
   arm64-darwin-22
+  arm64-darwin-24
   arm64-darwin-25
   x86_64-linux
 
