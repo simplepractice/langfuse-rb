@@ -898,6 +898,271 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "#create_prompt" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+
+    context "with text prompt" do
+      let(:created_text_response) do
+        {
+          "id" => "prompt-new",
+          "name" => "greeting",
+          "version" => 1,
+          "type" => "text",
+          "prompt" => "Hello {{name}}!",
+          "labels" => ["staging"],
+          "tags" => ["greeting"],
+          "config" => { "model" => "gpt-4o" }
+        }
+      end
+
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_return(
+            status: 201,
+            body: created_text_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns TextPromptClient" do
+        result = client.create_prompt(
+          name: "greeting",
+          prompt: "Hello {{name}}!",
+          type: :text
+        )
+        expect(result).to be_a(Langfuse::TextPromptClient)
+      end
+
+      it "sets prompt data correctly" do
+        result = client.create_prompt(
+          name: "greeting",
+          prompt: "Hello {{name}}!",
+          type: :text,
+          labels: ["staging"],
+          config: { model: "gpt-4o" }
+        )
+        expect(result.name).to eq("greeting")
+        expect(result.prompt).to eq("Hello {{name}}!")
+        expect(result.version).to eq(1)
+        expect(result.labels).to include("staging")
+      end
+
+      it "compiles the created prompt" do
+        result = client.create_prompt(
+          name: "greeting",
+          prompt: "Hello {{name}}!",
+          type: :text
+        )
+        expect(result.compile(name: "Alice")).to eq("Hello Alice!")
+      end
+    end
+
+    context "with chat prompt" do
+      let(:created_chat_response) do
+        {
+          "id" => "prompt-chat",
+          "name" => "assistant",
+          "version" => 1,
+          "type" => "chat",
+          "prompt" => [
+            { "role" => "system", "content" => "You are a {{role}} assistant" }
+          ],
+          "labels" => [],
+          "tags" => [],
+          "config" => {}
+        }
+      end
+
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_return(
+            status: 201,
+            body: created_chat_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns ChatPromptClient" do
+        result = client.create_prompt(
+          name: "assistant",
+          prompt: [{ role: :system, content: "You are a {{role}} assistant" }],
+          type: :chat
+        )
+        expect(result).to be_a(Langfuse::ChatPromptClient)
+      end
+
+      it "normalizes symbol keys to string keys" do
+        client.create_prompt(
+          name: "assistant",
+          prompt: [{ role: :system, content: "You are helpful" }],
+          type: :chat
+        )
+        expect(
+          a_request(:post, "#{base_url}/api/public/v2/prompts")
+            .with(body: hash_including(
+              "prompt" => [{ "role" => "system", "content" => "You are helpful" }]
+            ))
+        ).to have_been_made.once
+      end
+
+      it "compiles the created chat prompt" do
+        result = client.create_prompt(
+          name: "assistant",
+          prompt: [{ role: :system, content: "You are a {{role}} assistant" }],
+          type: :chat
+        )
+        compiled = result.compile(role: "helpful")
+        expect(compiled.first[:content]).to eq("You are a helpful assistant")
+      end
+    end
+
+    context "with all optional parameters" do
+      let(:created_response) do
+        {
+          "id" => "prompt-full",
+          "name" => "full-prompt",
+          "version" => 1,
+          "type" => "text",
+          "prompt" => "Hello!",
+          "labels" => ["production"],
+          "tags" => %w[greeting v1],
+          "config" => { "temperature" => 0.7 }
+        }
+      end
+
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_return(
+            status: 201,
+            body: created_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "passes all parameters to api_client" do
+        client.create_prompt(
+          name: "full-prompt",
+          prompt: "Hello!",
+          type: :text,
+          config: { temperature: 0.7 },
+          labels: ["production"],
+          tags: %w[greeting v1],
+          commit_message: "Initial version"
+        )
+
+        expect(
+          a_request(:post, "#{base_url}/api/public/v2/prompts")
+            .with(body: hash_including(
+              "name" => "full-prompt",
+              "prompt" => "Hello!",
+              "type" => "text",
+              "config" => { "temperature" => 0.7 },
+              "labels" => ["production"],
+              "tags" => %w[greeting v1],
+              "commitMessage" => "Initial version"
+            ))
+        ).to have_been_made.once
+      end
+    end
+
+    context "with validation errors" do
+      it "raises ArgumentError for invalid type" do
+        expect do
+          client.create_prompt(name: "test", prompt: "Hello", type: :invalid)
+        end.to raise_error(ArgumentError, /Invalid type.*Must be :text or :chat/)
+      end
+
+      it "raises ArgumentError when text prompt is not a String" do
+        expect do
+          client.create_prompt(name: "test", prompt: [], type: :text)
+        end.to raise_error(ArgumentError, "Text prompt must be a String")
+      end
+
+      it "raises ArgumentError when chat prompt is not an Array" do
+        expect do
+          client.create_prompt(name: "test", prompt: "Hello", type: :chat)
+        end.to raise_error(ArgumentError, "Chat prompt must be an Array")
+      end
+    end
+  end
+
+  describe "#update_prompt" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+
+    context "with text prompt" do
+      let(:updated_response) do
+        {
+          "id" => "prompt-123",
+          "name" => "greeting",
+          "version" => 2,
+          "type" => "text",
+          "prompt" => "Hello {{name}}!",
+          "labels" => ["production"],
+          "tags" => [],
+          "config" => {}
+        }
+      end
+
+      before do
+        stub_request(:patch, "#{base_url}/api/public/v2/prompts/greeting/versions/2")
+          .to_return(
+            status: 200,
+            body: updated_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns TextPromptClient" do
+        result = client.update_prompt(name: "greeting", version: 2, labels: ["production"])
+        expect(result).to be_a(Langfuse::TextPromptClient)
+      end
+
+      it "returns prompt with updated labels" do
+        result = client.update_prompt(name: "greeting", version: 2, labels: ["production"])
+        expect(result.labels).to include("production")
+      end
+    end
+
+    context "with chat prompt" do
+      let(:updated_chat_response) do
+        {
+          "id" => "prompt-456",
+          "name" => "assistant",
+          "version" => 1,
+          "type" => "chat",
+          "prompt" => [{ "role" => "system", "content" => "You are helpful" }],
+          "labels" => ["production"],
+          "tags" => [],
+          "config" => {}
+        }
+      end
+
+      before do
+        stub_request(:patch, "#{base_url}/api/public/v2/prompts/assistant/versions/1")
+          .to_return(
+            status: 200,
+            body: updated_chat_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns ChatPromptClient" do
+        result = client.update_prompt(name: "assistant", version: 1, labels: ["production"])
+        expect(result).to be_a(Langfuse::ChatPromptClient)
+      end
+    end
+
+    context "with invalid labels argument" do
+      it "raises ArgumentError when labels is not an array" do
+        expect do
+          client.update_prompt(name: "greeting", version: 1, labels: "production")
+        end.to raise_error(ArgumentError, "labels must be an array")
+      end
+    end
+  end
+
   describe "#trace_url" do
     let(:client) { described_class.new(valid_config) }
 

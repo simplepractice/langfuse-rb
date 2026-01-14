@@ -83,13 +83,13 @@ make test
 ### Run Specific Test File
 
 ```bash
-bundle exec rspec spec/langfuse/client_spec.rb
+bundle exec rspec spec/langfuse_rb/client_spec.rb
 ```
 
 ### Run Specific Test at Line Number
 
 ```bash
-bundle exec rspec spec/langfuse/client_spec.rb:42
+bundle exec rspec spec/langfuse_rb/client_spec.rb:42
 ```
 
 ### Test Coverage
@@ -122,7 +122,7 @@ make lint
 Check specific file:
 
 ```bash
-bundle exec rubocop lib/langfuse/client.rb
+bundle exec rubocop lib/langfuse_rb/client.rb
 ```
 
 ### Run Full CI Check
@@ -167,7 +167,7 @@ When submitting a bug report, please include:
 ### Bug: get_prompt fails with 401 error despite valid credentials
 
 **Ruby Version:** ruby 3.2.2 (2023-03-30 revision e51014f9c0)
-**Gem Version:** langfuse 1.0.0
+**Gem Version:** langfuse-rb 1.0.0
 
 **Steps to Reproduce:**
 \`\`\`ruby
@@ -278,22 +278,17 @@ This makes it much easier for maintainers to understand and fix the issue!
 ### Example Pull Request Description
 
 ```markdown
-## Summary
-Adds support for custom timeout configuration per API call.
+#### `TL;DR`
+Add per-request timeout configuration to API calls.
 
-## Motivation
+#### `Why`
 Users need fine-grained control over request timeouts for different operations.
 
-## Changes
-- Added `timeout` option to `get_prompt` method
-- Updated `ApiClient` to support per-request timeouts
-- Added tests for timeout configuration
-- Updated README with timeout examples
-
-## Testing
-- Added 5 new test cases covering timeout scenarios
-- All existing tests pass
-- Coverage increased from 99.6% to 99.7%
+#### `Checklist`
+- [x] Has label
+- [x] Has linked issue
+- [x] Tests added for new behavior
+- [x] Docs updated (if user-facing)
 
 Closes #123
 ```
@@ -498,10 +493,23 @@ RSpec.describe Langfuse::Client do
 end
 ```
 
+## Testing Against Langfuse
+
+To test against a real Langfuse instance:
+
+1. Create a free account at [cloud.langfuse.com](https://cloud.langfuse.com) using your GitHub account
+2. Navigate to **Settings → API Keys → Create new API Keys**
+3. Set values for all `LANGFUSE_*` variables in `.env`:
+
+```bash
+LANGFUSE_HOST=https://cloud.langfuse.com
+LANGFUSE_PUBLIC_KEY=pk-lf-xxxxxxxx
+LANGFUSE_SECRET_KEY=sk-lf-xxxxxxxx
+```
+
 ## Questions or Need Help?
 
-- **Questions**: Open a [GitHub Discussion](https://github.com/langfuse/langfuse-ruby/discussions)
-- **Bugs**: Open an [issue](https://github.com/langfuse/langfuse-ruby/issues)
+- **Bugs**: Open an [issue](https://github.com/langfuse/langfuse-rb/issues)
 - **Security Issues**: Email security@langfuse.com (do not open public issues)
 
 ## License

@@ -2,13 +2,15 @@
 
 # Langfuse Ruby SDK
 
-[![Gem Version](https://badge.fury.io/rb/langfuse.svg)](https://badge.fury.io/rb/langfuse)
+[![Gem Version](https://badge.fury.io/rb/langfuse-rb.svg?icon=si%3Arubygems)](https://badge.fury.io/rb/langfuse-rb)
 [![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.2.0-ruby.svg)](https://www.ruby-lang.org/en/)
 [![Test Coverage](https://img.shields.io/badge/coverage-99.6%25-brightgreen.svg)](coverage)
 
 > Ruby SDK for [Langfuse](https://langfuse.com) - Open-source LLM observability and prompt management.
 
-## Features
+<br>
+
+### Features
 
 - 🎯 **Prompt Management** - Centralized prompt versioning with Mustache templating
 - 📊 **LLM Tracing** - Zero-boilerplate observability built on OpenTelemetry
@@ -18,24 +20,24 @@
 - 🛡️ **Fallback Support** - Graceful degradation when API unavailable
 - 🚀 **Rails-Friendly** - Global configuration pattern, works with any Ruby project
 
-## Installation
+<br>
+
+### Installation
 
 ```ruby
-# Gemfile
+# Add to Gemfile & bundle install
 gem 'langfuse-rb'
 ```
 
-```bash
-bundle install
-```
+<br>
 
-## Quick Start
+### Quick Start
 
-**Configure once at startup:**
+> Configure once at startup
 
 ```ruby
 # config/initializers/langfuse.rb (Rails)
-# or at the top of your script
+# Or at the top of your script
 Langfuse.configure do |config|
   config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
   config.secret_key = ENV['LANGFUSE_SECRET_KEY']
@@ -44,7 +46,7 @@ Langfuse.configure do |config|
 end
 ```
 
-**Fetch and use a prompt:**
+> Fetch and use a prompt
 
 ```ruby
 prompt = Langfuse.client.get_prompt("greeting")
@@ -52,7 +54,7 @@ message = prompt.compile(name: "Alice")
 # => "Hello Alice!"
 ```
 
-**Trace an LLM call:**
+> Trace an LLM call
 
 ```ruby
 Langfuse.observe("chat-completion", as_type: :generation) do |gen|
@@ -74,33 +76,37 @@ Langfuse.observe("chat-completion", as_type: :generation) do |gen|
 end
 ```
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > For complete reference see [docs](./docs/) section.
 
-## Requirements
+<br>
+
+### Requirements
 
 - Ruby >= 3.2.0
 - No Rails dependency (works with any Ruby project)
 
-## Contributing
+<br>
+
+### Contributing
 
 We welcome contributions! Please:
 
-1. Check existing [issues](https://github.com/simplepractice/langfuse-rb/issues) and roadmap
+1. Check existing [issues](https://github.com/simplepractice/langfuse-rb/issues)
 2. Open an issue to discuss your idea
 3. Fork the repo and create a feature branch
 4. Write tests (maintain >95% coverage)
 5. Ensure `bundle exec rspec` and `bundle exec rubocop` pass
 6. Submit a pull request
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+> [!TIP]
+> See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
-## Support
+<br>
+
+### Support
 
 - **[GitHub Issues](https://github.com/simplepractice/langfuse-rb/issues)** - Bug reports and feature requests
 - **[Langfuse Documentation](https://langfuse.com/docs)** - Platform documentation
 - **[API Reference](https://api.reference.langfuse.com)** - REST API reference
 
-## License
-
-[MIT](LICENSE)
