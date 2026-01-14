@@ -340,9 +340,12 @@ module Langfuse
 
     # Shutdown the client and flush any pending scores
     #
+    # Also shuts down the cache if it supports shutdown (e.g., SWR thread pool).
+    #
     # @return [void]
     def shutdown
       @score_client.shutdown
+      @api_client.shutdown
     end
 
     private
@@ -362,18 +365,35 @@ module Langfuse
     def create_cache
       case config.cache_backend
       when :memory
-        PromptCache.new(
-          ttl: config.cache_ttl,
-          max_size: config.cache_max_size
-        )
+        create_memory_cache
       when :rails
-        RailsCacheAdapter.new(
-          ttl: config.cache_ttl,
-          lock_timeout: config.cache_lock_timeout
-        )
+        create_rails_cache_adapter
       else
         raise ConfigurationError, "Unknown cache backend: #{config.cache_backend}"
       end
+    end
+
+    # Create in-memory cache with SWR support if enabled
+    #
+    # @return [PromptCache]
+    def create_memory_cache
+      PromptCache.new(
+        ttl: config.cache_ttl,
+        max_size: config.cache_max_size,
+        stale_ttl: config.normalized_stale_ttl,
+        refresh_threads: config.cache_refresh_threads,
+        logger: config.logger
+      )
+    end
+
+    def create_rails_cache_adapter
+      RailsCacheAdapter.new(
+        ttl: config.cache_ttl,
+        lock_timeout: config.cache_lock_timeout,
+        stale_ttl: config.normalized_stale_ttl,
+        refresh_threads: config.cache_refresh_threads,
+        logger: config.logger
+      )
     end
 
     # Build the appropriate prompt client based on prompt type

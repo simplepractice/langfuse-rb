@@ -21,8 +21,7 @@ module Langfuse
   #     logger: Logger.new($stdout)
   #   )
   #
-  # rubocop:disable Metrics/ClassLength
-  class ApiClient
+  class ApiClient # rubocop:disable Metrics/ClassLength
     attr_reader :public_key, :secret_key, :base_url, :timeout, :logger, :cache
 
     # Initialize a new API client
@@ -107,26 +106,10 @@ module Langfuse
     # @raise [ApiError] for other API errors
     def get_prompt(name, version: nil, label: nil)
       raise ArgumentError, "Cannot specify both version and label" if version && label
+      return fetch_prompt_from_api(name, version: version, label: label) if cache.nil?
 
       cache_key = PromptCache.build_key(name, version: version, label: label)
-
-      # Use distributed lock if cache supports it (Rails.cache backend)
-      if cache.respond_to?(:fetch_with_lock)
-        cache.fetch_with_lock(cache_key) do
-          fetch_prompt_from_api(name, version: version, label: label)
-        end
-      elsif cache
-        # In-memory cache - use simple get/set pattern
-        cached_data = cache.get(cache_key)
-        return cached_data if cached_data
-
-        prompt_data = fetch_prompt_from_api(name, version: version, label: label)
-        cache.set(cache_key, prompt_data)
-        prompt_data
-      else
-        # No cache - fetch directly
-        fetch_prompt_from_api(name, version: version, label: label)
-      end
+      fetch_with_appropriate_caching_strategy(cache_key, name, version, label)
     end
 
     # Create a new prompt (or new version if prompt with same name exists)
@@ -246,7 +229,62 @@ module Langfuse
       raise ApiError, "Batch send failed: #{e.message}"
     end
 
+    def shutdown
+      cache.shutdown if cache.respond_to?(:shutdown)
+    end
+
     private
+
+    # Fetch prompt using the most appropriate caching strategy available
+    #
+    # @param cache_key [String] The cache key for this prompt
+    # @param name [String] The name of the prompt
+    # @param version [Integer, nil] Optional specific version number
+    # @param label [String, nil] Optional label
+    # @return [Hash] The prompt data
+    def fetch_with_appropriate_caching_strategy(cache_key, name, version, label)
+      if swr_cache_available?
+        fetch_with_swr_cache(cache_key, name, version, label)
+      elsif distributed_cache_available?
+        fetch_with_distributed_cache(cache_key, name, version, label)
+      else
+        fetch_with_simple_cache(cache_key, name, version, label)
+      end
+    end
+
+    # Check if SWR cache is available
+    def swr_cache_available?
+      cache.respond_to?(:swr_enabled?) && cache.swr_enabled?
+    end
+
+    # Check if distributed cache is available
+    def distributed_cache_available?
+      cache.respond_to?(:fetch_with_lock)
+    end
+
+    # Fetch with SWR cache
+    def fetch_with_swr_cache(cache_key, name, version, label)
+      cache.fetch_with_stale_while_revalidate(cache_key) do
+        fetch_prompt_from_api(name, version: version, label: label)
+      end
+    end
+
+    # Fetch with distributed cache (Rails.cache with stampede protection)
+    def fetch_with_distributed_cache(cache_key, name, version, label)
+      cache.fetch_with_lock(cache_key) do
+        fetch_prompt_from_api(name, version: version, label: label)
+      end
+    end
+
+    # Fetch with simple cache (in-memory cache)
+    def fetch_with_simple_cache(cache_key, name, version, label)
+      cached_data = cache.get(cache_key)
+      return cached_data if cached_data
+
+      prompt_data = fetch_prompt_from_api(name, version: version, label: label)
+      cache.set(cache_key, prompt_data)
+      prompt_data
+    end
 
     # Fetch a prompt from the API (without caching)
     #
@@ -408,4 +446,3 @@ module Langfuse
     end
   end
 end
-# rubocop:enable Metrics/ClassLength

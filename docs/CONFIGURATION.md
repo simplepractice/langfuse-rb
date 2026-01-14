@@ -21,6 +21,7 @@ Call this once at application startup (Rails initializer, boot script, etc.).
 ### Required
 
 #### `public_key`
+
 - **Type:** String
 - **Required:** Yes
 - **Description:** Your Langfuse public API key (starts with `pk-lf-`)
@@ -30,6 +31,7 @@ config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
 ```
 
 #### `secret_key`
+
 - **Type:** String
 - **Required:** Yes
 - **Description:** Your Langfuse secret API key (starts with `sk-lf-`)
@@ -41,6 +43,7 @@ config.secret_key = ENV['LANGFUSE_SECRET_KEY']
 ### Optional
 
 #### `base_url`
+
 - **Type:** String
 - **Default:** `"https://cloud.langfuse.com"`
 - **Description:** Langfuse API endpoint (use custom for self-hosted)
@@ -50,6 +53,7 @@ config.base_url = "https://your-instance.langfuse.com"
 ```
 
 #### `timeout`
+
 - **Type:** Integer (seconds)
 - **Default:** `5`
 - **Description:** HTTP request timeout for API calls
@@ -59,6 +63,7 @@ config.timeout = 10  # Increase for slow networks
 ```
 
 #### `cache_ttl`
+
 - **Type:** Integer (seconds)
 - **Default:** `60`
 - **Description:** How long to cache fetched prompts
@@ -70,6 +75,7 @@ config.cache_ttl = 300  # Cache for 5 minutes
 See [CACHING.md](CACHING.md) for cache strategies.
 
 #### `cache_max_size`
+
 - **Type:** Integer (entries)
 - **Default:** `1000`
 - **Description:** Maximum number of prompts to cache
@@ -79,6 +85,7 @@ config.cache_max_size = 5000  # Large prompt library
 ```
 
 #### `cache_backend`
+
 - **Type:** Symbol (`:memory` or `:rails`)
 - **Default:** `:memory`
 - **Description:** Cache storage backend
@@ -92,12 +99,14 @@ config.cache_backend = :rails
 ```
 
 **Requirements for `:rails` backend:**
+
 - Rails must be defined
 - `Rails.cache` must be configured (typically Redis)
 
 See [CACHING.md](CACHING.md) for backend comparison.
 
 #### `cache_lock_timeout`
+
 - **Type:** Integer (seconds)
 - **Default:** `10`
 - **Description:** Timeout for cache stampede protection locks
@@ -108,7 +117,82 @@ config.cache_lock_timeout = 5  # Faster timeout for high-traffic apps
 
 See [CACHING.md](CACHING.md#stampede-protection) for details.
 
+#### `cache_stale_while_revalidate`
+
+- **Type:** Boolean
+- **Default:** `false`
+- **Description:** Enable stale-while-revalidate caching pattern
+
+```ruby
+config.cache_stale_while_revalidate = true  # Enable SWR
+```
+
+When enabled, serves stale cached data immediately while refreshing in the background. This dramatically reduces P99 latency by avoiding synchronous API waits after cache expiration.
+
+**Behavior:**
+
+- `false` (default): Cache expires at TTL, next request waits for API (~100ms)
+- `true`: After TTL, serves stale data instantly (~1ms) + refreshes in background
+
+**Compatibility:**
+
+- ✅ Works with `:memory` backend
+- ✅ Works with `:rails` backend
+- Automatically sets `cache_stale_ttl` to `cache_ttl` if not customized
+
+See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for detailed usage.
+
+#### `cache_stale_ttl`
+
+- **Type:** Integer (seconds) or `:indefinite` Symbol
+- **Default:** `0` (SWR disabled)
+- **Description:** Grace period for serving stale data during background refresh
+- **Note:** `:indefinite` is automatically normalized to 1000 years (31,536,000,000 seconds) during config initialization
+
+```ruby
+config.cache_stale_ttl = 300  # Serve stale data for up to 5 minutes
+config.cache_stale_ttl = :indefinite  # Never expire (normalized to 1000 years internally)
+```
+
+**How it works:**
+
+- After `cache_ttl` expires, data becomes "stale" but still servable
+- Requests return stale data immediately while background refresh occurs
+- After `cache_stale_ttl` expires, data becomes "expired" and requires synchronous fetch
+
+**Recommended values:**
+
+- Same as `cache_ttl` (default when SWR enabled): Balanced freshness/latency
+- `2x cache_ttl`: More tolerance for API slowdowns
+- `:indefinite`: Maximum performance, eventual consistency, high availability
+
+**Auto-configuration:**
+When `cache_stale_while_revalidate = true` and `cache_stale_ttl` is not set (still `0`), it automatically defaults to `cache_ttl`.
+
+See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for examples.
+
+#### `cache_refresh_threads`
+
+- **Type:** Integer
+- **Default:** `5`
+- **Description:** Number of background threads for stale cache refresh
+
+```ruby
+config.cache_refresh_threads = 10  # More threads for high-traffic apps
+```
+
+**Thread pool sizing:**
+
+- Small apps (< 25 prompts): 2-3 threads sufficient
+- Medium apps (25-100 prompts): 5 threads (default)
+- Large apps (> 100 prompts): 10+ threads
+
+**Memory impact:** ~1-2MB per thread pool (negligible)
+
+Only used when SWR is enabled (`cache_stale_while_revalidate = true`).
+
 #### `batch_size`
+
 - **Type:** Integer
 - **Default:** `50`
 - **Description:** Number of scores to batch before sending to API
@@ -120,6 +204,7 @@ config.batch_size = 100  # Larger batches for high-volume scoring
 Used by scoring API. See [SCORING.md](SCORING.md).
 
 #### `flush_interval`
+
 - **Type:** Integer (seconds)
 - **Default:** `10`
 - **Description:** Maximum time to wait before flushing batched scores
@@ -129,6 +214,7 @@ config.flush_interval = 5  # Flush more frequently
 ```
 
 #### `logger`
+
 - **Type:** Logger
 - **Default:** Auto-detected (`Rails.logger` if Rails present, otherwise `Logger.new($stdout)`)
 - **Description:** Logger instance for SDK output
@@ -143,6 +229,7 @@ config.logger = Logger.new(IO::NULL)
 ```
 
 #### `tracing_async` ⚠️ Experimental
+
 - **Type:** Boolean
 - **Default:** `true`
 - **Status:** Not yet implemented (placeholder)
@@ -155,6 +242,7 @@ config.tracing_async = true  # Placeholder - no effect currently
 **Current Behavior:** All trace operations are synchronous with OpenTelemetry export. This option is reserved for future async job processing.
 
 #### `job_queue` ⚠️ Experimental
+
 - **Type:** Symbol
 - **Default:** `:default`
 - **Status:** Not yet implemented (placeholder)
@@ -245,11 +333,13 @@ config.cache_store = :redis_cache_store, { url: ENV['REDIS_URL'] }
 ```
 
 **Advantages:**
+
 - Shared cache across processes (Puma workers, Sidekiq)
 - Persistent across deploys
 - Built-in Rails instrumentation
 
 **Disadvantages:**
+
 - Requires Redis dependency
 - Slightly slower than in-memory
 
@@ -276,6 +366,7 @@ Langfuse.configure do |config|
   config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
   config.cache_ttl = 300  # Longer TTL for stability
   config.cache_backend = :rails  # Shared cache
+  config.cache_stale_while_revalidate = true  # Enable SWR for best latency
   config.timeout = 10  # Handle network variability
   config.logger = Rails.logger
 end
@@ -296,6 +387,7 @@ Langfuse.configure do |config|
   config.public_key = 'pk-lf-test'
   config.secret_key = 'sk-lf-test'
   config.cache_backend = :memory  # Isolated per-process cache
+  config.cache_stale_while_revalidate = false  # Disable SWR for predictable tests
 end
 ```
 
@@ -315,6 +407,7 @@ Langfuse.client
 ```
 
 Validation rules:
+
 - `public_key` must be present
 - `secret_key` must be present
 - `cache_backend` must be `:memory` or `:rails`

@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require_relative "prompt_cache"
+require_relative "stale_while_revalidate"
+
 module Langfuse
   # Rails.cache adapter for distributed caching with Redis
   #
@@ -12,20 +15,30 @@ module Langfuse
   #   adapter.get("greeting:1") # => prompt_data
   #
   class RailsCacheAdapter
-    attr_reader :ttl, :namespace, :lock_timeout
+    include StaleWhileRevalidate
+
+    attr_reader :ttl, :namespace, :lock_timeout, :stale_ttl, :thread_pool, :logger
 
     # Initialize a new Rails.cache adapter
     #
     # @param ttl [Integer] Time-to-live in seconds (default: 60)
     # @param namespace [String] Cache key namespace (default: "langfuse")
     # @param lock_timeout [Integer] Lock timeout in seconds for stampede protection (default: 10)
+    # @param stale_ttl [Integer] Stale TTL for SWR in seconds (default: 0, SWR disabled).
+    #   Note: :indefinite is normalized to 1000 years by Config before being passed here.
+    # @param refresh_threads [Integer] Number of background refresh threads (default: 5)
+    # @param logger [Logger, nil] Logger instance for error reporting (default: nil, creates new logger)
     # @raise [ConfigurationError] if Rails.cache is not available
-    def initialize(ttl: 60, namespace: "langfuse", lock_timeout: 10)
+    def initialize(ttl: 60, namespace: "langfuse", lock_timeout: 10, stale_ttl: 0, refresh_threads: 5,
+                   logger: default_logger)
       validate_rails_cache!
 
       @ttl = ttl
       @namespace = namespace
       @lock_timeout = lock_timeout
+      @stale_ttl = stale_ttl
+      @logger = logger
+      initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
     end
 
     # Get a value from the cache
@@ -42,54 +55,10 @@ module Langfuse
     # @param value [Object] Value to cache
     # @return [Object] The cached value
     def set(key, value)
-      Rails.cache.write(namespaced_key(key), value, expires_in: ttl)
+      # Calculate expiration: use total_ttl if SWR enabled, otherwise just ttl
+      expires_in = swr_enabled? ? total_ttl : ttl
+      Rails.cache.write(namespaced_key(key), value, expires_in:)
       value
-    end
-
-    # Fetch a value from cache with distributed lock for stampede protection
-    #
-    # This method prevents cache stampedes (thundering herd) by ensuring only one
-    # process fetches from the source when the cache is empty. Other processes wait
-    # for the first one to populate the cache.
-    #
-    # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries max, ~350ms total).
-    # If cache is still empty after waiting, falls back to fetching from source.
-    #
-    # @param key [String] Cache key
-    # @yield Block to execute if cache miss (should fetch fresh data)
-    # @return [Object] Cached or freshly fetched value
-    #
-    # @example
-    #   adapter.fetch_with_lock("greeting:v1") do
-    #     api_client.get_prompt("greeting")
-    #   end
-    def fetch_with_lock(key)
-      # 1. Check cache first (fast path - no lock needed)
-      cached = get(key)
-      return cached if cached
-
-      # 2. Cache miss - try to acquire distributed lock
-      lock_key = "#{namespaced_key(key)}:lock"
-
-      if acquire_lock(lock_key)
-        begin
-          # We got the lock - fetch from source and populate cache
-          value = yield
-          set(key, value)
-          value
-        ensure
-          # Always release lock, even if block raises
-          release_lock(lock_key)
-        end
-      else
-        # Someone else has the lock - wait for them to populate cache
-        cached = wait_for_cache(key)
-        return cached if cached
-
-        # Cache still empty after waiting - fall back to fetching ourselves
-        # (This handles cases where lock holder crashed or took too long)
-        yield
-      end
     end
 
     # Clear the entire Langfuse cache namespace
@@ -133,33 +102,103 @@ module Langfuse
       PromptCache.build_key(name, version: version, label: label)
     end
 
-    private
-
-    # Add namespace prefix to cache key
+    # Fetch a value from cache with lock for stampede protection
     #
-    # @param key [String] Original cache key
-    # @return [String] Namespaced cache key
-    def namespaced_key(key)
-      "#{namespace}:#{key}"
+    # This method prevents cache stampedes (thundering herd) by ensuring only one
+    # process/thread fetches from the source when the cache is empty. Others wait
+    # for the first one to populate the cache.
+    #
+    # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries max, ~350ms total).
+    # If cache is still empty after waiting, falls back to fetching from source.
+    #
+    # @param key [String] Cache key
+    # @yield Block to execute if cache miss (should fetch fresh data)
+    # @return [Object] Cached or freshly fetched value
+    #
+    # @example
+    #   cache.fetch_with_lock("greeting:v1") do
+    #     api_client.get_prompt("greeting")
+    #   end
+    def fetch_with_lock(key)
+      # 1. Check cache first (fast path - no lock needed)
+      cached = get(key)
+      return cached if cached
+
+      # 2. Cache miss - try to acquire lock
+      lock_key = build_lock_key(key)
+
+      if acquire_lock(lock_key)
+        begin
+          # We got the lock - fetch from source and populate cache
+          value = yield
+          set(key, value)
+          value
+        ensure
+          # Always release lock, even if block raises
+          release_lock(lock_key)
+        end
+      else
+        # Someone else has the lock - wait for them to populate cache
+        cached = wait_for_cache(key)
+        return cached if cached
+
+        # Cache still empty after waiting - fall back to fetching ourselves
+        # (This handles cases where lock holder crashed or took too long)
+        yield
+      end
     end
 
-    # Acquire a distributed lock using Rails.cache
+    private
+
+    # Implementation of StaleWhileRevalidate abstract methods
+
+    # Get value from cache (SWR interface)
     #
-    # Uses atomic "write if not exists" operation to ensure only one process
-    # can acquire the lock.
+    # @param key [String] Cache key
+    # @return [Object, nil] Cached value
+    def cache_get(key)
+      get(key)
+    end
+
+    # Set value in cache (SWR interface)
+    #
+    # @param key [String] Cache key
+    # @param value [Object] Value to cache (expects CacheEntry)
+    # @return [Object] The cached value
+    def cache_set(key, value)
+      set(key, value)
+    end
+
+    # Build lock key with namespace
+    #
+    # Used for both fetch operations (stampede protection) and refresh operations
+    # (preventing duplicate background refreshes).
+    #
+    # @param key [String] Cache key
+    # @return [String] Namespaced lock key
+    def build_lock_key(key)
+      "#{namespaced_key(key)}:lock"
+    end
+
+    # Acquire a lock using Rails.cache
+    #
+    # Used for both fetch operations and refresh operations.
+    # Uses the configured lock_timeout for all locking scenarios.
     #
     # @param lock_key [String] Full lock key (already namespaced)
-    # @return [Boolean] true if lock was acquired, false if already held by another process
+    # @return [Boolean] true if lock was acquired, false if already held
     def acquire_lock(lock_key)
       Rails.cache.write(
         lock_key,
         true,
         unless_exist: true, # Atomic: only write if key doesn't exist
-        expires_in: lock_timeout # Auto-expire to prevent deadlocks
+        expires_in: lock_timeout # Use configured lock timeout
       )
     end
 
-    # Release a distributed lock
+    # Release a lock
+    #
+    # Used for both fetch and refresh operations.
     #
     # @param lock_key [String] Full lock key (already namespaced)
     # @return [void]
@@ -172,7 +211,7 @@ module Langfuse
     # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries, ~350ms total).
     # This gives the lock holder time to fetch and populate the cache.
     #
-    # @param key [String] Cache key (not namespaced)
+    # @param key [String] Cache key
     # @return [Object, nil] Cached value if found, nil if still empty after waiting
     def wait_for_cache(key)
       intervals = [0.05, 0.1, 0.2] # 50ms, 100ms, 200ms (exponential backoff)
@@ -186,6 +225,16 @@ module Langfuse
       nil # Cache still empty after all retries
     end
 
+    # Rails.cache-specific helper methods
+
+    # Add namespace prefix to cache key
+    #
+    # @param key [String] Original cache key
+    # @return [String] Namespaced cache key
+    def namespaced_key(key)
+      "#{namespace}:#{key}"
+    end
+
     # Validate that Rails.cache is available
     #
     # @raise [ConfigurationError] if Rails.cache is not available
@@ -195,6 +244,17 @@ module Langfuse
 
       raise ConfigurationError,
             "Rails.cache is not available. Rails cache backend requires Rails with a configured cache store."
+    end
+
+    # Create a default logger
+    #
+    # @return [Logger]
+    def default_logger
+      if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
+        Rails.logger
+      else
+        Logger.new($stdout, level: Logger::WARN)
+      end
     end
   end
 end
