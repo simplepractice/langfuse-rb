@@ -809,9 +809,9 @@ RSpec.describe Langfuse::ApiClient do
         expect(options[:backoff_factor]).to eq(2)
       end
 
-      it "configures retry for GET and POST requests" do
+      it "configures retry for GET, POST, and PATCH requests" do
         options = api_client.send(:retry_options)
-        expect(options[:methods]).to contain_exactly(:get, :post)
+        expect(options[:methods]).to contain_exactly(:get, :post, :patch)
       end
 
       it "configures retry for transient error status codes" do
@@ -879,6 +879,37 @@ RSpec.describe Langfuse::ApiClient do
       end
     end
 
+    context "with URL encoding of special characters in prompt names" do
+      let(:prompt_response) do
+        {
+          "id" => "prompt-123",
+          "name" => "greeting",
+          "version" => 1,
+          "prompt" => "Hello {{name}}!",
+          "type" => "text",
+          "labels" => ["production"]
+        }
+      end
+
+      it "encodes special characters in prompt names" do
+        prompt_name = "my/prompt name?special"
+        encoded_name = URI.encode_uri_component(prompt_name)
+
+        stub_request(:get, "#{base_url}/api/public/v2/prompts/#{encoded_name}")
+          .to_return(
+            status: 200,
+            body: prompt_response.merge("name" => prompt_name).to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        result = api_client.get_prompt(prompt_name)
+        expect(result["name"]).to eq(prompt_name)
+        expect(
+          a_request(:get, "#{base_url}/api/public/v2/prompts/#{encoded_name}")
+        ).to have_been_made.once
+      end
+    end
+
     # rubocop:disable RSpec/MultipleMemoizedHelpers
     context "with Rails cache backend (fetch_with_lock)" do
       let(:rails_cache) do
@@ -941,6 +972,328 @@ RSpec.describe Langfuse::ApiClient do
       end
     end
     # rubocop:enable RSpec/MultipleMemoizedHelpers
+  end
+
+  describe "#create_prompt" do
+    let(:prompt_name) { "new-prompt" }
+    let(:text_prompt_request) do
+      {
+        name: prompt_name,
+        prompt: "Hello {{name}}!",
+        type: "text",
+        config: { model: "gpt-4o" },
+        labels: ["staging"],
+        tags: ["greeting"]
+      }
+    end
+    let(:created_prompt_response) do
+      {
+        "id" => "prompt-new",
+        "name" => prompt_name,
+        "version" => 1,
+        "type" => "text",
+        "prompt" => "Hello {{name}}!",
+        "config" => { "model" => "gpt-4o" },
+        "labels" => ["staging"],
+        "tags" => ["greeting"]
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_return(
+            status: 201,
+            body: created_prompt_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "creates a prompt and returns data" do
+        result = api_client.create_prompt(**text_prompt_request)
+        expect(result["name"]).to eq(prompt_name)
+        expect(result["version"]).to eq(1)
+      end
+
+      it "makes POST request to correct endpoint" do
+        api_client.create_prompt(**text_prompt_request)
+        expect(
+          a_request(:post, "#{base_url}/api/public/v2/prompts")
+        ).to have_been_made.once
+      end
+
+      it "sends correct payload" do
+        api_client.create_prompt(**text_prompt_request)
+        expect(
+          a_request(:post, "#{base_url}/api/public/v2/prompts")
+            .with(body: hash_including(
+              "name" => prompt_name,
+              "prompt" => "Hello {{name}}!",
+              "type" => "text"
+            ))
+        ).to have_been_made.once
+      end
+    end
+
+    # rubocop:disable RSpec/MultipleMemoizedHelpers
+    context "with chat prompt" do
+      let(:chat_prompt_request) do
+        {
+          name: "chat-prompt",
+          prompt: [{ "role" => "system", "content" => "You are helpful" }],
+          type: "chat",
+          config: {},
+          labels: [],
+          tags: []
+        }
+      end
+      let(:created_chat_response) do
+        {
+          "id" => "prompt-chat",
+          "name" => "chat-prompt",
+          "version" => 1,
+          "type" => "chat",
+          "prompt" => [{ "role" => "system", "content" => "You are helpful" }],
+          "config" => {},
+          "labels" => [],
+          "tags" => []
+        }
+      end
+
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_return(
+            status: 201,
+            body: created_chat_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "creates a chat prompt" do
+        result = api_client.create_prompt(**chat_prompt_request)
+        expect(result["type"]).to eq("chat")
+        expect(result["prompt"]).to be_an(Array)
+      end
+    end
+    # rubocop:enable RSpec/MultipleMemoizedHelpers
+
+    context "with commit message" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_return(
+            status: 201,
+            body: created_prompt_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "includes commit message in payload" do
+        api_client.create_prompt(**text_prompt_request, commit_message: "Initial version")
+        expect(
+          a_request(:post, "#{base_url}/api/public/v2/prompts")
+            .with(body: hash_including("commitMessage" => "Initial version"))
+        ).to have_been_made.once
+      end
+    end
+
+    context "when authentication fails" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+      end
+
+      it "raises UnauthorizedError" do
+        expect do
+          api_client.create_prompt(**text_prompt_request)
+        end.to raise_error(Langfuse::UnauthorizedError, "Authentication failed. Check your API keys.")
+      end
+    end
+
+    context "when API returns an error" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_return(
+            status: 400,
+            body: { message: "Invalid prompt type" }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "raises ApiError with status code and message" do
+        expect do
+          api_client.create_prompt(**text_prompt_request)
+        end.to raise_error(Langfuse::ApiError, /API request failed \(400\): Invalid prompt type/)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/prompts")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect do
+          api_client.create_prompt(**text_prompt_request)
+        end.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+  end
+
+  describe "#update_prompt" do
+    let(:prompt_name) { "existing-prompt" }
+    let(:version) { 2 }
+    let(:updated_prompt_response) do
+      {
+        "id" => "prompt-123",
+        "name" => prompt_name,
+        "version" => version,
+        "type" => "text",
+        "prompt" => "Hello {{name}}!",
+        "labels" => ["production"],
+        "tags" => []
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:patch, "#{base_url}/api/public/v2/prompts/#{prompt_name}/versions/#{version}")
+          .to_return(
+            status: 200,
+            body: updated_prompt_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "updates prompt and returns data" do
+        result = api_client.update_prompt(
+          name: prompt_name,
+          version: version,
+          labels: ["production"]
+        )
+        expect(result["labels"]).to include("production")
+      end
+
+      it "makes PATCH request to correct endpoint" do
+        api_client.update_prompt(name: prompt_name, version: version, labels: ["production"])
+        expect(
+          a_request(:patch, "#{base_url}/api/public/v2/prompts/#{prompt_name}/versions/#{version}")
+        ).to have_been_made.once
+      end
+
+      it "sends newLabels in payload" do
+        api_client.update_prompt(name: prompt_name, version: version, labels: ["production"])
+        expect(
+          a_request(:patch, "#{base_url}/api/public/v2/prompts/#{prompt_name}/versions/#{version}")
+            .with(body: { "newLabels" => ["production"] })
+        ).to have_been_made.once
+      end
+
+      it "supports empty labels array" do
+        api_client.update_prompt(name: prompt_name, version: version, labels: [])
+        expect(
+          a_request(:patch, "#{base_url}/api/public/v2/prompts/#{prompt_name}/versions/#{version}")
+            .with(body: { "newLabels" => [] })
+        ).to have_been_made.once
+      end
+    end
+
+    context "with invalid labels argument" do
+      it "raises ArgumentError when labels is nil" do
+        expect do
+          api_client.update_prompt(name: prompt_name, version: version, labels: nil)
+        end.to raise_error(ArgumentError, "labels must be an array")
+      end
+
+      it "raises ArgumentError when labels is a string" do
+        expect do
+          api_client.update_prompt(name: prompt_name, version: version, labels: "production")
+        end.to raise_error(ArgumentError, "labels must be an array")
+      end
+
+      it "raises ArgumentError when labels is a hash" do
+        expect do
+          api_client.update_prompt(name: prompt_name, version: version, labels: { name: "production" })
+        end.to raise_error(ArgumentError, "labels must be an array")
+      end
+    end
+
+    context "when prompt not found" do
+      before do
+        stub_request(:patch, "#{base_url}/api/public/v2/prompts/#{prompt_name}/versions/#{version}")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect do
+          api_client.update_prompt(name: prompt_name, version: version, labels: ["production"])
+        end.to raise_error(Langfuse::NotFoundError, "Prompt not found")
+      end
+    end
+
+    context "when authentication fails" do
+      before do
+        stub_request(:patch, "#{base_url}/api/public/v2/prompts/#{prompt_name}/versions/#{version}")
+          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+      end
+
+      it "raises UnauthorizedError" do
+        expect do
+          api_client.update_prompt(name: prompt_name, version: version, labels: ["production"])
+        end.to raise_error(Langfuse::UnauthorizedError, "Authentication failed. Check your API keys.")
+      end
+    end
+
+    context "when API returns an error" do
+      before do
+        stub_request(:patch, "#{base_url}/api/public/v2/prompts/#{prompt_name}/versions/#{version}")
+          .to_return(
+            status: 500,
+            body: { message: "Internal server error" }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "raises ApiError with status code and message" do
+        expect do
+          api_client.update_prompt(name: prompt_name, version: version, labels: ["production"])
+        end.to raise_error(Langfuse::ApiError, /API request failed \(500\): Internal server error/)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:patch, "#{base_url}/api/public/v2/prompts/#{prompt_name}/versions/#{version}")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect do
+          api_client.update_prompt(name: prompt_name, version: version, labels: ["production"])
+        end.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "with URL encoding of special characters in prompt names" do
+      it "encodes special characters in prompt names" do
+        prompt_name = "my/prompt name?special"
+        encoded_name = URI.encode_uri_component(prompt_name)
+        version = 2
+
+        stub_request(:patch, "#{base_url}/api/public/v2/prompts/#{encoded_name}/versions/#{version}")
+          .to_return(
+            status: 200,
+            body: { "name" => prompt_name, "version" => version }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        result = api_client.update_prompt(name: prompt_name, version: version, labels: ["production"])
+        expect(result["name"]).to eq(prompt_name)
+        expect(
+          a_request(:patch, "#{base_url}/api/public/v2/prompts/#{encoded_name}/versions/#{version}")
+        ).to have_been_made.once
+      end
+    end
   end
 
   describe "#send_batch" do

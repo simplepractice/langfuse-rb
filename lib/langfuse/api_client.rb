@@ -4,6 +4,7 @@ require "faraday"
 require "faraday/retry"
 require "base64"
 require "json"
+require "uri"
 
 module Langfuse
   # HTTP client for Langfuse API
@@ -109,6 +110,84 @@ module Langfuse
 
       cache_key = PromptCache.build_key(name, version: version, label: label)
       fetch_with_appropriate_caching_strategy(cache_key, name, version, label)
+    end
+
+    # Create a new prompt (or new version if prompt with same name exists)
+    #
+    # @param name [String] The prompt name
+    # @param prompt [String, Array<Hash>] The prompt content
+    # @param type [String] Prompt type ("text" or "chat")
+    # @param config [Hash] Optional configuration (model params, etc.)
+    # @param labels [Array<String>] Optional labels (e.g., ["production"])
+    # @param tags [Array<String>] Optional tags
+    # @param commit_message [String, nil] Optional commit message
+    # @return [Hash] The created prompt data
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example Create a text prompt
+    #   api_client.create_prompt(
+    #     name: "greeting",
+    #     prompt: "Hello {{name}}!",
+    #     type: "text",
+    #     labels: ["production"]
+    #   )
+    #
+    # rubocop:disable Metrics/ParameterLists
+    def create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_message: nil)
+      path = "/api/public/v2/prompts"
+      payload = {
+        name: name,
+        prompt: prompt,
+        type: type,
+        config: config,
+        labels: labels,
+        tags: tags
+      }
+      payload[:commitMessage] = commit_message if commit_message
+
+      response = connection.post(path, payload)
+      handle_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Update labels for an existing prompt version
+    #
+    # @param name [String] The prompt name
+    # @param version [Integer] The version number to update
+    # @param labels [Array<String>] New labels (replaces existing). Required.
+    # @return [Hash] The updated prompt data
+    # @raise [ArgumentError] if labels is not an array
+    # @raise [NotFoundError] if the prompt is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example Promote a prompt to production
+    #   api_client.update_prompt(
+    #     name: "greeting",
+    #     version: 2,
+    #     labels: ["production"]
+    #   )
+    def update_prompt(name:, version:, labels:)
+      raise ArgumentError, "labels must be an array" unless labels.is_a?(Array)
+
+      path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}/versions/#{version}"
+      payload = { newLabels: labels }
+
+      response = connection.patch(path, payload)
+      handle_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
     end
 
     # Send a batch of events to the Langfuse ingestion API
@@ -218,7 +297,7 @@ module Langfuse
     # @raise [ApiError] for other API errors
     def fetch_prompt_from_api(name, version: nil, label: nil)
       params = build_prompt_params(version: version, label: label)
-      path = "/api/public/v2/prompts/#{name}"
+      path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}"
 
       response = connection.get(path, params)
       handle_response(response)
@@ -253,7 +332,9 @@ module Langfuse
     # Retries transient errors with exponential backoff:
     # - Max 2 retries (3 total attempts)
     # - Exponential backoff (0.05s * 2^retry_count)
-    # - Retries GET requests and POST requests to batch endpoint (idempotent operations)
+    # - Retries GET and PATCH requests (idempotent operations)
+    # - Retries POST requests to batch endpoint (idempotent due to event UUIDs)
+    # - Note: POST to create_prompt is NOT idempotent; retries may create duplicate versions
     # - Retries on: 429 (rate limit), 503 (service unavailable), 504 (gateway timeout)
     # - Does NOT retry on: 4xx errors (except 429), 5xx errors (except 503, 504)
     #
@@ -263,7 +344,7 @@ module Langfuse
         max: 2,
         interval: 0.05,
         backoff_factor: 2,
-        methods: %i[get post],
+        methods: %i[get post patch],
         retry_statuses: [429, 503, 504],
         exceptions: [Faraday::TimeoutError, Faraday::ConnectionFailed]
       }
@@ -316,7 +397,7 @@ module Langfuse
     # @raise [ApiError] for other error statuses
     def handle_response(response)
       case response.status
-      when 200
+      when 200, 201
         response.body
       when 401
         raise UnauthorizedError, "Authentication failed. Check your API keys."

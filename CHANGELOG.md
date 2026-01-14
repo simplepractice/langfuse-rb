@@ -7,54 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2025-10-16 🚀
+## [0.2.0] - 2025-12-19
 
-### Initial Release
+### Added
+- Prompt creation and update methods (`create_prompt`, `update_prompt`) (#36)
 
-Complete Ruby SDK for Langfuse with prompt management, distributed caching, LLM tracing, and Rails integration.
+## [0.1.0] - 2025-12-01
 
-#### Prompt Management
-- Fetch and compile text and chat prompts with Mustache templating
-- Support for prompt versioning and label-based fetching (production, staging, etc.)
-- Automatic variable substitution with nested objects and arrays
-- Global configuration pattern with `Langfuse.configure` block
-- Fallback prompt support for graceful error recovery
+### Added
+- Observe API with context propagation and scoring (#31)
+- W3C TraceContext propagator for distributed tracing (#1)
+- Ruby 3.4 support (#3)
+- OpenTelemetry-based tracing with OTLP export
+- Distributed caching with Rails.cache backend and stampede protection
+- Prompt management (text and chat) with Mustache templating
+- In-memory caching with TTL and LRU eviction
+- Fallback prompt support
+- Global configuration pattern with `Langfuse.configure`
 
-#### Caching
-- Dual backend support: in-memory (default) and Rails.cache (distributed)
-- Thread-safe in-memory cache with TTL and LRU eviction
-- Distributed caching with Redis/Memcached via Rails.cache
-- Automatic stampede protection with distributed locks (Rails.cache only)
-- Cache warming utilities for deployment automation
-- Auto-discovery of all prompts with configurable labels
+### Changed
+- Migrated from legacy ingestion API to OTLP endpoint
+- Removed `tracing_enabled` configuration flag (#2)
 
-#### LLM Tracing & Observability
-- Built on OpenTelemetry for industry-standard distributed tracing
-- Block-based Ruby API for traces, spans, and generations
-- Automatic prompt-to-trace linking
-- Token usage and cost tracking
-- W3C Trace Context support for distributed tracing across services
-- Integration with APM tools (Datadog, New Relic, Honeycomb, etc.)
-- Async processing with batch span export
-
-#### Rails Integration
-- Rails-friendly configuration with initializer support
-- Background job integration (Sidekiq, GoodJob, Delayed Job, etc.)
-- Rake tasks for cache management
-- Environment-specific configuration patterns
-- Credentials support for secure key management
-
-#### Developer Experience
-- Comprehensive error handling with specific error classes
-- HTTP client with automatic retry logic and exponential backoff
-- Circuit breaker pattern for resilience (via Stoplight)
-- 99.7% test coverage with 339 comprehensive test cases
-- Extensive documentation with guides for Rails, tracing, and migration
-
-#### Dependencies
-- Ruby >= 3.2.0
-- No Rails dependency (works with any Ruby project)
-- Minimal runtime dependencies (Faraday, Mustache, OpenTelemetry)
-
-[Unreleased]: https://github.com/langfuse/langfuse-ruby/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/langfuse/langfuse-ruby/releases/tag/v1.0.0
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/simplepractice/langfuse-rb/releases/tag/v0.1.0
