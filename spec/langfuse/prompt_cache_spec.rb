@@ -4,6 +4,54 @@ RSpec.describe Langfuse::PromptCache do
   let(:cache) { described_class.new(ttl: 2, max_size: 3) }
   let(:test_data) { { "id" => "123", "name" => "test", "prompt" => "Hello {{name}}" } }
 
+  describe "CacheEntry" do
+    describe "#fresh?" do
+      it "returns true when current time is before fresh_until" do
+        entry = described_class::CacheEntry.new("data", Time.now + 10, Time.now + 20)
+        expect(entry.fresh?).to be true
+      end
+
+      it "returns false when current time is at or after fresh_until" do
+        entry = described_class::CacheEntry.new("data", Time.now - 1, Time.now + 10)
+        expect(entry.fresh?).to be false
+      end
+    end
+
+    describe "#stale?" do
+      it "returns true when current time is between fresh_until and stale_until" do
+        entry = described_class::CacheEntry.new("data", Time.now - 1, Time.now + 10)
+        expect(entry.stale?).to be true
+      end
+
+      it "returns false when entry is still fresh" do
+        entry = described_class::CacheEntry.new("data", Time.now + 10, Time.now + 20)
+        expect(entry.stale?).to be false
+      end
+
+      it "returns false when entry is expired" do
+        entry = described_class::CacheEntry.new("data", Time.now - 10, Time.now - 1)
+        expect(entry.stale?).to be false
+      end
+    end
+
+    describe "#expired?" do
+      it "returns true when current time is at or after stale_until" do
+        entry = described_class::CacheEntry.new("data", Time.now - 10, Time.now - 1)
+        expect(entry.expired?).to be true
+      end
+
+      it "returns false when entry is still fresh" do
+        entry = described_class::CacheEntry.new("data", Time.now + 10, Time.now + 20)
+        expect(entry.expired?).to be false
+      end
+
+      it "returns false when entry is stale but not expired" do
+        entry = described_class::CacheEntry.new("data", Time.now - 1, Time.now + 10)
+        expect(entry.expired?).to be false
+      end
+    end
+  end
+
   describe "#initialize" do
     it "sets default TTL" do
       cache = described_class.new
@@ -23,6 +71,115 @@ RSpec.describe Langfuse::PromptCache do
     it "sets custom max_size" do
       cache = described_class.new(max_size: 500)
       expect(cache.max_size).to eq(500)
+    end
+
+    context "with stale_ttl" do
+      it "sets custom stale_ttl" do
+        cache = described_class.new(stale_ttl: 300)
+        expect(cache.stale_ttl).to eq(300)
+      end
+
+      it "defaults to 0 when not specified (SWR disabled)" do
+        cache = described_class.new(ttl: 60)
+        expect(cache.stale_ttl).to eq(0)
+      end
+
+      it "enables SWR when stale_ttl equals ttl" do
+        cache = described_class.new(ttl: 60, stale_ttl: 60)
+        expect(cache.swr_enabled?).to be true
+      end
+
+      it "enables SWR when stale_ttl is any positive number" do
+        cache = described_class.new(ttl: 60, stale_ttl: 1)
+        expect(cache.swr_enabled?).to be true
+      end
+
+      it "disables SWR when stale_ttl is 0" do
+        cache = described_class.new(ttl: 60, stale_ttl: 0)
+        expect(cache.swr_enabled?).to be false
+      end
+
+      it "disables SWR when stale_ttl is negative" do
+        cache = described_class.new(ttl: 60, stale_ttl: -10)
+        expect(cache.swr_enabled?).to be false
+      end
+    end
+
+    context "with thread pool initialization (SWR enabled)" do
+      it "enables SWR behavior when stale_ttl is greater than ttl" do
+        cache = described_class.new(ttl: 60, stale_ttl: 120)
+        expect(cache.swr_enabled?).to be true
+        # Verify fetch_with_stale_while_revalidate is used (not fetch_with_lock)
+        expect(cache).not_to receive(:fetch_with_lock)
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "enables SWR behavior when stale_ttl equals ttl" do
+        cache = described_class.new(ttl: 60, stale_ttl: 60)
+        expect(cache.swr_enabled?).to be true
+        expect(cache).not_to receive(:fetch_with_lock)
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "enables SWR behavior for any positive stale_ttl value" do
+        cache = described_class.new(ttl: 60, stale_ttl: 1)
+        expect(cache.swr_enabled?).to be true
+        expect(cache).not_to receive(:fetch_with_lock)
+        cache.fetch_with_stale_while_revalidate("test") { "value" }
+      end
+
+      it "accepts custom refresh_threads parameter" do
+        # Can't verify thread pool size directly, but can verify it doesn't error
+        expect do
+          described_class.new(ttl: 60, stale_ttl: 120, refresh_threads: 10)
+        end.not_to raise_error
+      end
+    end
+
+    context "with thread pool initialization (SWR disabled)" do
+      it "raises ConfigurationError when stale_ttl is 0" do
+        cache = described_class.new(ttl: 60, stale_ttl: 0)
+        expect(cache.swr_enabled?).to be false
+        expect do
+          cache.fetch_with_stale_while_revalidate("test") { "value" }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
+      end
+
+      it "raises ConfigurationError when stale_ttl is negative" do
+        cache = described_class.new(ttl: 60, stale_ttl: -10)
+        expect(cache.swr_enabled?).to be false
+        expect do
+          cache.fetch_with_stale_while_revalidate("test") { "value" }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
+      end
+
+      it "raises ConfigurationError when stale_ttl is not provided" do
+        cache = described_class.new(ttl: 60)
+        expect(cache.swr_enabled?).to be false
+        expect do
+          cache.fetch_with_stale_while_revalidate("test") { "value" }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
+      end
+
+      it "raises ConfigurationError even when refresh_threads is provided" do
+        cache = described_class.new(ttl: 60, refresh_threads: 20)
+        expect(cache.swr_enabled?).to be false
+        expect do
+          cache.fetch_with_stale_while_revalidate("test") { "value" }
+        end.to raise_error(
+          Langfuse::ConfigurationError,
+          /fetch_with_stale_while_revalidate requires a positive stale_ttl/
+        )
+      end
     end
   end
 
@@ -201,6 +358,22 @@ RSpec.describe Langfuse::PromptCache do
 
       threads.each(&:join)
       expect(cache.size).to be <= 3 # max_size is 3
+    end
+  end
+
+  describe "#shutdown" do
+    it "shuts down gracefully when SWR is enabled" do
+      cache = described_class.new(ttl: 60, stale_ttl: 120)
+      expect(cache.swr_enabled?).to be true
+
+      expect { cache.shutdown }.not_to raise_error
+    end
+
+    it "does not raise an error when SWR is disabled" do
+      cache = described_class.new(ttl: 60, stale_ttl: 0)
+      expect(cache.swr_enabled?).to be false
+
+      expect { cache.shutdown }.not_to raise_error
     end
   end
 end

@@ -320,7 +320,7 @@ RSpec.describe Langfuse::ApiClient do
 
     # rubocop:disable RSpec/MultipleMemoizedHelpers
     context "with caching enabled" do
-      let(:cache) { Langfuse::PromptCache.new(ttl: 60) }
+      let(:cache) { instance_double(Langfuse::PromptCache) }
       let(:cached_client) do
         described_class.new(
           public_key: public_key,
@@ -340,23 +340,33 @@ RSpec.describe Langfuse::ApiClient do
       end
 
       it "stores response in cache" do
-        cached_client.get_prompt(prompt_name)
         cache_key = Langfuse::PromptCache.build_key(prompt_name)
-        expect(cache.get(cache_key)).to eq(prompt_response)
+
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key, prompt_response)
+
+        cached_client.get_prompt(prompt_name)
       end
 
       it "returns cached response on second call" do
-        # First call - hits API
+        cache_key = Langfuse::PromptCache.build_key(prompt_name)
+
+        # First call - cache miss
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key, prompt_response)
         first_result = cached_client.get_prompt(prompt_name)
 
-        # Second call - should use cache
+        # Second call - cache hit
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(prompt_response)
         second_result = cached_client.get_prompt(prompt_name)
 
         expect(second_result).to eq(first_result)
-        # Verify API was only called once
-        expect(
-          a_request(:get, "#{base_url}/api/public/v2/prompts/#{prompt_name}")
-        ).to have_been_made.once
       end
 
       it "builds correct cache key with version" do
@@ -368,9 +378,15 @@ RSpec.describe Langfuse::ApiClient do
             headers: { "Content-Type" => "application/json" }
           )
 
-        cached_client.get_prompt(prompt_name, version: 2)
         cache_key = Langfuse::PromptCache.build_key(prompt_name, version: 2)
-        expect(cache.get(cache_key)).not_to be_nil
+        versioned_response = prompt_response.merge("version" => 2)
+
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key, versioned_response)
+
+        cached_client.get_prompt(prompt_name, version: 2)
       end
 
       it "builds correct cache key with label" do
@@ -382,9 +398,14 @@ RSpec.describe Langfuse::ApiClient do
             headers: { "Content-Type" => "application/json" }
           )
 
-        cached_client.get_prompt(prompt_name, label: "production")
         cache_key = Langfuse::PromptCache.build_key(prompt_name, label: "production")
-        expect(cache.get(cache_key)).not_to be_nil
+
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key, prompt_response)
+
+        cached_client.get_prompt(prompt_name, label: "production")
       end
 
       it "caches different versions separately" do
@@ -404,18 +425,364 @@ RSpec.describe Langfuse::ApiClient do
             headers: { "Content-Type" => "application/json" }
           )
 
+        cache_key_v1 = Langfuse::PromptCache.build_key(prompt_name, version: 1)
+        cache_key_v2 = Langfuse::PromptCache.build_key(prompt_name, version: 2)
+        v1_response = prompt_response.merge("version" => 1)
+        v2_response = prompt_response.merge("version" => 2)
+
+        # First call for version 1
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key_v1).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key_v1, v1_response)
+
         cached_client.get_prompt(prompt_name, version: 1)
+
+        # First call for version 2
+        expect(cache).to receive(:respond_to?).with(:swr_enabled?).and_return(false)
+        expect(cache).to receive(:respond_to?).with(:fetch_with_lock).and_return(false)
+        expect(cache).to receive(:get).with(cache_key_v2).and_return(nil)
+        expect(cache).to receive(:set).with(cache_key_v2, v2_response)
+
         cached_client.get_prompt(prompt_name, version: 2)
+      end
+    end
 
-        expect(
-          a_request(:get, "#{base_url}/api/public/v2/prompts/#{prompt_name}")
-            .with(query: { version: "1" })
-        ).to have_been_made.once
+    context "with SWR caching integration" do
+      let(:logger) { Logger.new($stdout, level: Logger::WARN) }
+      let(:prompt_data) do
+        {
+          "id" => "prompt123",
+          "name" => "greeting",
+          "version" => 1,
+          "type" => "text",
+          "prompt" => "Hello {{name}}!",
+          "labels" => ["production"],
+          "tags" => ["customer-facing"],
+          "config" => {}
+        }
+      end
 
-        expect(
-          a_request(:get, "#{base_url}/api/public/v2/prompts/#{prompt_name}")
-            .with(query: { version: "2" })
-        ).to have_been_made.once
+      context "with SWR-enabled cache" do
+        it "uses SWR fetch method when available" do
+          swr_cache = instance_double(Langfuse::RailsCacheAdapter)
+          cache_key = "greeting:version:1"
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            logger: logger,
+            cache: swr_cache
+          )
+
+          allow(swr_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(true)
+          allow(swr_cache).to receive(:swr_enabled?)
+            .and_return(true)
+
+          expect(Langfuse::PromptCache).to receive(:build_key)
+            .with("greeting", version: 1, label: nil)
+            .and_return(cache_key)
+
+          expect(swr_cache).to receive(:fetch_with_stale_while_revalidate)
+            .with(cache_key)
+            .and_yield
+            .and_return(prompt_data)
+
+          expect(client).to receive(:fetch_prompt_from_api)
+            .with("greeting", version: 1, label: nil)
+            .and_return(prompt_data)
+
+          result = client.get_prompt("greeting", version: 1)
+          expect(result).to eq(prompt_data)
+        end
+
+        it "handles cache miss with SWR" do
+          swr_cache = instance_double(Langfuse::RailsCacheAdapter)
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            logger: logger,
+            cache: swr_cache
+          )
+
+          allow(swr_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(true)
+          allow(swr_cache).to receive(:swr_enabled?)
+            .and_return(true)
+
+          expect(Langfuse::PromptCache).to receive(:build_key)
+            .with("greeting", version: nil, label: nil)
+            .and_return("greeting:latest")
+
+          expect(swr_cache).to receive(:fetch_with_stale_while_revalidate)
+            .with("greeting:latest")
+            .and_yield
+            .and_return(prompt_data)
+
+          stub_request(:get, "#{base_url}/api/public/v2/prompts/greeting")
+            .to_return(
+              status: 200,
+              body: prompt_data.to_json,
+              headers: { "Content-Type" => "application/json" }
+            )
+
+          result = client.get_prompt("greeting")
+          expect(result).to eq(prompt_data)
+        end
+
+        it "passes through all prompt parameters to cache key building" do
+          swr_cache = instance_double(Langfuse::RailsCacheAdapter)
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            logger: logger,
+            cache: swr_cache
+          )
+
+          allow(swr_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(true)
+          allow(swr_cache).to receive(:swr_enabled?)
+            .and_return(true)
+
+          expect(Langfuse::PromptCache).to receive(:build_key)
+            .with("support-bot", version: nil, label: "staging")
+            .and_return("support-bot:label:staging")
+
+          expect(swr_cache).to receive(:fetch_with_stale_while_revalidate)
+            .with("support-bot:label:staging")
+            .and_return(prompt_data)
+
+          client.get_prompt("support-bot", label: "staging")
+        end
+      end
+
+      context "with stampede protection cache (no SWR)" do
+        it "falls back to stampede protection when SWR not available" do
+          stampede_cache = instance_double(Langfuse::RailsCacheAdapter)
+          cache_key = "greeting:version:1"
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            logger: logger,
+            cache: stampede_cache
+          )
+
+          allow(stampede_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(false)
+          allow(stampede_cache).to receive(:respond_to?)
+            .with(:fetch_with_lock)
+            .and_return(true)
+
+          expect(Langfuse::PromptCache).to receive(:build_key)
+            .with("greeting", version: 1, label: nil)
+            .and_return(cache_key)
+
+          expect(stampede_cache).to receive(:fetch_with_lock)
+            .with(cache_key)
+            .and_yield
+            .and_return(prompt_data)
+
+          expect(client).to receive(:fetch_prompt_from_api)
+            .with("greeting", version: 1, label: nil)
+            .and_return(prompt_data)
+
+          result = client.get_prompt("greeting", version: 1)
+          expect(result).to eq(prompt_data)
+        end
+      end
+
+      context "with simple cache (no SWR, no stampede protection)" do
+        it "uses simple get/set pattern when advanced caching not available" do
+          simple_cache = instance_double(Langfuse::PromptCache)
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            logger: logger,
+            cache: simple_cache
+          )
+
+          allow(simple_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(false)
+          allow(simple_cache).to receive(:respond_to?)
+            .with(:fetch_with_lock)
+            .and_return(false)
+
+          expect(Langfuse::PromptCache).to receive(:build_key)
+            .with("greeting", version: nil, label: nil)
+            .and_return("greeting:latest")
+
+          expect(simple_cache).to receive(:get)
+            .with("greeting:latest")
+            .and_return(nil)
+
+          expect(client).to receive(:fetch_prompt_from_api)
+            .with("greeting", version: nil, label: nil)
+            .and_return(prompt_data)
+
+          expect(simple_cache).to receive(:set)
+            .with("greeting:latest", prompt_data)
+
+          result = client.get_prompt("greeting")
+          expect(result).to eq(prompt_data)
+        end
+
+        it "returns cached data when available" do
+          simple_cache = instance_double(Langfuse::PromptCache)
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            logger: logger,
+            cache: simple_cache
+          )
+
+          allow(simple_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(false)
+          allow(simple_cache).to receive(:respond_to?)
+            .with(:fetch_with_lock)
+            .and_return(false)
+
+          expect(Langfuse::PromptCache).to receive(:build_key)
+            .with("greeting", version: nil, label: nil)
+            .and_return("greeting:latest")
+
+          expect(simple_cache).to receive(:get)
+            .with("greeting:latest")
+            .and_return(prompt_data)
+
+          expect(client).not_to receive(:fetch_prompt_from_api)
+          expect(simple_cache).not_to receive(:set)
+
+          result = client.get_prompt("greeting")
+          expect(result).to eq(prompt_data)
+        end
+      end
+
+      context "with no cache" do
+        it "fetches directly from API without caching" do
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            logger: logger,
+            cache: nil
+          )
+
+          expect(client).to receive(:fetch_prompt_from_api)
+            .with("greeting", version: nil, label: nil)
+            .and_return(prompt_data)
+
+          result = client.get_prompt("greeting")
+          expect(result).to eq(prompt_data)
+        end
+      end
+
+      context "when detecting cache capabilities" do
+        it "correctly detects SWR capability" do
+          swr_cache = instance_double(Langfuse::RailsCacheAdapter)
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            cache: swr_cache
+          )
+
+          allow(swr_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(true)
+
+          expect(swr_cache).to receive(:fetch_with_stale_while_revalidate)
+          allow(swr_cache).to receive_messages(swr_enabled?: true, fetch_with_stale_while_revalidate: prompt_data)
+
+          client.get_prompt("test")
+        end
+
+        it "falls back when SWR not available but stampede protection is" do
+          rails_cache = instance_double(Langfuse::RailsCacheAdapter)
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            cache: rails_cache
+          )
+
+          allow(rails_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(false)
+          allow(rails_cache).to receive(:respond_to?)
+            .with(:fetch_with_lock)
+            .and_return(true)
+
+          expect(rails_cache).to receive(:fetch_with_lock)
+          allow(rails_cache).to receive(:fetch_with_lock)
+            .and_return(prompt_data)
+
+          client.get_prompt("test")
+        end
+
+        it "handles nil cache gracefully" do
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            cache: nil
+          )
+
+          expect(client).to receive(:fetch_prompt_from_api)
+            .and_return(prompt_data)
+
+          result = client.get_prompt("test")
+          expect(result).to eq(prompt_data)
+        end
+      end
+
+      context "when handling errors with SWR" do
+        it "propagates API errors when SWR cache fails" do
+          swr_cache = instance_double(Langfuse::RailsCacheAdapter)
+
+          client = described_class.new(
+            public_key: public_key,
+            secret_key: secret_key,
+            base_url: base_url,
+            logger: logger,
+            cache: swr_cache
+          )
+
+          allow(swr_cache).to receive(:respond_to?)
+            .with(:swr_enabled?)
+            .and_return(true)
+          allow(swr_cache).to receive(:swr_enabled?)
+            .and_return(true)
+
+          allow(swr_cache).to receive(:fetch_with_stale_while_revalidate)
+            .and_yield
+
+          expect(client).to receive(:fetch_prompt_from_api)
+            .and_raise(Langfuse::NotFoundError, "Prompt not found")
+
+          expect do
+            client.get_prompt("nonexistent")
+          end.to raise_error(Langfuse::NotFoundError, "Prompt not found")
+        end
       end
     end
     # rubocop:enable RSpec/MultipleMemoizedHelpers
@@ -1172,6 +1539,80 @@ RSpec.describe Langfuse::ApiClient do
         expect(
           a_request(:post, "#{base_url}/api/public/ingestion")
         ).to have_been_made.once
+      end
+    end
+  end
+
+  describe "#shutdown" do
+    context "when cache supports shutdown" do
+      let(:swr_cache) do
+        Langfuse::PromptCache.new(
+          ttl: 60,
+          stale_ttl: 120,
+          refresh_threads: 2
+        )
+      end
+      let(:api_client_with_swr) do
+        described_class.new(
+          public_key: public_key,
+          secret_key: secret_key,
+          base_url: base_url,
+          cache: swr_cache
+        )
+      end
+
+      it "calls shutdown on the cache" do
+        expect(swr_cache).to receive(:shutdown).and_call_original
+
+        api_client_with_swr.shutdown
+      end
+
+      it "does not raise an error" do
+        expect { api_client_with_swr.shutdown }.not_to raise_error
+      end
+    end
+
+    context "when cache does not support shutdown" do
+      let(:ttl_cache) do
+        Langfuse::PromptCache.new(
+          ttl: 60,
+          stale_ttl: 0
+        )
+      end
+      let(:api_client_with_ttl_only) do
+        described_class.new(
+          public_key: public_key,
+          secret_key: secret_key,
+          base_url: base_url,
+          cache: ttl_cache
+        )
+      end
+
+      it "does not raise an error" do
+        expect { api_client_with_ttl_only.shutdown }.not_to raise_error
+      end
+
+      it "calls shutdown on the cache (which returns early when no thread pool)" do
+        # shutdown is safe to call even when stale_ttl is 0 (no thread pool)
+        # The method returns early if @thread_pool is nil
+        expect(ttl_cache).to receive(:shutdown).and_call_original
+
+        api_client_with_ttl_only.shutdown
+      end
+    end
+
+    context "when cache is nil" do
+      let(:api_client_no_cache) do
+        described_class.new(
+          public_key: public_key,
+          secret_key: secret_key,
+          base_url: base_url,
+          cache: nil
+        )
+      end
+
+      it "does not raise an error" do
+        expect { api_client_no_cache.shutdown }.not_to raise_error
       end
     end
   end

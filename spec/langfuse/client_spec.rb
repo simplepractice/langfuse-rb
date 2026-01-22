@@ -121,6 +121,37 @@ RSpec.describe Langfuse::Client do
           described_class.new(config_with_rails_cache)
         end.not_to raise_error
       end
+
+      it "passes logger from config to RailsCacheAdapter" do
+        custom_logger = Logger.new($stdout)
+        config_with_rails_cache.logger = custom_logger
+        client = described_class.new(config_with_rails_cache)
+        expect(client.api_client.cache.logger).to eq(custom_logger)
+      end
+
+      it "configures RailsCacheAdapter with stale-while-revalidate settings" do
+        config_with_rails_cache.cache_stale_while_revalidate = true
+        config_with_rails_cache.cache_stale_ttl = 300
+        config_with_rails_cache.cache_refresh_threads = 3
+        config_with_rails_cache.cache_lock_timeout = 15
+
+        client = described_class.new(config_with_rails_cache)
+        adapter = client.api_client.cache
+
+        expect(adapter.stale_ttl).to eq(300)
+        expect(adapter.lock_timeout).to eq(15)
+        expect(adapter.thread_pool).to be_a(Concurrent::CachedThreadPool)
+      end
+
+      it "configures RailsCacheAdapter without SWR when disabled" do
+        config_with_rails_cache.cache_stale_while_revalidate = false
+        client = described_class.new(config_with_rails_cache)
+        adapter = client.api_client.cache
+
+        # When SWR disabled, stale_ttl defaults to 0 (no stale period, immediate expiration)
+        expect(adapter.stale_ttl).to eq(0)
+        expect(adapter.thread_pool).to be_nil # Thread pool not initialized when stale_ttl <= ttl
+      end
     end
 
     context "with invalid cache backend" do
@@ -138,6 +169,44 @@ RSpec.describe Langfuse::Client do
         expect do
           described_class.new(config_invalid_backend)
         end.to raise_error(Langfuse::ConfigurationError, /cache_backend must be one of/)
+      end
+    end
+
+    context "with :indefinite stale_ttl" do
+      it "normalizes :indefinite to INDEFINITE_SECONDS via normalized_stale_ttl method" do
+        config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test_123"
+          c.secret_key = "sk_test_456"
+          c.cache_stale_ttl = :indefinite
+        end
+
+        expect(config.normalized_stale_ttl).to eq(Langfuse::Config::INDEFINITE_SECONDS)
+      end
+
+      it "passes normalized stale_ttl to cache instances" do
+        config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test_123"
+          c.secret_key = "sk_test_456"
+          c.cache_ttl = 60
+          c.cache_stale_ttl = :indefinite
+        end
+
+        client = described_class.new(config)
+        cache = client.api_client.cache
+
+        expect(cache.stale_ttl).to eq(Langfuse::Config::INDEFINITE_SECONDS)
+      end
+
+      it "normalizes :indefinite when set via cache_stale_while_revalidate" do
+        config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test_123"
+          c.secret_key = "sk_test_456"
+          c.cache_ttl = 60
+          c.cache_stale_while_revalidate = true
+          c.cache_stale_ttl = :indefinite
+        end
+
+        expect(config.normalized_stale_ttl).to eq(Langfuse::Config::INDEFINITE_SECONDS)
       end
     end
   end
@@ -1317,6 +1386,56 @@ RSpec.describe Langfuse::Client do
       expect(score_client).to receive(:shutdown)
 
       client.shutdown
+    end
+
+    context "when cache supports shutdown" do
+      let(:config_with_cache) do
+        Langfuse::Config.new do |config|
+          config.public_key = "pk_test"
+          config.secret_key = "sk_test"
+          config.cache_ttl = 60
+          config.cache_stale_ttl = 120
+        end
+      end
+      let(:client_with_cache) { described_class.new(config_with_cache) }
+
+      it "calls shutdown on the cache" do
+        cache = client_with_cache.api_client.cache
+        expect(cache).to receive(:shutdown)
+
+        client_with_cache.shutdown
+      end
+    end
+
+    context "when cache does not support shutdown" do
+      let(:config_without_swr) do
+        Langfuse::Config.new do |config|
+          config.public_key = "pk_test"
+          config.secret_key = "sk_test"
+          config.cache_ttl = 60
+          config.cache_stale_ttl = 0
+        end
+      end
+      let(:client_without_swr) { described_class.new(config_without_swr) }
+
+      it "does not raise an error" do
+        expect { client_without_swr.shutdown }.not_to raise_error
+      end
+    end
+
+    context "when cache is nil" do
+      let(:config_no_cache) do
+        Langfuse::Config.new do |config|
+          config.public_key = "pk_test"
+          config.secret_key = "sk_test"
+          config.cache_ttl = 0
+        end
+      end
+      let(:client_no_cache) { described_class.new(config_no_cache) }
+
+      it "does not raise an error" do
+        expect { client_no_cache.shutdown }.not_to raise_error
+      end
     end
   end
 end
