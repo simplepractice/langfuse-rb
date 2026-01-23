@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-01-23
+
+### Added
+- Stale-while-revalidate (SWR) cache strategy for improved performance (#35)
+
+### Fixed
+- OpenTelemetry Baggage API method signatures for context propagation (#39)
+
+### Changed
+- Relaxed Faraday version constraint for better compatibility with older projects (#37)
+
 ## [0.2.0] - 2025-12-19
 
 ### Added
@@ -29,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from legacy ingestion API to OTLP endpoint
 - Removed `tracing_enabled` configuration flag (#2)
 
-[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/simplepractice/langfuse-rb/releases/tag/v0.1.0
