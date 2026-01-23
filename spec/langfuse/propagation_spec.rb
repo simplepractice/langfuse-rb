@@ -10,6 +10,27 @@ RSpec.describe Langfuse::Propagation do
     end
   end
 
+  shared_context "with baggage mock" do
+    before do
+      baggage_module = Module.new do
+        def self.set_value(key, value, context: nil)
+          ctx = context || OpenTelemetry::Context.current
+          new_baggage = (ctx.value("baggage") || {}).dup
+          new_baggage[key] = value
+          ctx.set_value("baggage", new_baggage)
+        end
+
+        def self.values(context: nil)
+          ctx = context || OpenTelemetry::Context.current
+          ctx.value("baggage") || {}
+        end
+      end
+
+      stub_const("OpenTelemetry::Baggage", baggage_module)
+      allow(described_class).to receive(:baggage_available?).and_return(true)
+    end
+  end
+
   describe ".propagate_attributes" do
     context "when called without a block" do
       it "raises ArgumentError" do
@@ -254,28 +275,12 @@ RSpec.describe Langfuse::Propagation do
       end
 
       context "when baggage is available" do
-        before do
-          # Mock OpenTelemetry::Baggage to be available
-          baggage_module = Module.new do
-            def self.set_value(context:, key:, value:)
-              new_baggage = (context.value("baggage") || {}).dup
-              new_baggage[key] = value
-              context.set_value("baggage", new_baggage)
-            end
-
-            def self.value(context:)
-              context.value("baggage") || {}
-            end
-          end
-
-          stub_const("OpenTelemetry::Baggage", baggage_module)
-          allow(described_class).to receive(:baggage_available?).and_return(true)
-        end
+        include_context "with baggage mock"
 
         it "sets baggage attributes when as_baggage is true" do
           described_class.propagate_attributes(user_id: "user_123", as_baggage: true) do
             context = OpenTelemetry::Context.current
-            baggage = OpenTelemetry::Baggage.value(context: context)
+            baggage = OpenTelemetry::Baggage.values(context: context)
             expect(baggage["langfuse_user_id"]).to eq("user_123")
           end
         end
@@ -283,7 +288,7 @@ RSpec.describe Langfuse::Propagation do
         it "sets baggage for session_id" do
           described_class.propagate_attributes(session_id: "session_abc", as_baggage: true) do
             context = OpenTelemetry::Context.current
-            baggage = OpenTelemetry::Baggage.value(context: context)
+            baggage = OpenTelemetry::Baggage.values(context: context)
             expect(baggage["langfuse_session_id"]).to eq("session_abc")
           end
         end
@@ -291,7 +296,7 @@ RSpec.describe Langfuse::Propagation do
         it "sets baggage for version" do
           described_class.propagate_attributes(version: "v1.2.3", as_baggage: true) do
             context = OpenTelemetry::Context.current
-            baggage = OpenTelemetry::Baggage.value(context: context)
+            baggage = OpenTelemetry::Baggage.values(context: context)
             expect(baggage["langfuse_version"]).to eq("v1.2.3")
           end
         end
@@ -299,7 +304,7 @@ RSpec.describe Langfuse::Propagation do
         it "sets baggage for tags as comma-separated string" do
           described_class.propagate_attributes(tags: %w[tag1 tag2], as_baggage: true) do
             context = OpenTelemetry::Context.current
-            baggage = OpenTelemetry::Baggage.value(context: context)
+            baggage = OpenTelemetry::Baggage.values(context: context)
             expect(baggage["langfuse_tags"]).to eq("tag1,tag2")
           end
         end
@@ -307,7 +312,7 @@ RSpec.describe Langfuse::Propagation do
         it "sets baggage for metadata with prefixed keys" do
           described_class.propagate_attributes(metadata: { env: "prod", region: "us-east" }, as_baggage: true) do
             context = OpenTelemetry::Context.current
-            baggage = OpenTelemetry::Baggage.value(context: context)
+            baggage = OpenTelemetry::Baggage.values(context: context)
             expect(baggage["langfuse_metadata_env"]).to eq("prod")
             expect(baggage["langfuse_metadata_region"]).to eq("us-east")
           end
@@ -376,30 +381,13 @@ RSpec.describe Langfuse::Propagation do
     end
 
     context "with baggage extraction" do
-      before do
-        # Mock OpenTelemetry::Baggage to be available
-        baggage_module = Module.new do
-          def self.set_value(context:, key:, value:)
-            new_baggage = (context.value("baggage") || {}).dup
-            new_baggage[key] = value
-            context.set_value("baggage", new_baggage)
-          end
-
-          def self.value(context:)
-            context.value("baggage") || {}
-          end
-        end
-
-        stub_const("OpenTelemetry::Baggage", baggage_module)
-        allow(described_class).to receive(:baggage_available?).and_return(true)
-      end
+      include_context "with baggage mock"
 
       it "extracts attributes from baggage" do
         # Set baggage directly
         context = OpenTelemetry::Context.current
-        context = OpenTelemetry::Baggage.set_value(context: context, key: "langfuse_user_id", value: "baggage_user")
-        context = OpenTelemetry::Baggage.set_value(context: context, key: "langfuse_session_id",
-                                                   value: "baggage_session")
+        context = OpenTelemetry::Baggage.set_value("langfuse_user_id", "baggage_user", context: context)
+        context = OpenTelemetry::Baggage.set_value("langfuse_session_id", "baggage_session", context: context)
 
         attrs = described_class.get_propagated_attributes_from_context(context)
 
@@ -409,7 +397,7 @@ RSpec.describe Langfuse::Propagation do
 
       it "extracts tags from baggage as comma-separated string" do
         context = OpenTelemetry::Context.current
-        context = OpenTelemetry::Baggage.set_value(context: context, key: "langfuse_tags", value: "tag1,tag2,tag3")
+        context = OpenTelemetry::Baggage.set_value("langfuse_tags", "tag1,tag2,tag3", context: context)
 
         attrs = described_class.get_propagated_attributes_from_context(context)
 
@@ -418,8 +406,8 @@ RSpec.describe Langfuse::Propagation do
 
       it "extracts metadata keys from baggage" do
         context = OpenTelemetry::Context.current
-        context = OpenTelemetry::Baggage.set_value(context: context, key: "langfuse_metadata_env", value: "production")
-        context = OpenTelemetry::Baggage.set_value(context: context, key: "langfuse_metadata_region", value: "us-east")
+        context = OpenTelemetry::Baggage.set_value("langfuse_metadata_env", "production", context: context)
+        context = OpenTelemetry::Baggage.set_value("langfuse_metadata_region", "us-east", context: context)
 
         attrs = described_class.get_propagated_attributes_from_context(context)
 
@@ -429,8 +417,8 @@ RSpec.describe Langfuse::Propagation do
 
       it "ignores non-Langfuse baggage keys" do
         context = OpenTelemetry::Context.current
-        context = OpenTelemetry::Baggage.set_value(context: context, key: "other_key", value: "other_value")
-        context = OpenTelemetry::Baggage.set_value(context: context, key: "langfuse_user_id", value: "user_123")
+        context = OpenTelemetry::Baggage.set_value("other_key", "other_value", context: context)
+        context = OpenTelemetry::Baggage.set_value("langfuse_user_id", "user_123", context: context)
 
         attrs = described_class.get_propagated_attributes_from_context(context)
 
@@ -440,7 +428,7 @@ RSpec.describe Langfuse::Propagation do
 
       it "handles baggage extraction errors gracefully" do
         # Mock baggage to raise an error
-        allow(OpenTelemetry::Baggage).to receive(:value).and_raise(StandardError.new("Baggage error"))
+        allow(OpenTelemetry::Baggage).to receive(:values).and_raise(StandardError.new("Baggage error"))
         allow(described_class).to receive(:baggage_available?).and_return(true)
 
         expect(Langfuse.configuration.logger).to receive(:debug).with(/Baggage extraction failed/)

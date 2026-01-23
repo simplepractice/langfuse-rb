@@ -364,7 +364,6 @@ module Langfuse
     def self._get_span_key_from_baggage_key(baggage_key)
       return nil unless baggage_key.start_with?(BAGGAGE_PREFIX)
 
-      # Remove prefix
       suffix = baggage_key[BAGGAGE_PREFIX.length..]
 
       # Handle metadata keys (format: langfuse_metadata_{key_name})
@@ -373,17 +372,7 @@ module Langfuse
         return "#{OtelAttributes::TRACE_METADATA}.#{metadata_key}"
       end
 
-      # Map standard keys
-      case suffix
-      when "user_id"
-        _get_propagated_span_key("user_id")
-      when "session_id"
-        _get_propagated_span_key("session_id")
-      when "version"
-        _get_propagated_span_key("version")
-      when "tags"
-        _get_propagated_span_key("tags")
-      end
+      SPAN_KEY_MAP[suffix]
     end
 
     # Check if baggage API is available
@@ -404,7 +393,7 @@ module Langfuse
     def self._extract_baggage_attributes(context)
       return {} unless baggage_available?
 
-      baggage = OpenTelemetry::Baggage.value(context: context)
+      baggage = OpenTelemetry::Baggage.values(context: context)
       return {} unless baggage.is_a?(Hash)
 
       attributes = {}
@@ -453,12 +442,12 @@ module Langfuse
       if key == "metadata" && value.is_a?(Hash)
         value.each do |k, v|
           entry_key = "#{baggage_key}_#{k}"
-          context = OpenTelemetry::Baggage.set_value(context: context, key: entry_key, value: v.to_s)
+          context = OpenTelemetry::Baggage.set_value(entry_key, v.to_s, context: context)
         end
       elsif key == "tags" && value.is_a?(Array)
-        context = OpenTelemetry::Baggage.set_value(context: context, key: baggage_key, value: value.join(","))
+        context = OpenTelemetry::Baggage.set_value(baggage_key, value.join(","), context: context)
       else
-        context = OpenTelemetry::Baggage.set_value(context: context, key: baggage_key, value: value.to_s)
+        context = OpenTelemetry::Baggage.set_value(baggage_key, value.to_s, context: context)
       end
       context
     rescue StandardError => e
