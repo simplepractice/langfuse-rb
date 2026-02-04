@@ -271,7 +271,7 @@ RSpec.describe Langfuse::ApiClient do
       it "raises NotFoundError" do
         expect do
           api_client.get_prompt(prompt_name)
-        end.to raise_error(Langfuse::NotFoundError, "Prompt not found")
+        end.to raise_error(Langfuse::NotFoundError, "Not found")
       end
     end
 
@@ -777,11 +777,11 @@ RSpec.describe Langfuse::ApiClient do
             .and_yield
 
           expect(client).to receive(:fetch_prompt_from_api)
-            .and_raise(Langfuse::NotFoundError, "Prompt not found")
+            .and_raise(Langfuse::NotFoundError, "Not found")
 
           expect do
             client.get_prompt("nonexistent")
-          end.to raise_error(Langfuse::NotFoundError, "Prompt not found")
+          end.to raise_error(Langfuse::NotFoundError, "Not found")
         end
       end
     end
@@ -809,9 +809,9 @@ RSpec.describe Langfuse::ApiClient do
         expect(options[:backoff_factor]).to eq(2)
       end
 
-      it "configures retry for GET, POST, and PATCH requests" do
+      it "configures retry for GET, POST, PATCH, and DELETE requests" do
         options = api_client.send(:retry_options)
-        expect(options[:methods]).to contain_exactly(:get, :post, :patch)
+        expect(options[:methods]).to contain_exactly(:get, :post, :patch, :delete)
       end
 
       it "configures retry for transient error status codes" do
@@ -1227,7 +1227,7 @@ RSpec.describe Langfuse::ApiClient do
       it "raises NotFoundError" do
         expect do
           api_client.update_prompt(name: prompt_name, version: version, labels: ["production"])
-        end.to raise_error(Langfuse::NotFoundError, "Prompt not found")
+        end.to raise_error(Langfuse::NotFoundError, "Not found")
       end
     end
 
@@ -1613,6 +1613,568 @@ RSpec.describe Langfuse::ApiClient do
 
       it "does not raise an error" do
         expect { api_client_no_cache.shutdown }.not_to raise_error
+      end
+    end
+  end
+
+  describe "#list_datasets" do
+    let(:datasets_response) do
+      {
+        "data" => [
+          { "id" => "ds-1", "name" => "dataset-1" },
+          { "id" => "ds-2", "name" => "dataset-2" }
+        ],
+        "meta" => { "totalItems" => 2 }
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets")
+          .to_return(
+            status: 200,
+            body: datasets_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns array of datasets" do
+        result = api_client.list_datasets
+        expect(result).to be_an(Array)
+        expect(result.size).to eq(2)
+      end
+
+      it "makes GET request to correct endpoint" do
+        api_client.list_datasets
+        expect(
+          a_request(:get, "#{base_url}/api/public/v2/datasets")
+        ).to have_been_made.once
+      end
+    end
+
+    context "with pagination" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets")
+          .with(query: { page: "2", limit: "10" })
+          .to_return(
+            status: 200,
+            body: datasets_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "passes pagination parameters" do
+        api_client.list_datasets(page: 2, limit: 10)
+        expect(
+          a_request(:get, "#{base_url}/api/public/v2/datasets")
+            .with(query: { page: "2", limit: "10" })
+        ).to have_been_made.once
+      end
+    end
+
+    context "when authentication fails" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets")
+          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+      end
+
+      it "raises UnauthorizedError" do
+        expect { api_client.list_datasets }.to raise_error(Langfuse::UnauthorizedError)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect { api_client.list_datasets }.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:get).and_raise(retriable_error)
+
+        expect { api_client.list_datasets }.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "#get_dataset" do
+    let(:dataset_name) { "evaluation-qa" }
+    let(:dataset_response) do
+      {
+        "id" => "ds-123",
+        "name" => dataset_name,
+        "description" => "QA dataset"
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets/#{dataset_name}")
+          .to_return(
+            status: 200,
+            body: dataset_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns dataset data" do
+        result = api_client.get_dataset(dataset_name)
+        expect(result["id"]).to eq("ds-123")
+        expect(result["name"]).to eq(dataset_name)
+      end
+    end
+
+    context "with folder-style name" do
+      it "URL-encodes dataset name" do
+        folder_name = "evaluation/qa-dataset"
+        encoded_name = "evaluation%2Fqa-dataset"
+
+        stub_request(:get, "#{base_url}/api/public/v2/datasets/#{encoded_name}")
+          .to_return(
+            status: 200,
+            body: { "id" => "ds-1", "name" => folder_name }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        result = api_client.get_dataset(folder_name)
+        expect(result["name"]).to eq(folder_name)
+        expect(
+          a_request(:get, "#{base_url}/api/public/v2/datasets/#{encoded_name}")
+        ).to have_been_made.once
+      end
+    end
+
+    context "when not found" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets/#{dataset_name}")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect { api_client.get_dataset(dataset_name) }.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets/#{dataset_name}")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect { api_client.get_dataset(dataset_name) }.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:get).and_raise(retriable_error)
+
+        expect { api_client.get_dataset(dataset_name) }.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "#create_dataset" do
+    let(:created_dataset) do
+      {
+        "id" => "ds-new",
+        "name" => "new-dataset",
+        "description" => "A new dataset"
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/datasets")
+          .to_return(
+            status: 201,
+            body: created_dataset.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns created dataset" do
+        result = api_client.create_dataset(name: "new-dataset")
+        expect(result["id"]).to eq("ds-new")
+      end
+
+      it "sends correct payload" do
+        api_client.create_dataset(
+          name: "new-dataset",
+          description: "A new dataset",
+          metadata: { "key" => "value" }
+        )
+        expect(
+          a_request(:post, "#{base_url}/api/public/v2/datasets")
+            .with(body: hash_including(
+              "name" => "new-dataset",
+              "description" => "A new dataset",
+              "metadata" => { "key" => "value" }
+            ))
+        ).to have_been_made.once
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/v2/datasets")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect { api_client.create_dataset(name: "test") }.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:post).and_raise(retriable_error)
+
+        expect do
+          api_client.create_dataset(name: "test")
+        end.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "#create_dataset_item" do
+    let(:created_item) do
+      {
+        "id" => "item-new",
+        "datasetId" => "ds-123",
+        "input" => { "q" => "test" }
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/dataset-items")
+          .to_return(
+            status: 201,
+            body: created_item.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns created item" do
+        result = api_client.create_dataset_item(dataset_name: "my-dataset")
+        expect(result["id"]).to eq("item-new")
+      end
+
+      it "sends camelCase datasetName" do
+        api_client.create_dataset_item(dataset_name: "my-dataset", input: { "q" => "test" })
+        expect(
+          a_request(:post, "#{base_url}/api/public/dataset-items")
+            .with(body: hash_including("datasetName" => "my-dataset"))
+        ).to have_been_made.once
+      end
+
+      it "converts status symbol to uppercase" do
+        api_client.create_dataset_item(dataset_name: "my-dataset", status: :archived)
+        expect(
+          a_request(:post, "#{base_url}/api/public/dataset-items")
+            .with(body: hash_including("status" => "ARCHIVED"))
+        ).to have_been_made.once
+      end
+
+      it "sends all optional parameters with camelCase keys" do
+        api_client.create_dataset_item(
+          dataset_name: "my-dataset",
+          input: { "q" => "test" },
+          expected_output: { "a" => "answer" },
+          metadata: { "key" => "value" },
+          id: "custom-id",
+          source_trace_id: "trace-123",
+          source_observation_id: "obs-456",
+          status: :active
+        )
+        expect(
+          a_request(:post, "#{base_url}/api/public/dataset-items")
+            .with(body: hash_including(
+              "datasetName" => "my-dataset",
+              "input" => { "q" => "test" },
+              "expectedOutput" => { "a" => "answer" },
+              "metadata" => { "key" => "value" },
+              "id" => "custom-id",
+              "sourceTraceId" => "trace-123",
+              "sourceObservationId" => "obs-456",
+              "status" => "ACTIVE"
+            ))
+        ).to have_been_made.once
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/dataset-items")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect do
+          api_client.create_dataset_item(dataset_name: "test")
+        end.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:post).and_raise(retriable_error)
+
+        expect do
+          api_client.create_dataset_item(dataset_name: "test")
+        end.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "#get_dataset_item" do
+    let(:item_id) { "item-123" }
+    let(:item_response) do
+      {
+        "id" => item_id,
+        "datasetId" => "ds-456",
+        "input" => { "q" => "test" }
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items/#{item_id}")
+          .to_return(
+            status: 200,
+            body: item_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns item data" do
+        result = api_client.get_dataset_item(item_id)
+        expect(result["id"]).to eq(item_id)
+      end
+    end
+
+    context "when not found" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items/#{item_id}")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect { api_client.get_dataset_item(item_id) }.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items/#{item_id}")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect { api_client.get_dataset_item(item_id) }.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:get).and_raise(retriable_error)
+
+        expect { api_client.get_dataset_item(item_id) }.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "#list_dataset_items" do
+    let(:dataset_name) { "my-dataset" }
+    let(:items_response) do
+      {
+        "data" => [
+          { "id" => "item-1", "datasetId" => "ds-1" },
+          { "id" => "item-2", "datasetId" => "ds-1" }
+        ],
+        "meta" => {}
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: { datasetName: dataset_name })
+          .to_return(
+            status: 200,
+            body: items_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns array of items" do
+        result = api_client.list_dataset_items(dataset_name: dataset_name)
+        expect(result).to be_an(Array)
+        expect(result.size).to eq(2)
+      end
+
+      it "sends datasetName query parameter" do
+        api_client.list_dataset_items(dataset_name: dataset_name)
+        expect(
+          a_request(:get, "#{base_url}/api/public/dataset-items")
+            .with(query: hash_including("datasetName" => dataset_name))
+        ).to have_been_made.once
+      end
+    end
+
+    context "with all filters" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: {
+                  datasetName: dataset_name,
+                  page: "2",
+                  limit: "10",
+                  sourceTraceId: "trace-123",
+                  sourceObservationId: "obs-456"
+                })
+          .to_return(
+            status: 200,
+            body: items_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "passes all filter parameters with camelCase" do
+        api_client.list_dataset_items(
+          dataset_name: dataset_name,
+          page: 2,
+          limit: 10,
+          source_trace_id: "trace-123",
+          source_observation_id: "obs-456"
+        )
+        expect(
+          a_request(:get, "#{base_url}/api/public/dataset-items")
+            .with(query: hash_including(
+              "datasetName" => dataset_name,
+              "page" => "2",
+              "limit" => "10",
+              "sourceTraceId" => "trace-123",
+              "sourceObservationId" => "obs-456"
+            ))
+        ).to have_been_made.once
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: { datasetName: dataset_name })
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect do
+          api_client.list_dataset_items(dataset_name: dataset_name)
+        end.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:get).and_raise(retriable_error)
+
+        expect do
+          api_client.list_dataset_items(dataset_name: dataset_name)
+        end.to raise_error(Langfuse::ApiError,
+                           /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "#delete_dataset_item" do
+    let(:item_id) { "item-123" }
+
+    context "with successful response" do
+      before do
+        stub_request(:delete, "#{base_url}/api/public/dataset-items/#{item_id}")
+          .to_return(
+            status: 200,
+            body: { "id" => item_id }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "makes DELETE request to correct endpoint" do
+        api_client.delete_dataset_item(item_id)
+        expect(
+          a_request(:delete, "#{base_url}/api/public/dataset-items/#{item_id}")
+        ).to have_been_made.once
+      end
+
+      it "returns response body" do
+        result = api_client.delete_dataset_item(item_id)
+        expect(result["id"]).to eq(item_id)
+      end
+    end
+
+    context "when not found" do
+      before do
+        stub_request(:delete, "#{base_url}/api/public/dataset-items/#{item_id}")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "treats 404 as success" do
+        result = api_client.delete_dataset_item(item_id)
+        expect(result["id"]).to eq(item_id)
+      end
+    end
+
+    context "when authentication fails" do
+      before do
+        stub_request(:delete, "#{base_url}/api/public/dataset-items/#{item_id}")
+          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+      end
+
+      it "raises UnauthorizedError" do
+        expect { api_client.delete_dataset_item(item_id) }.to raise_error(Langfuse::UnauthorizedError)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:delete, "#{base_url}/api/public/dataset-items/#{item_id}")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect { api_client.delete_dataset_item(item_id) }.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:delete).and_raise(retriable_error)
+
+        expect do
+          api_client.delete_dataset_item(item_id)
+        end.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
       end
     end
   end

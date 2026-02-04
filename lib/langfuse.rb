@@ -40,6 +40,9 @@ require_relative "langfuse/observations"
 require_relative "langfuse/score_client"
 require_relative "langfuse/text_prompt_client"
 require_relative "langfuse/chat_prompt_client"
+require_relative "langfuse/timestamp_parser"
+require_relative "langfuse/dataset_client"
+require_relative "langfuse/dataset_item_client"
 require_relative "langfuse/client"
 
 # rubocop:disable Metrics/ModuleLength

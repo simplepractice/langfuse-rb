@@ -72,12 +72,9 @@ module Langfuse
     #     puts "#{prompt['name']} (v#{prompt['version']})"
     #   end
     def list_prompts(page: nil, limit: nil)
-      params = {}
-      params[:page] = page if page
-      params[:limit] = limit if limit
+      params = { page: page, limit: limit }.compact
 
-      path = "/api/public/v2/prompts"
-      response = connection.get(path, params)
+      response = connection.get("/api/public/v2/prompts", params)
       result = handle_response(response)
 
       # API returns { data: [...], meta: {...} }
@@ -233,6 +230,167 @@ module Langfuse
       cache.shutdown if cache.respond_to?(:shutdown)
     end
 
+    # List all datasets in the project
+    #
+    # @param page [Integer, nil] Optional page number for pagination
+    # @param limit [Integer, nil] Optional limit per page
+    # @return [Array<Hash>] Array of dataset metadata hashes
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_datasets(page: nil, limit: nil)
+      params = { page: page, limit: limit }.compact
+
+      response = connection.get("/api/public/v2/datasets", params)
+      result = handle_response(response)
+      result["data"] || []
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+
+    # Fetch a dataset by name
+    #
+    # @param name [String] Dataset name (supports folder paths like "evaluation/qa-dataset")
+    # @return [Hash] The dataset data
+    # @raise [NotFoundError] if the dataset is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_dataset(name)
+      encoded_name = URI.encode_uri_component(name)
+      response = connection.get("/api/public/v2/datasets/#{encoded_name}")
+      handle_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+
+    # Create a new dataset
+    #
+    # @param name [String] Dataset name (required)
+    # @param description [String, nil] Optional description
+    # @param metadata [Hash, nil] Optional metadata hash
+    # @return [Hash] The created dataset data
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def create_dataset(name:, description: nil, metadata: nil)
+      payload = { name: name, description: description, metadata: metadata }.compact
+
+      response = connection.post("/api/public/v2/datasets", payload)
+      handle_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+
+    # Create a new dataset item (or upsert if id is provided)
+    #
+    # @param dataset_name [String] Name of the dataset (required)
+    # @param input [Object, nil] Input data for the item
+    # @param expected_output [Object, nil] Expected output for evaluation
+    # @param metadata [Hash, nil] Optional metadata
+    # @param id [String, nil] Optional ID for upsert behavior
+    # @param source_trace_id [String, nil] Link to source trace
+    # @param source_observation_id [String, nil] Link to source observation
+    # @param status [Symbol, nil] Item status (:active or :archived)
+    # @return [Hash] The created dataset item data
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    # rubocop:disable Metrics/ParameterLists
+    def create_dataset_item(dataset_name:, input: nil, expected_output: nil,
+                            metadata: nil, id: nil, source_trace_id: nil,
+                            source_observation_id: nil, status: nil)
+      payload = build_dataset_item_payload(
+        dataset_name: dataset_name, input: input, expected_output: expected_output,
+        metadata: metadata, id: id, source_trace_id: source_trace_id,
+        source_observation_id: source_observation_id, status: status
+      )
+
+      response = connection.post("/api/public/dataset-items", payload)
+      handle_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Fetch a dataset item by ID
+    #
+    # @param id [String] Dataset item ID
+    # @return [Hash] The dataset item data
+    # @raise [NotFoundError] if the item is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_dataset_item(id)
+      encoded_id = URI.encode_uri_component(id)
+      response = connection.get("/api/public/dataset-items/#{encoded_id}")
+      handle_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+
+    # List items in a dataset with optional filters
+    #
+    # @param dataset_name [String] Name of the dataset (required)
+    # @param page [Integer, nil] Optional page number for pagination
+    # @param limit [Integer, nil] Optional limit per page
+    # @param source_trace_id [String, nil] Filter by source trace ID
+    # @param source_observation_id [String, nil] Filter by source observation ID
+    # @return [Array<Hash>] Array of dataset item hashes
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_dataset_items(dataset_name:, page: nil, limit: nil,
+                           source_trace_id: nil, source_observation_id: nil)
+      params = build_dataset_items_params(
+        dataset_name: dataset_name, page: page, limit: limit,
+        source_trace_id: source_trace_id, source_observation_id: source_observation_id
+      )
+
+      response = connection.get("/api/public/dataset-items", params)
+      result = handle_response(response)
+      result["data"] || []
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+
+    # Delete a dataset item by ID
+    #
+    # @param id [String] Dataset item ID
+    # @return [Hash] The response body
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    # @note 404 responses are treated as success to keep DELETE idempotent across retries
+    def delete_dataset_item(id)
+      encoded_id = URI.encode_uri_component(id)
+      response = connection.delete("/api/public/dataset-items/#{encoded_id}")
+      handle_delete_dataset_item_response(response, id)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_delete_dataset_item_response(e.response, id)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+
     private
 
     # Fetch prompt using the most appropriate caching strategy available
@@ -260,6 +418,43 @@ module Langfuse
     # Check if distributed cache is available
     def distributed_cache_available?
       cache.respond_to?(:fetch_with_lock)
+    end
+
+    # Build payload for create_dataset_item
+    # rubocop:disable Metrics/ParameterLists
+    def build_dataset_item_payload(dataset_name:, input:, expected_output:,
+                                   metadata:, id:, source_trace_id:,
+                                   source_observation_id:, status:)
+      { datasetName: dataset_name }.tap do |payload|
+        add_optional_dataset_item_fields(payload, input, expected_output, metadata, id)
+        add_optional_source_fields(payload, source_trace_id, source_observation_id, status)
+      end
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    def add_optional_dataset_item_fields(payload, input, expected_output, metadata, id)
+      payload[:id] = id if id
+      payload[:input] = input if input
+      payload[:expectedOutput] = expected_output if expected_output
+      payload[:metadata] = metadata if metadata
+    end
+
+    def add_optional_source_fields(payload, source_trace_id, source_observation_id, status)
+      payload[:sourceTraceId] = source_trace_id if source_trace_id
+      payload[:sourceObservationId] = source_observation_id if source_observation_id
+      payload[:status] = status.to_s.upcase if status
+    end
+
+    # Build params for list_dataset_items
+    def build_dataset_items_params(dataset_name:, page:, limit:,
+                                   source_trace_id:, source_observation_id:)
+      {
+        datasetName: dataset_name,
+        page: page,
+        limit: limit,
+        sourceTraceId: source_trace_id,
+        sourceObservationId: source_observation_id
+      }.compact
     end
 
     # Fetch with SWR cache
@@ -332,7 +527,7 @@ module Langfuse
     # Retries transient errors with exponential backoff:
     # - Max 2 retries (3 total attempts)
     # - Exponential backoff (0.05s * 2^retry_count)
-    # - Retries GET and PATCH requests (idempotent operations)
+    # - Retries GET, PATCH, and DELETE requests (idempotent operations)
     # - Retries POST requests to batch endpoint (idempotent due to event UUIDs)
     # - Note: POST to create_prompt is NOT idempotent; retries may create duplicate versions
     # - Retries on: 429 (rate limit), 503 (service unavailable), 504 (gateway timeout)
@@ -344,7 +539,7 @@ module Langfuse
         max: 2,
         interval: 0.05,
         backoff_factor: 2,
-        methods: %i[get post patch],
+        methods: %i[get post patch delete],
         retry_statuses: [429, 503, 504],
         exceptions: [Faraday::TimeoutError, Faraday::ConnectionFailed]
       }
@@ -382,10 +577,7 @@ module Langfuse
     # @param label [String, nil] Optional label
     # @return [Hash] Query parameters
     def build_prompt_params(version: nil, label: nil)
-      params = {}
-      params[:version] = version if version
-      params[:label] = label if label
-      params
+      { version: version, label: label }.compact
     end
 
     # Handle HTTP response and raise appropriate errors
@@ -402,11 +594,18 @@ module Langfuse
       when 401
         raise UnauthorizedError, "Authentication failed. Check your API keys."
       when 404
-        raise NotFoundError, "Prompt not found"
+        raise NotFoundError, extract_error_message(response)
       else
         error_message = extract_error_message(response)
         raise ApiError, "API request failed (#{response.status}): #{error_message}"
       end
+    end
+
+    def handle_delete_dataset_item_response(response, id)
+      return { "id" => id } if response&.status == 404
+      return response.body if [200, 201].include?(response&.status)
+
+      handle_response(response)
     end
 
     # Handle HTTP response for batch requests
