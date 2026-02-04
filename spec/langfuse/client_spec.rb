@@ -1438,4 +1438,317 @@ RSpec.describe Langfuse::Client do
       end
     end
   end
+
+  describe "#create_dataset" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:created_dataset) do
+      {
+        "id" => "ds-new",
+        "name" => "new-dataset",
+        "description" => "A test dataset"
+      }
+    end
+
+    before do
+      stub_request(:post, "#{base_url}/api/public/v2/datasets")
+        .to_return(
+          status: 201,
+          body: created_dataset.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "returns a DatasetClient" do
+      result = client.create_dataset(name: "new-dataset")
+      expect(result).to be_a(Langfuse::DatasetClient)
+    end
+
+    it "sets dataset data correctly" do
+      result = client.create_dataset(name: "new-dataset", description: "A test dataset")
+      expect(result.id).to eq("ds-new")
+      expect(result.name).to eq("new-dataset")
+      expect(result.description).to eq("A test dataset")
+    end
+  end
+
+  describe "#get_dataset" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:dataset_response) do
+      {
+        "id" => "ds-123",
+        "name" => "evaluation-qa",
+        "description" => "QA dataset"
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets/evaluation-qa")
+          .to_return(
+            status: 200,
+            body: dataset_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns a DatasetClient" do
+        result = client.get_dataset("evaluation-qa")
+        expect(result).to be_a(Langfuse::DatasetClient)
+      end
+
+      it "returns client with correct dataset data" do
+        result = client.get_dataset("evaluation-qa")
+        expect(result.id).to eq("ds-123")
+        expect(result.name).to eq("evaluation-qa")
+      end
+    end
+
+    context "when not found" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/datasets/missing")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect { client.get_dataset("missing") }.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+  end
+
+  describe "#list_datasets" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:datasets_response) do
+      {
+        "data" => [
+          { "id" => "ds-1", "name" => "dataset-1" },
+          { "id" => "ds-2", "name" => "dataset-2" }
+        ],
+        "meta" => {}
+      }
+    end
+
+    before do
+      stub_request(:get, "#{base_url}/api/public/v2/datasets")
+        .to_return(
+          status: 200,
+          body: datasets_response.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "returns array of dataset data" do
+      result = client.list_datasets
+      expect(result).to be_an(Array)
+      expect(result.size).to eq(2)
+    end
+
+    it "returns raw hash data (not wrapped)" do
+      result = client.list_datasets
+      expect(result.first).to be_a(Hash)
+      expect(result.first["name"]).to eq("dataset-1")
+    end
+  end
+
+  describe "#create_dataset_item" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:created_item) do
+      {
+        "id" => "item-new",
+        "datasetId" => "ds-123",
+        "input" => { "question" => "What is 2+2?" },
+        "expectedOutput" => { "answer" => "4" }
+      }
+    end
+
+    before do
+      stub_request(:post, "#{base_url}/api/public/dataset-items")
+        .to_return(
+          status: 201,
+          body: created_item.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "returns a DatasetItemClient" do
+      result = client.create_dataset_item(dataset_name: "my-dataset")
+      expect(result).to be_a(Langfuse::DatasetItemClient)
+    end
+
+    it "sets item data correctly" do
+      result = client.create_dataset_item(
+        dataset_name: "my-dataset",
+        input: { "question" => "What is 2+2?" },
+        expected_output: { "answer" => "4" }
+      )
+      expect(result.id).to eq("item-new")
+      expect(result.input).to eq({ "question" => "What is 2+2?" })
+      expect(result.expected_output).to eq({ "answer" => "4" })
+    end
+  end
+
+  describe "#get_dataset_item" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:item_response) do
+      {
+        "id" => "item-123",
+        "datasetId" => "ds-456",
+        "input" => { "q" => "test" }
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items/item-123")
+          .to_return(
+            status: 200,
+            body: item_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns a DatasetItemClient" do
+        result = client.get_dataset_item("item-123")
+        expect(result).to be_a(Langfuse::DatasetItemClient)
+      end
+
+      it "returns client with correct item data" do
+        result = client.get_dataset_item("item-123")
+        expect(result.id).to eq("item-123")
+        expect(result.dataset_id).to eq("ds-456")
+      end
+    end
+
+    context "when not found" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items/missing")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect { client.get_dataset_item("missing") }.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+  end
+
+  describe "#list_dataset_items" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:items_response) do
+      {
+        "data" => [
+          { "id" => "item-1", "datasetId" => "ds-1" },
+          { "id" => "item-2", "datasetId" => "ds-1" }
+        ],
+        "meta" => {}
+      }
+    end
+
+    before do
+      stub_request(:get, "#{base_url}/api/public/dataset-items")
+        .with(query: { datasetName: "my-dataset" })
+        .to_return(
+          status: 200,
+          body: items_response.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "returns array of DatasetItemClient instances" do
+      result = client.list_dataset_items(dataset_name: "my-dataset")
+      expect(result).to be_an(Array)
+      expect(result).to all(be_a(Langfuse::DatasetItemClient))
+    end
+
+    it "returns correct number of items" do
+      result = client.list_dataset_items(dataset_name: "my-dataset")
+      expect(result.size).to eq(2)
+    end
+
+    it "wraps items with correct data" do
+      result = client.list_dataset_items(dataset_name: "my-dataset")
+      expect(result.first.id).to eq("item-1")
+      expect(result.last.id).to eq("item-2")
+    end
+
+    context "with source filter parameters" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: { datasetName: "my-dataset", sourceTraceId: "trace-abc", sourceObservationId: "obs-xyz" })
+          .to_return(
+            status: 200,
+            body: items_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "passes source_trace_id and source_observation_id to the API" do
+        client.list_dataset_items(
+          dataset_name: "my-dataset",
+          source_trace_id: "trace-abc",
+          source_observation_id: "obs-xyz"
+        )
+
+        expect(
+          a_request(:get, "#{base_url}/api/public/dataset-items")
+            .with(query: { datasetName: "my-dataset", sourceTraceId: "trace-abc", sourceObservationId: "obs-xyz" })
+        ).to have_been_made.once
+      end
+    end
+  end
+
+  describe "#delete_dataset_item" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+
+    context "with successful response" do
+      before do
+        stub_request(:delete, "#{base_url}/api/public/dataset-items/item-123")
+          .to_return(
+            status: 200,
+            body: { "id" => "item-123" }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns nil" do
+        result = client.delete_dataset_item("item-123")
+        expect(result).to be_nil
+      end
+
+      it "makes DELETE request" do
+        client.delete_dataset_item("item-123")
+        expect(
+          a_request(:delete, "#{base_url}/api/public/dataset-items/item-123")
+        ).to have_been_made.once
+      end
+    end
+
+    context "when not found" do
+      before do
+        stub_request(:delete, "#{base_url}/api/public/dataset-items/missing")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "returns nil" do
+        result = client.delete_dataset_item("missing")
+        expect(result).to be_nil
+      end
+    end
+
+    context "when authentication fails" do
+      before do
+        stub_request(:delete, "#{base_url}/api/public/dataset-items/item-123")
+          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+      end
+
+      it "raises UnauthorizedError" do
+        expect { client.delete_dataset_item("item-123") }.to raise_error(Langfuse::UnauthorizedError)
+      end
+    end
+  end
 end

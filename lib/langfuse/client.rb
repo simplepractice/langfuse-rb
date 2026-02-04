@@ -348,6 +348,111 @@ module Langfuse
       @api_client.shutdown
     end
 
+    # Create a new dataset
+    #
+    # @param name [String] Dataset name (required)
+    # @param description [String, nil] Optional description
+    # @param metadata [Hash, nil] Optional metadata hash
+    # @return [DatasetClient] The created dataset client
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def create_dataset(name:, description: nil, metadata: nil)
+      data = api_client.create_dataset(name: name, description: description, metadata: metadata)
+      DatasetClient.new(data)
+    end
+
+    # Fetch a dataset by name
+    #
+    # @param name [String] Dataset name (supports folder paths like "evaluation/qa-dataset")
+    # @return [DatasetClient] The dataset client
+    # @raise [NotFoundError] if the dataset is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_dataset(name)
+      data = api_client.get_dataset(name)
+      DatasetClient.new(data)
+    end
+
+    # List all datasets in the project
+    #
+    # @param page [Integer, nil] Optional page number for pagination
+    # @param limit [Integer, nil] Optional limit per page
+    # @return [Array<Hash>] Array of dataset metadata hashes
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_datasets(page: nil, limit: nil)
+      api_client.list_datasets(page: page, limit: limit)
+    end
+
+    # Create a new dataset item
+    #
+    # @param dataset_name [String] Name of the dataset to add item to (required)
+    # @param input [Object, nil] Input data for the item
+    # @param expected_output [Object, nil] Expected output for evaluation
+    # @param metadata [Hash, nil] Optional metadata
+    # @param id [String, nil] Optional ID for upsert behavior
+    # @param source_trace_id [String, nil] Link to source trace
+    # @param source_observation_id [String, nil] Link to source observation
+    # @param status [Symbol, nil] Item status (:active or :archived)
+    # @return [DatasetItemClient] The created dataset item client
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    # rubocop:disable Metrics/ParameterLists
+    def create_dataset_item(dataset_name:, input: nil, expected_output: nil,
+                            metadata: nil, id: nil, source_trace_id: nil,
+                            source_observation_id: nil, status: nil)
+      data = api_client.create_dataset_item(
+        dataset_name: dataset_name, input: input, expected_output: expected_output,
+        metadata: metadata, id: id, source_trace_id: source_trace_id,
+        source_observation_id: source_observation_id, status: status
+      )
+      DatasetItemClient.new(data)
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Fetch a dataset item by ID
+    #
+    # @param id [String] Dataset item ID
+    # @return [DatasetItemClient] The dataset item client
+    # @raise [NotFoundError] if the item is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_dataset_item(id)
+      data = api_client.get_dataset_item(id)
+      DatasetItemClient.new(data)
+    end
+
+    # List all items in a dataset
+    #
+    # @param dataset_name [String] Name of the dataset (required)
+    # @param page [Integer, nil] Optional page number for pagination
+    # @param limit [Integer, nil] Optional limit per page
+    # @param source_trace_id [String, nil] Filter by source trace ID
+    # @param source_observation_id [String, nil] Filter by source observation ID
+    # @return [Array<DatasetItemClient>] Array of dataset item clients
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_dataset_items(dataset_name:, page: nil, limit: nil,
+                           source_trace_id: nil, source_observation_id: nil)
+      items = api_client.list_dataset_items(
+        dataset_name: dataset_name, page: page, limit: limit,
+        source_trace_id: source_trace_id, source_observation_id: source_observation_id
+      )
+      items.map { |data| DatasetItemClient.new(data) }
+    end
+
+    # Delete a dataset item by ID
+    #
+    # @param id [String] Dataset item ID
+    # @return [nil]
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    # @note 404 responses are treated as success to keep DELETE idempotent across retries
+    def delete_dataset_item(id)
+      api_client.delete_dataset_item(id)
+      nil
+    end
+
     private
 
     attr_reader :score_client
