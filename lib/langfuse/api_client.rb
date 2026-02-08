@@ -37,7 +37,7 @@ module Langfuse
     # @return [Logger] Logger instance for debugging
     attr_reader :logger
 
-    # @return [PromptCache, nil] Optional cache for prompt responses
+    # @return [PromptCache, RailsCacheAdapter, nil] Optional cache for prompt responses
     attr_reader :cache
 
     # Initialize a new API client
@@ -47,7 +47,7 @@ module Langfuse
     # @param base_url [String] Base URL for Langfuse API
     # @param timeout [Integer] HTTP request timeout in seconds
     # @param logger [Logger] Logger instance for debugging
-    # @param cache [PromptCache, nil] Optional cache for prompt responses
+    # @param cache [PromptCache, RailsCacheAdapter, nil] Optional cache for prompt responses
     # @return [ApiClient]
     def initialize(public_key:, secret_key:, base_url:, timeout: 5, logger: nil, cache: nil)
       @public_key = public_key
