@@ -1232,14 +1232,97 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "#project_id" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+
+    context "when API returns project data" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_return(
+            status: 200,
+            body: { "data" => [{ "id" => "proj-abc-123" }] }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns the project ID" do
+        expect(client.project_id).to eq("proj-abc-123")
+      end
+
+      it "caches the project ID" do
+        client.project_id
+        client.project_id
+
+        expect(
+          a_request(:get, "#{base_url}/api/public/projects")
+        ).to have_been_made.once
+      end
+    end
+
+    context "when API call fails" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_return(status: 500, body: { message: "Server error" }.to_json)
+      end
+
+      it "returns nil" do
+        expect(client.project_id).to be_nil
+      end
+
+      it "does not retry on subsequent trace_url calls" do
+        client.trace_url("abc123")
+        client.trace_url("def456")
+
+        expect(
+          a_request(:get, "#{base_url}/api/public/projects")
+        ).to have_been_made.once
+      end
+    end
+
+    context "when API returns empty data" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_return(
+            status: 200,
+            body: { "data" => [] }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns nil" do
+        expect(client.project_id).to be_nil
+      end
+
+      it "does not retry on subsequent dataset_url calls" do
+        client.dataset_url("ds-1")
+        client.dataset_url("ds-2")
+
+        expect(
+          a_request(:get, "#{base_url}/api/public/projects")
+        ).to have_been_made.once
+      end
+    end
+  end
+
   describe "#trace_url" do
     let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
 
-    it "generates trace URL with default base_url" do
-      trace_id = "a" * 32 # 32 hex characters
+    before do
+      stub_request(:get, "#{base_url}/api/public/projects")
+        .to_return(
+          status: 200,
+          body: { "data" => [{ "id" => "proj-abc" }] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "generates trace URL with project ID" do
+      trace_id = "a" * 32
       url = client.trace_url(trace_id)
 
-      expect(url).to eq("https://cloud.langfuse.com/traces/#{trace_id}")
+      expect(url).to eq("https://cloud.langfuse.com/project/proj-abc/traces/#{trace_id}")
     end
 
     it "generates trace URL with custom base_url" do
@@ -1249,18 +1332,92 @@ RSpec.describe Langfuse::Client do
         config.base_url = "https://custom.langfuse.com"
       end
       custom_client = described_class.new(custom_config)
-      trace_id = "b" * 32
 
+      stub_request(:get, "https://custom.langfuse.com/api/public/projects")
+        .to_return(
+          status: 200,
+          body: { "data" => [{ "id" => "proj-xyz" }] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      trace_id = "b" * 32
       url = custom_client.trace_url(trace_id)
 
-      expect(url).to eq("https://custom.langfuse.com/traces/#{trace_id}")
+      expect(url).to eq("https://custom.langfuse.com/project/proj-xyz/traces/#{trace_id}")
     end
 
-    it "handles trace IDs of any length" do
-      trace_id = "abc123def456"
-      url = client.trace_url(trace_id)
+    context "when project ID is unavailable" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_return(status: 500, body: { message: "Server error" }.to_json)
+      end
 
-      expect(url).to eq("https://cloud.langfuse.com/traces/#{trace_id}")
+      it "returns nil" do
+        client_without_project = described_class.new(valid_config)
+        expect(client_without_project.trace_url("abc123")).to be_nil
+      end
+    end
+  end
+
+  describe "#dataset_url" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+
+    before do
+      stub_request(:get, "#{base_url}/api/public/projects")
+        .to_return(
+          status: 200,
+          body: { "data" => [{ "id" => "proj-abc" }] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "generates dataset URL with project ID" do
+      url = client.dataset_url("ds-123")
+      expect(url).to eq("https://cloud.langfuse.com/project/proj-abc/datasets/ds-123")
+    end
+
+    context "when project ID is unavailable" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_return(status: 500, body: { message: "Server error" }.to_json)
+      end
+
+      it "returns nil" do
+        client_without_project = described_class.new(valid_config)
+        expect(client_without_project.dataset_url("ds-123")).to be_nil
+      end
+    end
+  end
+
+  describe "#dataset_run_url" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+
+    before do
+      stub_request(:get, "#{base_url}/api/public/projects")
+        .to_return(
+          status: 200,
+          body: { "data" => [{ "id" => "proj-abc" }] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "generates dataset run URL with project ID" do
+      url = client.dataset_run_url(dataset_id: "ds-123", dataset_run_id: "run-456")
+      expect(url).to eq("https://cloud.langfuse.com/project/proj-abc/datasets/ds-123/runs/run-456")
+    end
+
+    context "when project ID is unavailable" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_return(status: 500, body: { message: "Server error" }.to_json)
+      end
+
+      it "returns nil" do
+        client_without_project = described_class.new(valid_config)
+        expect(client_without_project.dataset_run_url(dataset_id: "ds-123", dataset_run_id: "run-456")).to be_nil
+      end
     end
   end
 

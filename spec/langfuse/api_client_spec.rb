@@ -2180,6 +2180,71 @@ RSpec.describe Langfuse::ApiClient do
     end
   end
 
+  describe "#get_projects" do
+    let(:projects_response) do
+      {
+        "data" => [
+          { "id" => "proj-abc-123", "name" => "my-project" }
+        ]
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_return(
+            status: 200,
+            body: projects_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns parsed response body" do
+        result = api_client.get_projects
+        expect(result["data"].first["id"]).to eq("proj-abc-123")
+      end
+
+      it "makes GET request to correct endpoint" do
+        api_client.get_projects
+        expect(
+          a_request(:get, "#{base_url}/api/public/projects")
+        ).to have_been_made.once
+      end
+    end
+
+    context "when authentication fails" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+      end
+
+      it "raises UnauthorizedError" do
+        expect { api_client.get_projects }.to raise_error(Langfuse::UnauthorizedError)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/projects")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect { api_client.get_projects }.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:get).and_raise(retriable_error)
+
+        expect { api_client.get_projects }.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
   describe "#create_dataset_run_item" do
     let(:run_item_response) do
       {

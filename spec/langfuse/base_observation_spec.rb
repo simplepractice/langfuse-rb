@@ -553,17 +553,24 @@ RSpec.describe Langfuse::BaseObservation do
         config.secret_key = "sk_test_456"
         config.base_url = "https://cloud.langfuse.com"
       end
+
+      stub_request(:get, "https://cloud.langfuse.com/api/public/projects")
+        .to_return(
+          status: 200,
+          body: { "data" => [{ "id" => "proj-abc" }] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
     end
 
     after do
       Langfuse.reset!
     end
 
-    it "generates trace URL using client" do
+    it "generates trace URL with project ID" do
       trace_id = observation.trace_id
       url = observation.trace_url
 
-      expect(url).to eq("https://cloud.langfuse.com/traces/#{trace_id}")
+      expect(url).to eq("https://cloud.langfuse.com/project/proj-abc/traces/#{trace_id}")
     end
 
     it "uses configured base_url" do
@@ -573,10 +580,17 @@ RSpec.describe Langfuse::BaseObservation do
         config.base_url = "https://custom.langfuse.com"
       end
 
+      stub_request(:get, "https://custom.langfuse.com/api/public/projects")
+        .to_return(
+          status: 200,
+          body: { "data" => [{ "id" => "proj-xyz" }] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
       trace_id = observation.trace_id
       url = observation.trace_url
 
-      expect(url).to eq("https://custom.langfuse.com/traces/#{trace_id}")
+      expect(url).to eq("https://custom.langfuse.com/project/proj-xyz/traces/#{trace_id}")
     end
 
     it "calls client.trace_url with correct trace_id" do

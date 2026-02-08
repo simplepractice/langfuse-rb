@@ -276,6 +276,26 @@ module Langfuse
       raise ApiError, "HTTP request failed: #{e.message}"
     end
 
+    # Fetch projects accessible with the current API keys
+    #
+    # @return [Hash] The parsed response body containing project data
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   data = api_client.get_projects
+    #   project_id = data["data"][0]["id"]
+    def get_projects # rubocop:disable Naming/AccessorMethodName
+      response = connection.get("/api/public/projects")
+      handle_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+
     # Shut down the API client and release resources
     #
     # Shuts down the cache if it supports shutdown (e.g., SWR thread pool).

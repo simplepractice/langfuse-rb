@@ -99,6 +99,28 @@ RSpec.describe Langfuse::DatasetClient do
     end
   end
 
+  describe "#url" do
+    context "without client" do
+      it "returns nil" do
+        client = described_class.new(dataset_data)
+        expect(client.url).to be_nil
+      end
+    end
+
+    context "with client" do
+      let(:mock_client) { instance_double(Langfuse::Client) }
+
+      it "delegates to client.dataset_url with id" do
+        allow(mock_client).to receive(:dataset_url)
+          .with("dataset-123")
+          .and_return("https://cloud.langfuse.com/project/proj-abc/datasets/dataset-123")
+
+        client = described_class.new(dataset_data, client: mock_client)
+        expect(client.url).to eq("https://cloud.langfuse.com/project/proj-abc/datasets/dataset-123")
+      end
+    end
+  end
+
   describe "#items" do
     context "with no items and no client" do
       it "returns empty array" do
