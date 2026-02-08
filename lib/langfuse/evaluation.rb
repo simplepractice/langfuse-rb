@@ -16,7 +16,7 @@ module Langfuse
   #   Evaluation.new(name: "sentiment", value: "positive", data_type: :categorical)
   class Evaluation
     # @return [String] the evaluation name
-    # @return [Numeric, Integer, String] the evaluation value
+    # @return [Numeric, Boolean, String] the evaluation value
     # @return [String, nil] optional comment
     # @return [Symbol] data type (:numeric, :boolean, or :categorical)
     # @return [String, nil] optional score config ID
@@ -24,7 +24,7 @@ module Langfuse
     attr_reader :name, :value, :comment, :data_type, :config_id, :metadata
 
     # @param name [String] Score name (required, must be non-empty)
-    # @param value [Numeric, Integer, String] Score value (type depends on data_type)
+    # @param value [Numeric, Boolean, String] Score value (type depends on data_type)
     # @param comment [String, nil] Optional comment describing the evaluation
     # @param data_type [Symbol] One of :numeric, :boolean, or :categorical
     # @param config_id [String, nil] Optional score config ID

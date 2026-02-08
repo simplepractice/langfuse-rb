@@ -16,7 +16,7 @@ module Langfuse
     # @param metadata [Hash] metadata set on the trace
     # @param task [Proc] the callable to execute — receives the span
     # @yield [span, trace_id] optional pre-task hook (e.g., dataset run linking)
-    # @return [Array(Object, String, String, StandardError, nil)] output, trace_id, observation_id, error
+    # @return [Array<(Object, String, String, StandardError | nil)>] output, trace_id, observation_id, error
     def self.call(trace_name:, input:, task:, metadata: {})
       output = nil
       trace_id = nil

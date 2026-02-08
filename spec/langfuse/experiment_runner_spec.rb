@@ -763,6 +763,17 @@ RSpec.describe Langfuse::ExperimentRunner do
       end
     end
 
+    context "with invalid data items" do
+      it "raises ArgumentError for non-Hash, non-input items" do
+        expect {
+          described_class.new(
+            client: mock_client, name: "test", items: ["not a hash"],
+            task: ->(_) { "a" }
+          ).execute
+        }.to raise_error(ArgumentError, /each data item must be a Hash or respond to #input, got String/)
+      end
+    end
+
     context "when dataset linking fails" do
       let(:dataset_item) do
         Langfuse::DatasetItemClient.new(

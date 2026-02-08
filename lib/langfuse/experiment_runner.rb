@@ -1,9 +1,6 @@
 # frozen_string_literal: true
 
 module Langfuse
-  # Default timeout (in seconds) for flushing traces during experiment runs.
-  FLUSH_TIMEOUT = 5
-
   # Orchestrates an experiment run: executes a task against each item,
   # runs evaluators, persists scores, and links dataset run items.
   #
@@ -159,6 +156,9 @@ module Langfuse
     # Wraps raw hashes into ExperimentItem; passes DatasetItemClient through unchanged.
     def normalize_item(item)
       return item if item.respond_to?(:input)
+      unless item.is_a?(Hash)
+        raise ArgumentError, "each data item must be a Hash or respond to #input, got #{item.class}"
+      end
 
       ExperimentItem.new(
         input: local_item_value(item, :input),

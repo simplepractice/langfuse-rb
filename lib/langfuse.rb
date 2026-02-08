@@ -25,6 +25,9 @@ module Langfuse
   class ApiError < Error; end
   class NotFoundError < ApiError; end
   class UnauthorizedError < ApiError; end
+
+  # Default timeout (in seconds) for flushing traces during experiment runs.
+  FLUSH_TIMEOUT = 5
 end
 
 require_relative "langfuse/config"
