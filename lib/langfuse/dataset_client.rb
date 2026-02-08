@@ -13,18 +13,31 @@ module Langfuse
   #
   # @example Running an experiment
   #   dataset.run_experiment(name: "v1", task: ->(item) { llm_call(item.input) })
+  #
   class DatasetClient
     include TimestampParser
 
-    # @return [String] dataset ID
-    # @return [String] dataset name
-    # @return [String, nil] optional description
-    # @return [Hash] metadata hash
-    # @return [Time, nil] creation timestamp
-    # @return [Time, nil] last update timestamp
-    attr_reader :id, :name, :description, :metadata, :created_at, :updated_at
+    # @return [String] Unique identifier for the dataset
+    attr_reader :id
 
-    # @param dataset_data [Hash] raw dataset hash from the API (string keys)
+    # @return [String] Human-readable name of the dataset
+    attr_reader :name
+
+    # @return [String, nil] Optional description of the dataset
+    attr_reader :description
+
+    # @return [Hash] Additional metadata as key-value pairs
+    attr_reader :metadata
+
+    # @return [Time, nil] Timestamp when the dataset was created
+    attr_reader :created_at
+
+    # @return [Time, nil] Timestamp when the dataset was last updated
+    attr_reader :updated_at
+
+    # Initialize a new dataset client from API response data
+    #
+    # @param dataset_data [Hash] Raw dataset data from the API (string keys)
     # @param client [Client, nil] Langfuse client for API operations
     # @raise [ArgumentError] if dataset_data is not a Hash or missing required fields
     def initialize(dataset_data, client: nil)
@@ -39,7 +52,9 @@ module Langfuse
       @client = client
     end
 
-    # @return [Array<DatasetItemClient>]
+    # Lazily-parsed dataset items
+    #
+    # @return [Array<DatasetItemClient>] Items belonging to this dataset
     def items
       @items ||= if @raw_items.empty? && @client
                    @client.list_dataset_items(dataset_name: @name)

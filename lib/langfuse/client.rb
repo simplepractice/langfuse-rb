@@ -19,13 +19,19 @@ module Langfuse
   #
   # rubocop:disable Metrics/ClassLength
   class Client
+    # @return [Integer] Default page size when fetching all dataset items
     DATASET_ITEMS_PAGE_SIZE = 50
 
-    attr_reader :config, :api_client
+    # @return [Config] The client configuration
+    attr_reader :config
+
+    # @return [ApiClient] The underlying API client
+    attr_reader :api_client
 
     # Initialize a new Langfuse client
     #
     # @param config [Config] Configuration object
+    # @return [Client]
     def initialize(config)
       @config = config
       @config.validate!
@@ -362,6 +368,9 @@ module Langfuse
     # @return [DatasetClient] The created dataset client
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   dataset = client.create_dataset(name: "my-dataset", description: "QA evaluation set")
     def create_dataset(name:, description: nil, metadata: nil)
       data = api_client.create_dataset(name: name, description: description, metadata: metadata)
       DatasetClient.new(data, client: self)
@@ -374,6 +383,9 @@ module Langfuse
     # @raise [NotFoundError] if the dataset is not found
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   dataset = client.get_dataset("my-dataset")
     def get_dataset(name)
       data = api_client.get_dataset(name)
       DatasetClient.new(data, client: self)
@@ -386,6 +398,9 @@ module Langfuse
     # @return [Array<Hash>] Array of dataset metadata hashes
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   datasets = client.list_datasets(page: 1, limit: 10)
     def list_datasets(page: nil, limit: nil)
       api_client.list_datasets(page: page, limit: limit)
     end
@@ -403,6 +418,13 @@ module Langfuse
     # @return [DatasetItemClient] The created dataset item client
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   item = client.create_dataset_item(
+    #     dataset_name: "my-dataset",
+    #     input: { query: "What is Ruby?" },
+    #     expected_output: { answer: "A programming language" }
+    #   )
     # rubocop:disable Metrics/ParameterLists
     def create_dataset_item(dataset_name:, input: nil, expected_output: nil,
                             metadata: nil, id: nil, source_trace_id: nil,
@@ -423,6 +445,9 @@ module Langfuse
     # @raise [NotFoundError] if the item is not found
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   item = client.get_dataset_item("item-uuid-123")
     def get_dataset_item(id)
       data = api_client.get_dataset_item(id)
       DatasetItemClient.new(data, client: self)
@@ -441,6 +466,9 @@ module Langfuse
     # @return [Array<DatasetItemClient>] Array of dataset item clients
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   items = client.list_dataset_items(dataset_name: "my-dataset", limit: 50)
     def list_dataset_items(dataset_name:, page: nil, limit: nil,
                            source_trace_id: nil, source_observation_id: nil)
       filters = { dataset_name: dataset_name, source_trace_id: source_trace_id,
@@ -462,6 +490,9 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
     # @note 404 responses are treated as success to keep DELETE idempotent across retries
+    #
+    # @example
+    #   client.delete_dataset_item("item-uuid-123")
     def delete_dataset_item(id)
       api_client.delete_dataset_item(id)
       nil

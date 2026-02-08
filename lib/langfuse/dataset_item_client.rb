@@ -14,24 +14,43 @@ module Langfuse
   #   item.run(run_name: "eval-v1") do |span|
   #     my_llm_call(item.input)
   #   end
+  #
   class DatasetItemClient
     include TimestampParser
 
-    # @return [String] item ID
-    # @return [String] parent dataset ID
-    # @return [Object, nil] input data
-    # @return [Object, nil] expected output for evaluation
-    # @return [Hash] metadata hash
-    # @return [String, nil] source trace ID
-    # @return [String, nil] source observation ID
-    # @return [String] item status ("ACTIVE" or "ARCHIVED")
-    # @return [Time, nil] creation timestamp
-    # @return [Time, nil] last update timestamp
-    attr_reader :id, :dataset_id, :input, :expected_output, :metadata,
-                :source_trace_id, :source_observation_id, :status,
-                :created_at, :updated_at
+    # @return [String] Unique identifier for the dataset item
+    attr_reader :id
 
-    # @param item_data [Hash] raw item hash from the API (string keys)
+    # @return [String] Identifier of the parent dataset
+    attr_reader :dataset_id
+
+    # @return [Object, nil] Input data for the dataset item
+    attr_reader :input
+
+    # @return [Object, nil] Expected output for evaluation
+    attr_reader :expected_output
+
+    # @return [Hash] Additional metadata as key-value pairs
+    attr_reader :metadata
+
+    # @return [String, nil] Trace ID that produced this item
+    attr_reader :source_trace_id
+
+    # @return [String, nil] Observation ID that produced this item
+    attr_reader :source_observation_id
+
+    # @return [String] Item status (ACTIVE or ARCHIVED)
+    attr_reader :status
+
+    # @return [Time, nil] Timestamp when the item was created
+    attr_reader :created_at
+
+    # @return [Time, nil] Timestamp when the item was last updated
+    attr_reader :updated_at
+
+    # Initialize a new dataset item client from API response data
+    #
+    # @param item_data [Hash] Raw item data from the API (string keys)
     # @param client [Client, nil] Langfuse client for API operations
     # @raise [ArgumentError] if item_data is not a Hash or missing required fields
     def initialize(item_data, client: nil)

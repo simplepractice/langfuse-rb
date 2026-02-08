@@ -68,27 +68,50 @@ module Langfuse
     # @return [Symbol] ActiveJob queue name for async processing
     attr_accessor :job_queue
 
-    # Default values
+    # @return [String] Default Langfuse API base URL
     DEFAULT_BASE_URL = "https://cloud.langfuse.com"
+
+    # @return [Integer] Default HTTP request timeout in seconds
     DEFAULT_TIMEOUT = 5
+
+    # @return [Integer] Default cache TTL in seconds
     DEFAULT_CACHE_TTL = 60
+
+    # @return [Integer] Default maximum number of cached items
     DEFAULT_CACHE_MAX_SIZE = 1000
+
+    # @return [Symbol] Default cache backend
     DEFAULT_CACHE_BACKEND = :memory
+
+    # @return [Integer] Default lock timeout in seconds for cache stampede protection
     DEFAULT_CACHE_LOCK_TIMEOUT = 10
+
+    # @return [Boolean] Default stale-while-revalidate setting
     DEFAULT_CACHE_STALE_WHILE_REVALIDATE = false
+
+    # @return [Integer] Default number of background threads for cache refresh
     DEFAULT_CACHE_REFRESH_THREADS = 5
+
+    # @return [Boolean] Default async processing setting
     DEFAULT_TRACING_ASYNC = true
+
+    # @return [Integer] Default number of events to batch before sending
     DEFAULT_BATCH_SIZE = 50
+
+    # @return [Integer] Default flush interval in seconds
     DEFAULT_FLUSH_INTERVAL = 10
+
+    # @return [Symbol] Default ActiveJob queue name
     DEFAULT_JOB_QUEUE = :default
 
-    # Number of seconds representing indefinite cache duration (~1000 years)
+    # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
 
     # Initialize a new Config object
     #
     # @yield [config] Optional block for configuration
     # @yieldparam config [Config] The config instance
+    # @return [Config] a new Config instance
     def initialize
       @public_key = ENV.fetch("LANGFUSE_PUBLIC_KEY", nil)
       @secret_key = ENV.fetch("LANGFUSE_SECRET_KEY", nil)
