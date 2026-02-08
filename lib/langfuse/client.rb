@@ -49,6 +49,11 @@ module Langfuse
         cache: cache
       )
 
+      @project_id = nil
+      # One-shot lookup: avoids repeated blocking API calls in URL helpers
+      # (trace_url, dataset_url, dataset_run_url) when the project endpoint is down.
+      @project_id_fetched = false
+
       # Initialize score client for batching score events
       @score_client = ScoreClient.new(api_client: @api_client, config: config)
     end
@@ -235,16 +240,45 @@ module Langfuse
       build_prompt_client(prompt_data)
     end
 
+    # Lazily-fetched project ID for URL generation
+    #
+    # Fetches the project ID from the API on first access and caches it.
+    # Returns nil if the API call fails (URL generation is non-critical).
+    #
+    # @return [String, nil] The Langfuse project ID
+    def project_id
+      return @project_id if @project_id_fetched
+
+      fetch_project_id
+    end
+
     # Generate URL for viewing a trace in Langfuse UI
     #
     # @param trace_id [String] The trace ID (hex-encoded, 32 characters)
-    # @return [String] URL to view the trace
+    # @return [String, nil] URL to view the trace, or nil if project ID unavailable
     #
     # @example
     #   url = client.trace_url("abc123...")
     #   puts "View trace at: #{url}"
     def trace_url(trace_id)
-      "#{config.base_url}/traces/#{trace_id}"
+      project_url("traces/#{trace_id}")
+    end
+
+    # Generate URL for viewing a dataset in Langfuse UI
+    #
+    # @param dataset_id [String] The dataset ID
+    # @return [String, nil] URL to view the dataset, or nil if project ID unavailable
+    def dataset_url(dataset_id)
+      project_url("datasets/#{dataset_id}")
+    end
+
+    # Generate URL for viewing a dataset run in Langfuse UI
+    #
+    # @param dataset_id [String] The dataset ID
+    # @param dataset_run_id [String] The dataset run ID
+    # @return [String, nil] URL to view the dataset run, or nil if project ID unavailable
+    def dataset_run_url(dataset_id:, dataset_run_id:)
+      project_url("datasets/#{dataset_id}/runs/#{dataset_run_id}")
     end
 
     # Create a score event and queue it for batching
@@ -561,6 +595,26 @@ module Langfuse
     private
 
     attr_reader :score_client
+
+    # Build a project-scoped URL, returning nil if project ID is unavailable
+    def project_url(path)
+      pid = project_id
+      return nil unless pid
+
+      "#{config.base_url}/project/#{pid}/#{path}"
+    end
+
+    # Fetch project ID from the API and cache it
+    #
+    # @return [String, nil] the project ID, or nil on failure
+    def fetch_project_id
+      data = api_client.get_projects
+      @project_id = data.dig("data", 0, "id")
+    rescue StandardError
+      nil
+    ensure
+      @project_id_fetched = true
+    end
 
     def fetch_dataset_items_page(page:, limit:, **filters)
       api_client.list_dataset_items(page: page, limit: limit, **filters)

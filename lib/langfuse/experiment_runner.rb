@@ -34,6 +34,7 @@ module Langfuse
       @run_name = run_name || "#{name} - #{Time.now.utc.iso8601}"
       @logger = Langfuse.configuration.logger
       @dataset_run_id = nil
+      @dataset_id = nil
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -52,7 +53,8 @@ module Langfuse
         run_evaluations: run_evals,
         run_name: @run_name,
         description: @description,
-        dataset_run_id: @dataset_run_id
+        dataset_run_id: @dataset_run_id,
+        dataset_run_url: build_dataset_run_url
       )
     end
 
@@ -136,13 +138,17 @@ module Langfuse
       @logger.warn("Run score persistence failed for '#{evaluation.name}': #{e.message}")
     end
 
+    # Invariant: all items in a single run belong to the same dataset.
     def link_to_dataset_run(item, trace_id, observation_id)
       response = @client.create_dataset_run_item(
         dataset_item_id: item.id, run_name: @run_name,
         trace_id: trace_id, observation_id: observation_id,
         metadata: @metadata, run_description: @description
       )
-      @dataset_run_id ||= response&.dig("datasetRunId")
+      unless @dataset_run_id
+        @dataset_run_id = response&.dig("datasetRunId")
+        @dataset_id = item.dataset_id if @dataset_run_id
+      end
       response
     rescue StandardError => e
       @logger.warn("Dataset run item linking failed: #{e.message}")
@@ -221,6 +227,12 @@ module Langfuse
     # @api private
     def item_metadata(item)
       item.respond_to?(:metadata) ? item.metadata : nil
+    end
+
+    def build_dataset_run_url
+      return nil unless @dataset_run_id && @dataset_id
+
+      @client.dataset_run_url(dataset_id: @dataset_id, dataset_run_id: @dataset_run_id)
     end
 
     # @api private

@@ -63,6 +63,15 @@ module Langfuse
                  end
     end
 
+    # Generate URL for viewing this dataset in Langfuse UI
+    #
+    # @return [String, nil] URL to view the dataset, or nil if client unavailable
+    def url
+      return nil unless @client
+
+      @client.dataset_url(@id)
+    end
+
     # Run an experiment against all items in this dataset
     #
     # @param name [String] experiment/run name (required)

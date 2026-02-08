@@ -8,6 +8,7 @@ RSpec.describe Langfuse::ExperimentRunner do
     allow(mock_client).to receive(:create_dataset_run_item)
     allow(mock_client).to receive(:create_score)
     allow(mock_client).to receive(:flush_scores)
+    allow(mock_client).to receive(:dataset_run_url)
     allow(Langfuse).to receive(:force_flush)
     allow(Langfuse.configuration).to receive(:logger).and_return(logger)
   end
@@ -251,6 +252,73 @@ RSpec.describe Langfuse::ExperimentRunner do
         result = runner.execute
 
         expect(result.dataset_run_id).to eq("run-abc-123")
+      end
+
+      it "populates dataset_run_url on the result" do
+        allow(mock_client).to receive(:create_dataset_run_item)
+          .and_return({ "datasetRunId" => "run-abc-123" })
+        allow(mock_client).to receive(:dataset_run_url)
+          .with(dataset_id: "ds-1", dataset_run_id: "run-abc-123")
+          .and_return("https://cloud.langfuse.com/project/proj-1/datasets/ds-1/runs/run-abc-123")
+
+        runner = described_class.new(
+          client: mock_client, name: "ds-exp", items: dataset_items,
+          task: ->(_) { "a" }
+        )
+        result = runner.execute
+
+        expect(result.dataset_run_url).to eq(
+          "https://cloud.langfuse.com/project/proj-1/datasets/ds-1/runs/run-abc-123"
+        )
+      end
+
+      it "sets dataset_run_url to nil when no dataset_run_id" do
+        allow(mock_client).to receive(:create_dataset_run_item)
+          .and_return({})
+
+        runner = described_class.new(
+          client: mock_client, name: "ds-exp", items: dataset_items,
+          task: ->(_) { "a" }
+        )
+        result = runner.execute
+
+        expect(result.dataset_run_url).to be_nil
+      end
+
+      it "uses dataset_id from the first successfully linked item" do
+        items = [
+          Langfuse::DatasetItemClient.new(
+            { "id" => "item-1", "datasetId" => "ds-1",
+              "input" => { "q" => "x" }, "expectedOutput" => "ax" },
+            client: mock_client
+          ),
+          Langfuse::DatasetItemClient.new(
+            { "id" => "item-2", "datasetId" => "ds-1",
+              "input" => { "q" => "y" }, "expectedOutput" => "ay" },
+            client: mock_client
+          )
+        ]
+
+        call_count = 0
+        allow(mock_client).to receive(:create_dataset_run_item) do
+          call_count += 1
+          raise StandardError, "link error" if call_count == 1
+
+          { "datasetRunId" => "run-1" }
+        end
+        allow(mock_client).to receive(:dataset_run_url)
+          .with(dataset_id: "ds-1", dataset_run_id: "run-1")
+          .and_return("https://example.com/datasets/ds-1/runs/run-1")
+
+        runner = described_class.new(
+          client: mock_client, name: "ds-exp", items: items,
+          task: ->(_) { "a" }
+        )
+        result = runner.execute
+
+        expect(result.dataset_run_url).to eq("https://example.com/datasets/ds-1/runs/run-1")
+        expect(mock_client).to have_received(:dataset_run_url)
+          .with(dataset_id: "ds-1", dataset_run_id: "run-1")
       end
     end
 
