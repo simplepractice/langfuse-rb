@@ -2250,7 +2250,7 @@ RSpec.describe Langfuse::ApiClient do
             .with do |req|
               body = JSON.parse(req.body)
               !body.key?("traceId") && !body.key?("metadata")
-          end
+            end
         ).to have_been_made.once
       end
     end
