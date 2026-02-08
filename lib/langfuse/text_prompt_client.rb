@@ -20,7 +20,23 @@ module Langfuse
   #   text_prompt.labels    # => ["production"]
   #
   class TextPromptClient
-    attr_reader :name, :version, :labels, :tags, :config, :prompt
+    # @return [String] Prompt name
+    attr_reader :name
+
+    # @return [Integer] Prompt version number
+    attr_reader :version
+
+    # @return [Array<String>] Labels assigned to this prompt
+    attr_reader :labels
+
+    # @return [Array<String>] Tags assigned to this prompt
+    attr_reader :tags
+
+    # @return [Hash] Prompt configuration
+    attr_reader :config
+
+    # @return [String] Raw prompt template string
+    attr_reader :prompt
 
     # Initialize a new text prompt client
     #

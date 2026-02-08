@@ -13,6 +13,7 @@ module Langfuse
   #
   module OtelSetup
     class << self
+      # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil] The configured tracer provider
       attr_reader :tracer_provider
 
       # Initialize OpenTelemetry with Langfuse OTLP exporter

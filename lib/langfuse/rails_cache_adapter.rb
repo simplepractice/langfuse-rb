@@ -17,7 +17,23 @@ module Langfuse
   class RailsCacheAdapter
     include StaleWhileRevalidate
 
-    attr_reader :ttl, :namespace, :lock_timeout, :stale_ttl, :thread_pool, :logger
+    # @return [Integer] Time-to-live in seconds
+    attr_reader :ttl
+
+    # @return [String] Cache key namespace
+    attr_reader :namespace
+
+    # @return [Integer] Lock timeout in seconds for stampede protection
+    attr_reader :lock_timeout
+
+    # @return [Integer] Stale TTL for SWR in seconds
+    attr_reader :stale_ttl
+
+    # @return [Concurrent::CachedThreadPool, nil] Thread pool for background refreshes
+    attr_reader :thread_pool
+
+    # @return [Logger] Logger instance for error reporting
+    attr_reader :logger
 
     # Initialize a new Rails.cache adapter
     #

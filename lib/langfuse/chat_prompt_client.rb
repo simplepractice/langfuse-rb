@@ -20,7 +20,23 @@ module Langfuse
   #   chat_prompt.labels    # => ["production"]
   #
   class ChatPromptClient
-    attr_reader :name, :version, :labels, :tags, :config, :prompt
+    # @return [String] Prompt name
+    attr_reader :name
+
+    # @return [Integer] Prompt version number
+    attr_reader :version
+
+    # @return [Array<String>] Labels assigned to this prompt
+    attr_reader :labels
+
+    # @return [Array<String>] Tags assigned to this prompt
+    attr_reader :tags
+
+    # @return [Hash] Prompt configuration
+    attr_reader :config
+
+    # @return [Array<Hash>] Array of message hashes with role and content
+    attr_reader :prompt
 
     # Initialize a new chat prompt client
     #

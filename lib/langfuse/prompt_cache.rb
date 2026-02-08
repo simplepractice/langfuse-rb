@@ -53,7 +53,17 @@ module Langfuse
       end
     end
 
-    attr_reader :ttl, :max_size, :stale_ttl, :logger
+    # @return [Integer] Time-to-live in seconds
+    attr_reader :ttl
+
+    # @return [Integer] Maximum number of cache entries
+    attr_reader :max_size
+
+    # @return [Integer] Stale TTL for SWR in seconds
+    attr_reader :stale_ttl
+
+    # @return [Logger] Logger instance for error reporting
+    attr_reader :logger
 
     # Initialize a new cache
     #

@@ -20,6 +20,7 @@ module Langfuse
   #   end
   #
   class CacheWarmer
+    # @return [Client] Langfuse client used for fetching prompts
     attr_reader :client
 
     # Initialize a new cache warmer
@@ -35,8 +36,8 @@ module Langfuse
     # safe to call multiple times.
     #
     # @param prompt_names [Array<String>] List of prompt names to cache
-    # @param versions [Hash<String, Integer>, nil] Optional version numbers per prompt
-    # @param labels [Hash<String, String>, nil] Optional labels per prompt
+    # @param versions [Hash<String, Integer>] Optional version numbers per prompt
+    # @param labels [Hash<String, String>] Optional labels per prompt
     # @return [Hash] Results with :success and :failed arrays
     #
     # @example Basic warming
@@ -73,8 +74,8 @@ module Langfuse
     # are cached without manually specifying them.
     #
     # @param default_label [String, nil] Label to use for all prompts (default: "production")
-    # @param versions [Hash<String, Integer>, nil] Optional version numbers per prompt
-    # @param labels [Hash<String, String>, nil] Optional labels per specific prompts (overrides default_label)
+    # @param versions [Hash<String, Integer>] Optional version numbers per prompt
+    # @param labels [Hash<String, String>] Optional labels per specific prompts (overrides default_label)
     # @return [Hash] Results with :success and :failed arrays
     #
     # @example Auto-discover and warm all prompts with "production" label
@@ -119,8 +120,8 @@ module Langfuse
     # Useful when you want to abort deployment if cache warming fails.
     #
     # @param prompt_names [Array<String>] List of prompt names to cache
-    # @param versions [Hash<String, Integer>, nil] Optional version numbers per prompt
-    # @param labels [Hash<String, String>, nil] Optional labels per prompt
+    # @param versions [Hash<String, Integer>] Optional version numbers per prompt
+    # @param labels [Hash<String, String>] Optional labels per prompt
     # @return [Hash] Results with :success array
     # @raise [CacheWarmingError] if any prompts fail to cache
     #

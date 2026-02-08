@@ -20,10 +20,19 @@ require_relative "langfuse/types"
 #   prompt = client.get_prompt("greeting")
 #
 module Langfuse
+  # Base error class for all Langfuse SDK errors
   class Error < StandardError; end
+
+  # Raised when Langfuse configuration is invalid or incomplete
   class ConfigurationError < Error; end
+
+  # Raised when a Langfuse API request fails
   class ApiError < Error; end
+
+  # Raised when a requested resource is not found (HTTP 404)
   class NotFoundError < ApiError; end
+
+  # Raised when API authentication fails (HTTP 401)
   class UnauthorizedError < ApiError; end
 end
 
@@ -49,6 +58,7 @@ require_relative "langfuse/client"
 module Langfuse
   # rubocop:disable Metrics/ClassLength
   class << self
+    # @param configuration [Config] the global configuration object
     attr_writer :configuration
 
     # Returns the global configuration object
@@ -293,6 +303,7 @@ module Langfuse
     # @param start_time [Time, Integer, nil] Optional start time (Time object or Unix timestamp in nanoseconds)
     # @param skip_validation [Boolean] Skip validation (for internal use). Defaults to false.
     # @return [BaseObservation] The observation wrapper (Span, Generation, or Event)
+    # @raise [ArgumentError] if an invalid observation type is provided
     #
     # @example Create root span
     #   span = Langfuse.start_observation("root-operation", { input: {...} })
@@ -339,6 +350,7 @@ module Langfuse
     # @param name [String] Descriptive name for the observation
     # @param attrs [Hash] Observation attributes (optional positional or keyword)
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
+    # @param kwargs [Hash] Additional keyword arguments merged into observation attributes (e.g., input:, output:, metadata:)
     # @yield [observation] Optional block that receives the observation object
     # @yieldparam observation [BaseObservation] The observation object
     # @return [BaseObservation, Object] The observation (or block return value if block given)

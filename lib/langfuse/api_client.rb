@@ -22,7 +22,23 @@ module Langfuse
   #   )
   #
   class ApiClient # rubocop:disable Metrics/ClassLength
-    attr_reader :public_key, :secret_key, :base_url, :timeout, :logger, :cache
+    # @return [String] Langfuse public API key
+    attr_reader :public_key
+
+    # @return [String] Langfuse secret API key
+    attr_reader :secret_key
+
+    # @return [String] Base URL for Langfuse API
+    attr_reader :base_url
+
+    # @return [Integer] HTTP request timeout in seconds
+    attr_reader :timeout
+
+    # @return [Logger] Logger instance for debugging
+    attr_reader :logger
+
+    # @return [PromptCache, nil] Optional cache for prompt responses
+    attr_reader :cache
 
     # Initialize a new API client
     #
@@ -32,6 +48,7 @@ module Langfuse
     # @param timeout [Integer] HTTP request timeout in seconds
     # @param logger [Logger] Logger instance for debugging
     # @param cache [PromptCache, nil] Optional cache for prompt responses
+    # @return [ApiClient]
     def initialize(public_key:, secret_key:, base_url:, timeout: 5, logger: nil, cache: nil)
       @public_key = public_key
       @secret_key = secret_key
@@ -195,6 +212,7 @@ module Langfuse
     #
     # @param events [Array<Hash>] Array of event hashes to send
     # @return [void]
+    # @raise [ArgumentError] if events is not an Array or is empty
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors after retries exhausted
     #
@@ -226,6 +244,11 @@ module Langfuse
       raise ApiError, "Batch send failed: #{e.message}"
     end
 
+    # Shut down the API client and release resources
+    #
+    # Shuts down the cache if it supports shutdown (e.g., SWR thread pool).
+    #
+    # @return [void]
     def shutdown
       cache.shutdown if cache.respond_to?(:shutdown)
     end
@@ -237,6 +260,9 @@ module Langfuse
     # @return [Array<Hash>] Array of dataset metadata hashes
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   datasets = api_client.list_datasets(page: 1, limit: 10)
     def list_datasets(page: nil, limit: nil)
       params = { page: page, limit: limit }.compact
 
@@ -258,6 +284,9 @@ module Langfuse
     # @raise [NotFoundError] if the dataset is not found
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   data = api_client.get_dataset("my-dataset")
     def get_dataset(name)
       encoded_name = URI.encode_uri_component(name)
       response = connection.get("/api/public/v2/datasets/#{encoded_name}")
@@ -278,6 +307,9 @@ module Langfuse
     # @return [Hash] The created dataset data
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   data = api_client.create_dataset(name: "my-dataset", description: "QA evaluation set")
     def create_dataset(name:, description: nil, metadata: nil)
       payload = { name: name, description: description, metadata: metadata }.compact
 
@@ -304,6 +336,13 @@ module Langfuse
     # @return [Hash] The created dataset item data
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   data = api_client.create_dataset_item(
+    #     dataset_name: "my-dataset",
+    #     input: { query: "What is Ruby?" },
+    #     expected_output: { answer: "A programming language" }
+    #   )
     # rubocop:disable Metrics/ParameterLists
     def create_dataset_item(dataset_name:, input: nil, expected_output: nil,
                             metadata: nil, id: nil, source_trace_id: nil,
@@ -332,6 +371,9 @@ module Langfuse
     # @raise [NotFoundError] if the item is not found
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   data = api_client.get_dataset_item("item-uuid-123")
     def get_dataset_item(id)
       encoded_id = URI.encode_uri_component(id)
       response = connection.get("/api/public/dataset-items/#{encoded_id}")
@@ -354,6 +396,9 @@ module Langfuse
     # @return [Array<Hash>] Array of dataset item hashes
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   items = api_client.list_dataset_items(dataset_name: "my-dataset", limit: 50)
     def list_dataset_items(dataset_name:, page: nil, limit: nil,
                            source_trace_id: nil, source_observation_id: nil)
       params = build_dataset_items_params(
@@ -379,6 +424,9 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
     # @note 404 responses are treated as success to keep DELETE idempotent across retries
+    #
+    # @example
+    #   api_client.delete_dataset_item("item-uuid-123")
     def delete_dataset_item(id)
       encoded_id = URI.encode_uri_component(id)
       response = connection.delete("/api/public/dataset-items/#{encoded_id}")

@@ -58,7 +58,14 @@ module Langfuse
   #
   # @abstract Subclass and pass type: to super to create concrete observation types
   class BaseObservation
-    attr_reader :otel_span, :otel_tracer, :type
+    # @return [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    attr_reader :otel_span
+
+    # @return [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    attr_reader :otel_tracer
+
+    # @return [String] Observation type (e.g., "span", "generation", "event")
+    attr_reader :type
 
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
@@ -95,7 +102,10 @@ module Langfuse
       Langfuse.client.trace_url(trace_id)
     end
 
+    # Ends the observation span.
+    #
     # @param end_time [Time, Integer, nil] Optional end time (Time object or Unix timestamp in nanoseconds)
+    # @return [void]
     def end(end_time: nil)
       @otel_span.finish(end_timestamp: end_time)
     end
@@ -154,6 +164,7 @@ module Langfuse
     # Sets observation-level input attributes.
     #
     # @param value [Object] Input value (will be JSON-encoded)
+    # @return [void]
     def input=(value)
       update_observation_attributes(input: value)
     end
@@ -161,24 +172,29 @@ module Langfuse
     # Sets observation-level output attributes.
     #
     # @param value [Object] Output value (will be JSON-encoded)
+    # @return [void]
     def output=(value)
       update_observation_attributes(output: value)
     end
 
     # @param value [Hash] Metadata hash (expanded into individual langfuse.observation.metadata.* attributes)
+    # @return [void]
     def metadata=(value)
       update_observation_attributes(metadata: value)
     end
 
     # @param value [String] Level (DEBUG, DEFAULT, WARNING, ERROR)
+    # @return [void]
     def level=(value)
       update_observation_attributes(level: value)
     end
 
+    # Adds an event to this observation's span.
+    #
     # @param name [String] Event name
     # @param input [Object, nil] Optional event data
     # @param level [String] Log level (debug, default, warning, error)
-    #
+    # @return [void]
     def event(name:, input: nil, level: "default")
       attributes = {
         "langfuse.observation.input" => input&.to_json,
@@ -245,6 +261,9 @@ module Langfuse
   #   span.end
   #
   class Span < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:span])
     end
@@ -281,6 +300,9 @@ module Langfuse
   #   gen.end
   #
   class Generation < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::GenerationAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:generation])
     end
@@ -293,6 +315,7 @@ module Langfuse
     end
 
     # @param value [Hash] Usage hash with token counts (:prompt_tokens, :completion_tokens, :total_tokens)
+    # @return [void]
     def usage=(value)
       return unless @otel_span.recording?
 
@@ -308,6 +331,7 @@ module Langfuse
     end
 
     # @param value [String] Model name (e.g., "gpt-4", "claude-3-opus")
+    # @return [void]
     def model=(value)
       return unless @otel_span.recording?
 
@@ -315,6 +339,7 @@ module Langfuse
     end
 
     # @param value [Hash] Model parameters (temperature, max_tokens, etc.)
+    # @return [void]
     def model_parameters=(value)
       return unless @otel_span.recording?
 
@@ -346,6 +371,9 @@ module Langfuse
   #   # Event is automatically ended
   #
   class Event < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:event])
     end
@@ -380,6 +408,9 @@ module Langfuse
   #   agent.end
   #
   class Agent < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:agent])
     end
@@ -410,6 +441,9 @@ module Langfuse
   #   tool.end
   #
   class Tool < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:tool])
     end
@@ -449,6 +483,9 @@ module Langfuse
   #   chain.end
   #
   class Chain < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:chain])
     end
@@ -482,6 +519,9 @@ module Langfuse
   #   retriever.end
   #
   class Retriever < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:retriever])
     end
@@ -515,6 +555,9 @@ module Langfuse
   #   evaluator.end
   #
   class Evaluator < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:evaluator])
     end
@@ -548,6 +591,9 @@ module Langfuse
   #   guardrail.end
   #
   class Guardrail < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:guardrail])
     end
@@ -586,6 +632,9 @@ module Langfuse
   #   embedding.end
   #
   class Embedding < BaseObservation
+    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
+    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param attributes [Hash, Types::EmbeddingAttributes, nil] Optional initial attributes
     def initialize(otel_span, otel_tracer, attributes: nil)
       super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:embedding])
     end
@@ -598,16 +647,19 @@ module Langfuse
     end
 
     # @param value [Hash] Usage hash with token counts (:prompt_tokens, :total_tokens)
+    # @return [void]
     def usage=(value)
       update_observation_attributes(usage_details: value)
     end
 
     # @param value [String] Model name (e.g., "text-embedding-ada-002")
+    # @return [void]
     def model=(value)
       update_observation_attributes(model: value)
     end
 
     # @param value [Hash] Model parameters (temperature, max_tokens, etc.)
+    # @return [void]
     def model_parameters=(value)
       update_observation_attributes(model_parameters: value)
     end

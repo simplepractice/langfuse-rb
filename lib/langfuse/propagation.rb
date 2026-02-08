@@ -60,6 +60,7 @@ module Langfuse
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
     # @yield Block within which attributes are propagated
     # @return [Object] The result of the block
+    # @raise [ArgumentError] if no block is given
     #
     # @example Basic usage
     #   Langfuse.propagate_attributes(user_id: "user_123", session_id: "session_abc") do
@@ -329,6 +330,7 @@ module Langfuse
     #
     # @param key [String] Attribute key (user_id, session_id, etc.)
     # @return [OpenTelemetry::Context::Key] Context key object
+    # @raise [ArgumentError] if key is not a known propagated attribute
     #
     # @api private
     def self._get_propagated_context_key(key)

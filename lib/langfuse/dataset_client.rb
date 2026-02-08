@@ -1,11 +1,41 @@
 # frozen_string_literal: true
 
 module Langfuse
+  # Client wrapper for a Langfuse dataset
+  #
+  # Wraps raw API response data for a dataset, providing typed accessors
+  # and lazy-loaded dataset items.
+  #
+  # @example
+  #   dataset = DatasetClient.new(api_response_hash)
+  #   dataset.name      # => "my-eval-set"
+  #   dataset.items     # => [DatasetItemClient, ...]
+  #
   class DatasetClient
     include TimestampParser
 
-    attr_reader :id, :name, :description, :metadata, :created_at, :updated_at
+    # @return [String] Unique identifier for the dataset
+    attr_reader :id
 
+    # @return [String] Human-readable name of the dataset
+    attr_reader :name
+
+    # @return [String, nil] Optional description of the dataset
+    attr_reader :description
+
+    # @return [Hash] Additional metadata as key-value pairs
+    attr_reader :metadata
+
+    # @return [Time, nil] Timestamp when the dataset was created
+    attr_reader :created_at
+
+    # @return [Time, nil] Timestamp when the dataset was last updated
+    attr_reader :updated_at
+
+    # Initialize a new dataset client from API response data
+    #
+    # @param dataset_data [Hash] Raw dataset data from the API
+    # @raise [ArgumentError] if dataset_data is not a Hash or missing required fields
     def initialize(dataset_data)
       validate_dataset_data!(dataset_data)
       @id = dataset_data["id"]
@@ -17,6 +47,9 @@ module Langfuse
       @raw_items = dataset_data["items"] || []
     end
 
+    # Lazily-parsed dataset items
+    #
+    # @return [Array<DatasetItemClient>] Items belonging to this dataset
     def items
       @items ||= @raw_items.map { |item_data| DatasetItemClient.new(item_data) }
     end

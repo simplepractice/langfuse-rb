@@ -22,7 +22,14 @@ module Langfuse
   # @api private
   # rubocop:disable Metrics/ClassLength
   class ScoreClient
-    attr_reader :api_client, :config, :logger
+    # @return [ApiClient] The API client for sending batches
+    attr_reader :api_client
+
+    # @return [Config] Configuration object
+    attr_reader :config
+
+    # @return [Logger] Logger instance
+    attr_reader :logger
 
     # Initialize a new ScoreClient
     #
