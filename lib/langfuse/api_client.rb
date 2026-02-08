@@ -89,19 +89,15 @@ module Langfuse
     #     puts "#{prompt['name']} (v#{prompt['version']})"
     #   end
     def list_prompts(page: nil, limit: nil)
-      params = { page: page, limit: limit }.compact
+      with_faraday_error_handling do
+        params = { page: page, limit: limit }.compact
 
-      response = connection.get("/api/public/v2/prompts", params)
-      result = handle_response(response)
+        response = connection.get("/api/public/v2/prompts", params)
+        result = handle_response(response)
 
-      # API returns { data: [...], meta: {...} }
-      result["data"] || []
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        # API returns { data: [...], meta: {...} }
+        result["data"] || []
+      end
     end
 
     # Fetch a prompt from the Langfuse API
@@ -149,25 +145,21 @@ module Langfuse
     #
     # rubocop:disable Metrics/ParameterLists
     def create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_message: nil)
-      path = "/api/public/v2/prompts"
-      payload = {
-        name: name,
-        prompt: prompt,
-        type: type,
-        config: config,
-        labels: labels,
-        tags: tags
-      }
-      payload[:commitMessage] = commit_message if commit_message
+      with_faraday_error_handling do
+        path = "/api/public/v2/prompts"
+        payload = {
+          name: name,
+          prompt: prompt,
+          type: type,
+          config: config,
+          labels: labels,
+          tags: tags
+        }
+        payload[:commitMessage] = commit_message if commit_message
 
-      response = connection.post(path, payload)
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        response = connection.post(path, payload)
+        handle_response(response)
+      end
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -191,17 +183,13 @@ module Langfuse
     def update_prompt(name:, version:, labels:)
       raise ArgumentError, "labels must be an array" unless labels.is_a?(Array)
 
-      path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}/versions/#{version}"
-      payload = { newLabels: labels }
+      with_faraday_error_handling do
+        path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}/versions/#{version}"
+        payload = { newLabels: labels }
 
-      response = connection.patch(path, payload)
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        response = connection.patch(path, payload)
+        handle_response(response)
+      end
     end
 
     # Send a batch of events to the Langfuse ingestion API
@@ -260,20 +248,16 @@ module Langfuse
     #   api_client.create_dataset_run_item(dataset_item_id: "item-123", run_name: "eval-v1", trace_id: "trace-abc")
     def create_dataset_run_item(dataset_item_id:, run_name:, trace_id: nil,
                                 observation_id: nil, metadata: nil, run_description: nil)
-      payload = { datasetItemId: dataset_item_id, runName: run_name }
-      payload[:traceId] = trace_id if trace_id
-      payload[:observationId] = observation_id if observation_id
-      payload[:metadata] = metadata if metadata
-      payload[:runDescription] = run_description if run_description
+      with_faraday_error_handling do
+        payload = { datasetItemId: dataset_item_id, runName: run_name }
+        payload[:traceId] = trace_id if trace_id
+        payload[:observationId] = observation_id if observation_id
+        payload[:metadata] = metadata if metadata
+        payload[:runDescription] = run_description if run_description
 
-      response = connection.post("/api/public/dataset-run-items", payload)
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        response = connection.post("/api/public/dataset-run-items", payload)
+        handle_response(response)
+      end
     end
 
     # Fetch projects accessible with the current API keys
@@ -286,14 +270,10 @@ module Langfuse
     #   data = api_client.get_projects
     #   project_id = data["data"][0]["id"]
     def get_projects # rubocop:disable Naming/AccessorMethodName
-      response = connection.get("/api/public/projects")
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+      with_faraday_error_handling do
+        response = connection.get("/api/public/projects")
+        handle_response(response)
+      end
     end
 
     # Shut down the API client and release resources
@@ -316,17 +296,13 @@ module Langfuse
     # @example
     #   datasets = api_client.list_datasets(page: 1, limit: 10)
     def list_datasets(page: nil, limit: nil)
-      params = { page: page, limit: limit }.compact
+      with_faraday_error_handling do
+        params = { page: page, limit: limit }.compact
 
-      response = connection.get("/api/public/v2/datasets", params)
-      result = handle_response(response)
-      result["data"] || []
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        response = connection.get("/api/public/v2/datasets", params)
+        result = handle_response(response)
+        result["data"] || []
+      end
     end
 
     # Fetch a dataset by name
@@ -340,15 +316,11 @@ module Langfuse
     # @example
     #   data = api_client.get_dataset("my-dataset")
     def get_dataset(name)
-      encoded_name = URI.encode_uri_component(name)
-      response = connection.get("/api/public/v2/datasets/#{encoded_name}")
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+      with_faraday_error_handling do
+        encoded_name = URI.encode_uri_component(name)
+        response = connection.get("/api/public/v2/datasets/#{encoded_name}")
+        handle_response(response)
+      end
     end
 
     # Create a new dataset
@@ -363,16 +335,12 @@ module Langfuse
     # @example
     #   data = api_client.create_dataset(name: "my-dataset", description: "QA evaluation set")
     def create_dataset(name:, description: nil, metadata: nil)
-      payload = { name: name, description: description, metadata: metadata }.compact
+      with_faraday_error_handling do
+        payload = { name: name, description: description, metadata: metadata }.compact
 
-      response = connection.post("/api/public/v2/datasets", payload)
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        response = connection.post("/api/public/v2/datasets", payload)
+        handle_response(response)
+      end
     end
 
     # Create a new dataset item (or upsert if id is provided)
@@ -399,20 +367,16 @@ module Langfuse
     def create_dataset_item(dataset_name:, input: nil, expected_output: nil,
                             metadata: nil, id: nil, source_trace_id: nil,
                             source_observation_id: nil, status: nil)
-      payload = build_dataset_item_payload(
-        dataset_name: dataset_name, input: input, expected_output: expected_output,
-        metadata: metadata, id: id, source_trace_id: source_trace_id,
-        source_observation_id: source_observation_id, status: status
-      )
+      with_faraday_error_handling do
+        payload = build_dataset_item_payload(
+          dataset_name: dataset_name, input: input, expected_output: expected_output,
+          metadata: metadata, id: id, source_trace_id: source_trace_id,
+          source_observation_id: source_observation_id, status: status
+        )
 
-      response = connection.post("/api/public/dataset-items", payload)
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        response = connection.post("/api/public/dataset-items", payload)
+        handle_response(response)
+      end
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -427,15 +391,11 @@ module Langfuse
     # @example
     #   data = api_client.get_dataset_item("item-uuid-123")
     def get_dataset_item(id)
-      encoded_id = URI.encode_uri_component(id)
-      response = connection.get("/api/public/dataset-items/#{encoded_id}")
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+      with_faraday_error_handling do
+        encoded_id = URI.encode_uri_component(id)
+        response = connection.get("/api/public/dataset-items/#{encoded_id}")
+        handle_response(response)
+      end
     end
 
     # List items in a dataset with optional filters
@@ -466,19 +426,15 @@ module Langfuse
     # @return [Hash] Full response hash with "data" array and "meta" pagination info
     def list_dataset_items_paginated(dataset_name:, page: nil, limit: nil,
                                      source_trace_id: nil, source_observation_id: nil)
-      params = build_dataset_items_params(
-        dataset_name: dataset_name, page: page, limit: limit,
-        source_trace_id: source_trace_id, source_observation_id: source_observation_id
-      )
+      with_faraday_error_handling do
+        params = build_dataset_items_params(
+          dataset_name: dataset_name, page: page, limit: limit,
+          source_trace_id: source_trace_id, source_observation_id: source_observation_id
+        )
 
-      response = connection.get("/api/public/dataset-items", params)
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        response = connection.get("/api/public/dataset-items", params)
+        handle_response(response)
+      end
     end
 
     # Delete a dataset item by ID
@@ -603,18 +559,13 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
     def fetch_prompt_from_api(name, version: nil, label: nil)
-      params = build_prompt_params(version: version, label: label)
-      path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}"
+      with_faraday_error_handling do
+        params = build_prompt_params(version: version, label: label)
+        path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}"
 
-      response = connection.get(path, params)
-      handle_response(response)
-    rescue Faraday::RetriableResponse => e
-      # Retry middleware exhausted all retries - handle the final response
-      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
-      handle_response(e.response)
-    rescue Faraday::Error => e
-      logger.error("Faraday error: #{e.message}")
-      raise ApiError, "HTTP request failed: #{e.message}"
+        response = connection.get(path, params)
+        handle_response(response)
+      end
     end
 
     # Build a new Faraday connection
@@ -690,6 +641,24 @@ module Langfuse
     # @return [Hash] Query parameters
     def build_prompt_params(version: nil, label: nil)
       { version: version, label: label }.compact
+    end
+
+    # Wrap a block with standard Faraday error handling.
+    #
+    # Catches RetriableResponse (retries exhausted) and generic Faraday errors,
+    # translating them into ApiError with consistent logging.
+    #
+    # @yield The block containing the Faraday request and response handling
+    # @return [Object] The return value of the block
+    # @raise [ApiError] when a Faraday error occurs
+    def with_faraday_error_handling
+      yield
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
     end
 
     # Handle HTTP response and raise appropriate errors
