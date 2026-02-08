@@ -307,6 +307,8 @@ See [ERROR_HANDLING.md](ERROR_HANDLING.md) for complete error reference.
 - **[PROMPTS.md](PROMPTS.md)** - Chat prompts, versioning, Mustache templating
 - **[TRACING.md](TRACING.md)** - Nested observations, RAG patterns, OpenTelemetry
 - **[SCORING.md](SCORING.md)** - Add quality scores to traces
+- **[DATASETS.md](DATASETS.md)** - Create and manage evaluation datasets
+- **[EXPERIMENTS.md](EXPERIMENTS.md)** - Run systematic evaluations with the experiment runner
 - **[CACHING.md](CACHING.md)** - Optimize performance with caching
 - **[RAILS.md](RAILS.md)** - Rails-specific patterns and testing
 - **[CONFIGURATION.md](CONFIGURATION.md)** - All configuration options

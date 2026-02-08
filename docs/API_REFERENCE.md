@@ -9,6 +9,8 @@ Complete method reference for the Langfuse Ruby SDK.
 - [Prompt Management](#prompt-management)
 - [Tracing & Observability](#tracing--observability)
 - [Scoring](#scoring)
+- [Datasets](#datasets)
+- [Experiments](#experiments)
 - [Attribute Propagation](#attribute-propagation)
 - [Types](#types)
 - [Exceptions](#exceptions)
@@ -41,7 +43,7 @@ Block receives a configuration object with these properties:
 | `cache_backend`                | Symbol  | No       | `:memory`                      | `:memory` or `:rails`             |
 | `cache_lock_timeout`           | Integer | No       | `10`                           | Lock timeout (seconds)            |
 | `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Enable stale-while-revalidate     |
-| `cache_stale_ttl`              | Integer | No       | `60` when SWR is enabled       | Stale TTL (seconds)               |
+| `cache_stale_ttl`              | Integer | No       | `0`                            | Stale TTL (seconds)               |
 | `cache_refresh_threads`        | Integer | No       | `5`                            | Background refresh threads        |
 | `batch_size`                   | Integer | No       | `50`                           | Score batch size                  |
 | `flush_interval`               | Integer | No       | `10`                           | Score flush interval (seconds)    |
@@ -218,15 +220,15 @@ List all prompts in the project.
 **Signature:**
 
 ```ruby
-list_prompts(page: 1, limit: 50)
+list_prompts(page: nil, limit: nil)
 ```
 
 **Parameters:**
 
 | Parameter | Type    | Required | Default | Description      |
 | --------- | ------- | -------- | ------- | ---------------- |
-| `page`    | Integer | No       | `1`     | Page number      |
-| `limit`   | Integer | No       | `50`    | Results per page |
+| `page`    | Integer | No       | -       | Page number      |
+| `limit`   | Integer | No       | -       | Results per page |
 
 **Returns:** Array of prompt hashes
 
@@ -520,7 +522,8 @@ Create a score for a trace or observation.
 **Signature:**
 
 ```ruby
-create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil, data_type: :numeric)
+create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil,
+             data_type: :numeric, dataset_run_id: nil, config_id: nil)
 ```
 
 **Parameters:**
@@ -534,6 +537,8 @@ create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, me
 | `comment`        | String                 | No       | Score comment                             |
 | `metadata`       | Hash                   | No       | Additional metadata                       |
 | `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, or `:categorical` |
+| `dataset_run_id` | String                 | No       | Dataset run ID to associate with          |
+| `config_id`      | String                 | No       | Score config ID                           |
 
 **Note:** Must provide at least one of `trace_id` or `observation_id`.
 
@@ -586,14 +591,8 @@ Immediately flush all queued scores to API.
 **Signature:**
 
 ```ruby
-flush_scores(timeout: 30)
+flush_scores
 ```
-
-**Parameters:**
-
-| Parameter | Type    | Required | Default | Description             |
-| --------- | ------- | -------- | ------- | ----------------------- |
-| `timeout` | Integer | No       | `30`    | Flush timeout (seconds) |
 
 **Example:**
 
@@ -614,6 +613,247 @@ Langfuse.flush_scores
 ```
 
 See [SCORING.md](SCORING.md) for complete guide.
+
+## Datasets
+
+### `Client#create_dataset`
+
+Create a new dataset.
+
+**Signature:**
+
+```ruby
+create_dataset(name:, description: nil, metadata: nil)
+```
+
+**Parameters:**
+
+| Parameter     | Type   | Required | Description                |
+| ------------- | ------ | -------- | -------------------------- |
+| `name`        | String | Yes      | Dataset name               |
+| `description` | String | No       | Human-readable description |
+| `metadata`    | Hash   | No       | Arbitrary key-value pairs  |
+
+**Returns:** `DatasetClient`
+
+**Example:**
+
+```ruby
+dataset = client.create_dataset(
+  name: "qa-eval",
+  description: "QA evaluation set",
+  metadata: { domain: "support" }
+)
+```
+
+### `Client#get_dataset`
+
+Fetch a dataset by name.
+
+**Signature:**
+
+```ruby
+get_dataset(name) # => DatasetClient
+```
+
+**Parameters:**
+
+| Parameter | Type   | Required | Description                                              |
+| --------- | ------ | -------- | -------------------------------------------------------- |
+| `name`    | String | Yes      | Dataset name (supports folder paths like "eval/qa-set")  |
+
+**Returns:** `DatasetClient`
+
+**Raises:** `NotFoundError` if the dataset doesn't exist
+
+### `Client#list_datasets`
+
+List all datasets in the project.
+
+**Signature:**
+
+```ruby
+list_datasets(page: nil, limit: nil)
+```
+
+**Parameters:**
+
+| Parameter | Type    | Required | Description      |
+| --------- | ------- | -------- | ---------------- |
+| `page`    | Integer | No       | Page number      |
+| `limit`   | Integer | No       | Results per page |
+
+**Returns:** `Array<Hash>` of dataset metadata
+
+### `Client#create_dataset_item`
+
+Create a new dataset item.
+
+**Signature:**
+
+```ruby
+create_dataset_item(dataset_name:, input: nil, expected_output: nil,
+                    metadata: nil, id: nil, source_trace_id: nil,
+                    source_observation_id: nil, status: nil)
+```
+
+**Parameters:**
+
+| Parameter               | Type   | Required | Description                              |
+| ----------------------- | ------ | -------- | ---------------------------------------- |
+| `dataset_name`          | String | Yes      | Parent dataset name                      |
+| `input`                 | Object | No       | Input data                               |
+| `expected_output`       | Object | No       | Expected output for evaluation           |
+| `metadata`              | Hash   | No       | Arbitrary metadata                       |
+| `id`                    | String | No       | Explicit ID (enables upsert)             |
+| `source_trace_id`       | String | No       | Link to source trace                     |
+| `source_observation_id` | String | No       | Link to source observation               |
+| `status`                | Symbol | No       | `:active` or `:archived`                 |
+
+**Returns:** `DatasetItemClient`
+
+**Example:**
+
+```ruby
+item = client.create_dataset_item(
+  dataset_name: "qa-eval",
+  input: { question: "What is Ruby?" },
+  expected_output: { answer: "A programming language" }
+)
+```
+
+### `Client#get_dataset_item`
+
+Fetch a dataset item by ID.
+
+**Signature:**
+
+```ruby
+get_dataset_item(id) # => DatasetItemClient
+```
+
+**Raises:** `NotFoundError` if the item doesn't exist
+
+### `Client#list_dataset_items`
+
+List items in a dataset. Auto-paginates when `page` is nil.
+
+**Signature:**
+
+```ruby
+list_dataset_items(dataset_name:, page: nil, limit: nil,
+                   source_trace_id: nil, source_observation_id: nil)
+```
+
+**Parameters:**
+
+| Parameter               | Type    | Required | Description                              |
+| ----------------------- | ------- | -------- | ---------------------------------------- |
+| `dataset_name`          | String  | Yes      | Dataset name                             |
+| `page`                  | Integer | No       | Page number (nil = fetch all pages)      |
+| `limit`                 | Integer | No       | Results per page                         |
+| `source_trace_id`       | String  | No       | Filter by source trace                   |
+| `source_observation_id` | String  | No       | Filter by source observation             |
+
+**Returns:** `Array<DatasetItemClient>`
+
+### `Client#delete_dataset_item`
+
+Delete a dataset item by ID. Idempotent (404 treated as success).
+
+**Signature:**
+
+```ruby
+delete_dataset_item(id) # => nil
+```
+
+### `Client#create_dataset_run_item`
+
+Link a trace to a dataset item within a named run.
+
+**Signature:**
+
+```ruby
+create_dataset_run_item(dataset_item_id:, run_name:, trace_id: nil,
+                        observation_id: nil, metadata: nil, run_description: nil)
+```
+
+**Parameters:**
+
+| Parameter         | Type   | Required | Description         |
+| ----------------- | ------ | -------- | ------------------- |
+| `dataset_item_id` | String | Yes      | Dataset item ID     |
+| `run_name`        | String | Yes      | Run name            |
+| `trace_id`        | String | No       | Trace ID            |
+| `observation_id`  | String | No       | Observation ID      |
+| `metadata`        | Hash   | No       | Optional metadata   |
+| `run_description` | String | No       | Run description     |
+
+**Returns:** `Hash` (created dataset run item data)
+
+See [DATASETS.md](DATASETS.md) for complete guide.
+
+## Experiments
+
+### `Client#run_experiment`
+
+Run an experiment against a named dataset or local data.
+
+**Signature:**
+
+```ruby
+run_experiment(name:, task:, data: nil, dataset_name: nil, description: nil,
+               evaluators: [], run_evaluators: [], metadata: nil, run_name: nil)
+```
+
+**Parameters:**
+
+| Parameter        | Type          | Required | Description                                     |
+| ---------------- | ------------- | -------- | ----------------------------------------------- |
+| `name`           | String        | Yes      | Experiment name                                 |
+| `task`           | Proc          | Yes      | Callable receiving item, returning output       |
+| `dataset_name`   | String        | No*      | Dataset to run against                          |
+| `data`           | Array         | No*      | Local data items (hashes or DatasetItemClients) |
+| `description`    | String        | No       | Run description                                 |
+| `evaluators`     | Array\<Proc\> | No       | Item-level evaluators                           |
+| `run_evaluators` | Array\<Proc\> | No       | Run-level evaluators                            |
+| `metadata`       | Hash          | No       | Metadata attached to each trace                 |
+| `run_name`       | String        | No       | Explicit run name (default: "name - timestamp") |
+
+\* Provide exactly one of `dataset_name` or `data`.
+
+**Returns:** `ExperimentResult`
+
+**Raises:** `ArgumentError` if both or neither of `data`/`dataset_name` provided
+
+**Example:**
+
+```ruby
+result = client.run_experiment(
+  name: "qa-v1",
+  dataset_name: "qa-eval",
+  task: ->(item) { my_llm_call(item.input) },
+  evaluators: [my_evaluator],
+  metadata: { model: "gpt-4o" }
+)
+```
+
+### `DatasetClient#run_experiment`
+
+Run an experiment against this dataset's items.
+
+**Signature:**
+
+```ruby
+dataset.run_experiment(name:, task:, description: nil, evaluators: [],
+                       run_evaluators: [], metadata: nil, run_name: nil)
+```
+
+Same parameters as `Client#run_experiment` minus `dataset_name` and `data`.
+
+**Returns:** `ExperimentResult`
+
+See [EXPERIMENTS.md](EXPERIMENTS.md) for complete guide.
 
 ## Attribute Propagation
 
@@ -769,19 +1009,58 @@ See [ERROR_HANDLING.md](ERROR_HANDLING.md) for complete guide.
 
 ### `Client#trace_url`
 
-Generate Langfuse UI URL for a trace.
+Generate a project-scoped Langfuse UI URL for a trace.
 
 **Signature:**
 
 ```ruby
-trace_url(trace_id) # => String
+trace_url(trace_id) # => String | nil
 ```
 
 **Example:**
 
 ```ruby
 url = client.trace_url("abc123")
-# => "https://cloud.langfuse.com/traces/abc123"
+# => "https://cloud.langfuse.com/project/{project_id}/traces/abc123"
+```
+
+Returns `nil` if the project ID cannot be fetched.
+
+### `Client#dataset_url`
+
+Generate a project-scoped Langfuse UI URL for a dataset.
+
+**Signature:**
+
+```ruby
+dataset_url(dataset_id) # => String | nil
+```
+
+**Example:**
+
+```ruby
+url = client.dataset_url("dataset-uuid")
+# => "https://cloud.langfuse.com/project/{project_id}/datasets/dataset-uuid"
+```
+
+### `Client#dataset_run_url`
+
+Generate a project-scoped Langfuse UI URL for a dataset run.
+
+**Signature:**
+
+```ruby
+dataset_run_url(dataset_id:, dataset_run_id:) # => String | nil
+```
+
+**Example:**
+
+```ruby
+url = client.dataset_run_url(
+  dataset_id: "dataset-uuid",
+  dataset_run_id: "run-uuid"
+)
+# => "https://cloud.langfuse.com/project/{project_id}/datasets/dataset-uuid/runs/run-uuid"
 ```
 
 ### `Langfuse.shutdown`
@@ -830,4 +1109,6 @@ Langfuse.force_flush(timeout: 10)
 - [PROMPTS.md](PROMPTS.md) - Prompt management
 - [TRACING.md](TRACING.md) - Tracing patterns
 - [SCORING.md](SCORING.md) - Scoring guide
+- [DATASETS.md](DATASETS.md) - Dataset management
+- [EXPERIMENTS.md](EXPERIMENTS.md) - Experiment runner
 - [ERROR_HANDLING.md](ERROR_HANDLING.md) - Exception handling
