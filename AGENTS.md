@@ -83,6 +83,10 @@ end
 - Global `Langfuse.reset!` runs before each test
 - Use `instance_double` for mocking dependencies
 
+## Comments
+
+- **Do not delete existing inline comments** unless the associated code is modified in a way that makes the comment no longer valid.
+
 ## Code Style
 
 ### Naming Conventions
@@ -90,6 +94,10 @@ end
 - **Methods**: `snake_case` (e.g., `get_prompt`)
 - **Constants**: `SCREAMING_SNAKE_CASE` (e.g., `DEFAULT_TTL`)
 - **Instance vars**: `@snake_case` (e.g., `@api_client`)
+
+### Documentation
+- Every public method must have YARD-format docs (`@param`, `@return`, `@raise`)
+- **Private methods**: Only document when the "why" isn't obvious (non-trivial algorithms, invariants, surprising behavior). Use `@api private` tag. Skip `@param`/`@return` when types are obvious from naming.
 
 ### Method Length
 - Max 22 lines (excluding specs)

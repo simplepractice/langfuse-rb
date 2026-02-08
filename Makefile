@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help build check clean env fix install lint setup test
+.PHONY: help build check clean env fix install lint setup sync test
 
 BLUE := \033[34m
 WHITE := \033[37m
@@ -19,6 +19,7 @@ help:
 	@echo "  $(WHITE)make install$(RESET)   $(GRAY)Install gem locally$(RESET)"
 	@echo "  $(WHITE)make lint$(RESET)      $(GRAY)Run RuboCop linter$(RESET)"
 	@echo "  $(WHITE)make setup$(RESET)     $(GRAY)Install dependencies$(RESET)"
+	@echo "  $(WHITE)make sync$(RESET)      $(GRAY)Copy CLAUDE.md to AGENTS.md$(RESET)"
 	@echo "  $(WHITE)make test$(RESET)      $(GRAY)Run RSpec test suite$(RESET)"
 	@echo ""
 
@@ -46,6 +47,9 @@ lint:
 
 setup:
 	bundle install
+
+sync:
+	cp CLAUDE.md AGENTS.md
 
 test:
 	bundle exec rspec

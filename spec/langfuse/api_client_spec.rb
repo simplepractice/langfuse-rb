@@ -2025,10 +2025,11 @@ RSpec.describe Langfuse::ApiClient do
           )
       end
 
-      it "returns array of items" do
+      it "returns array of item hashes" do
         result = api_client.list_dataset_items(dataset_name: dataset_name)
         expect(result).to be_an(Array)
         expect(result.size).to eq(2)
+        expect(result.first["id"]).to eq("item-1")
       end
 
       it "sends datasetName query parameter" do
@@ -2175,6 +2176,97 @@ RSpec.describe Langfuse::ApiClient do
         expect do
           api_client.delete_dataset_item(item_id)
         end.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "#create_dataset_run_item" do
+    let(:run_item_response) do
+      {
+        "id" => "run-item-1",
+        "datasetItemId" => "item-123",
+        "runName" => "experiment-1"
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/dataset-run-items")
+          .to_return(
+            status: 200,
+            body: run_item_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns created run item" do
+        result = api_client.create_dataset_run_item(
+          dataset_item_id: "item-123", run_name: "experiment-1"
+        )
+        expect(result["id"]).to eq("run-item-1")
+      end
+
+      it "sends required camelCase fields" do
+        api_client.create_dataset_run_item(
+          dataset_item_id: "item-123", run_name: "experiment-1"
+        )
+        expect(
+          a_request(:post, "#{base_url}/api/public/dataset-run-items")
+            .with(body: hash_including(
+              "datasetItemId" => "item-123",
+              "runName" => "experiment-1"
+            ))
+        ).to have_been_made.once
+      end
+
+      it "sends all optional parameters" do
+        api_client.create_dataset_run_item(
+          dataset_item_id: "item-123",
+          run_name: "experiment-1",
+          trace_id: "trace-abc",
+          observation_id: "obs-def",
+          metadata: { "key" => "value" },
+          run_description: "test run"
+        )
+        expect(
+          a_request(:post, "#{base_url}/api/public/dataset-run-items")
+            .with(body: hash_including(
+              "datasetItemId" => "item-123",
+              "runName" => "experiment-1",
+              "traceId" => "trace-abc",
+              "observationId" => "obs-def",
+              "metadata" => { "key" => "value" },
+              "runDescription" => "test run"
+            ))
+        ).to have_been_made.once
+      end
+
+      it "omits nil optional parameters" do
+        api_client.create_dataset_run_item(
+          dataset_item_id: "item-123", run_name: "experiment-1"
+        )
+        expect(
+          a_request(:post, "#{base_url}/api/public/dataset-run-items")
+            .with do |req|
+              body = JSON.parse(req.body)
+              !body.key?("traceId") && !body.key?("metadata")
+            end
+        ).to have_been_made.once
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:post, "#{base_url}/api/public/dataset-run-items")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect do
+          api_client.create_dataset_run_item(
+            dataset_item_id: "item-123", run_name: "experiment-1"
+          )
+        end.to raise_error(Langfuse::ApiError, /HTTP request failed/)
       end
     end
   end

@@ -1281,7 +1281,9 @@ RSpec.describe Langfuse::Client do
         observation_id: nil,
         comment: nil,
         metadata: nil,
-        data_type: :numeric
+        data_type: :numeric,
+        dataset_run_id: nil,
+        config_id: nil
       )
 
       client.create_score(name: "quality", value: 0.85, trace_id: "abc123")
@@ -1296,7 +1298,9 @@ RSpec.describe Langfuse::Client do
         observation_id: "def456",
         comment: "High quality",
         metadata: { source: "manual" },
-        data_type: :boolean
+        data_type: :boolean,
+        dataset_run_id: nil,
+        config_id: nil
       )
 
       client.create_score(
@@ -1644,13 +1648,13 @@ RSpec.describe Langfuse::Client do
           { "id" => "item-1", "datasetId" => "ds-1" },
           { "id" => "item-2", "datasetId" => "ds-1" }
         ],
-        "meta" => {}
+        "meta" => { "totalPages" => 1 }
       }
     end
 
     before do
       stub_request(:get, "#{base_url}/api/public/dataset-items")
-        .with(query: { datasetName: "my-dataset" })
+        .with(query: hash_including("datasetName" => "my-dataset"))
         .to_return(
           status: 200,
           body: items_response.to_json,
@@ -1678,7 +1682,8 @@ RSpec.describe Langfuse::Client do
     context "with source filter parameters" do
       before do
         stub_request(:get, "#{base_url}/api/public/dataset-items")
-          .with(query: { datasetName: "my-dataset", sourceTraceId: "trace-abc", sourceObservationId: "obs-xyz" })
+          .with(query: hash_including("datasetName" => "my-dataset", "sourceTraceId" => "trace-abc",
+                                      "sourceObservationId" => "obs-xyz"))
           .to_return(
             status: 200,
             body: items_response.to_json,
@@ -1695,8 +1700,90 @@ RSpec.describe Langfuse::Client do
 
         expect(
           a_request(:get, "#{base_url}/api/public/dataset-items")
-            .with(query: { datasetName: "my-dataset", sourceTraceId: "trace-abc", sourceObservationId: "obs-xyz" })
+            .with(query: hash_including("datasetName" => "my-dataset", "sourceTraceId" => "trace-abc",
+                                        "sourceObservationId" => "obs-xyz"))
         ).to have_been_made.once
+      end
+    end
+
+    context "with auto-pagination" do
+      it "fetches all pages when totalPages > 1" do
+        page1_response = {
+          "data" => [{ "id" => "item-1", "datasetId" => "ds-1" }],
+          "meta" => { "totalPages" => 3 }
+        }
+        page2_response = {
+          "data" => [{ "id" => "item-2", "datasetId" => "ds-1" }],
+          "meta" => { "totalPages" => 3 }
+        }
+        page3_response = {
+          "data" => [{ "id" => "item-3", "datasetId" => "ds-1" }],
+          "meta" => { "totalPages" => 3 }
+        }
+
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: hash_including("datasetName" => "my-dataset", "page" => "1"))
+          .to_return(status: 200, body: page1_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: hash_including("datasetName" => "my-dataset", "page" => "2"))
+          .to_return(status: 200, body: page2_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: hash_including("datasetName" => "my-dataset", "page" => "3"))
+          .to_return(status: 200, body: page3_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = client.list_dataset_items(dataset_name: "my-dataset")
+        expect(result.size).to eq(3)
+        expect(result.map(&:id)).to eq(%w[item-1 item-2 item-3])
+      end
+
+      it "handles single page dataset" do
+        result = client.list_dataset_items(dataset_name: "my-dataset")
+        expect(result.size).to eq(2)
+      end
+
+      it "handles empty dataset" do
+        empty_response = { "data" => [], "meta" => { "totalPages" => 0 } }
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: hash_including("datasetName" => "empty-dataset"))
+          .to_return(status: 200, body: empty_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = client.list_dataset_items(dataset_name: "empty-dataset")
+        expect(result).to eq([])
+      end
+
+      it "treats missing meta.totalPages as single page" do
+        no_meta_response = {
+          "data" => [{ "id" => "item-1", "datasetId" => "ds-1" }],
+          "meta" => {}
+        }
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: hash_including("datasetName" => "no-meta"))
+          .to_return(status: 200, body: no_meta_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = client.list_dataset_items(dataset_name: "no-meta")
+        expect(result.size).to eq(1)
+      end
+    end
+
+    context "with explicit page parameter" do
+      it "returns single page without auto-pagination" do
+        single_page_response = {
+          "data" => [{ "id" => "item-1", "datasetId" => "ds-1" }],
+          "meta" => { "totalPages" => 5 }
+        }
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: hash_including("datasetName" => "my-dataset", "page" => "2"))
+          .to_return(status: 200, body: single_page_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = client.list_dataset_items(dataset_name: "my-dataset", page: 2)
+        expect(result.size).to eq(1)
+        expect(result.first.id).to eq("item-1")
       end
     end
   end
@@ -1748,6 +1835,83 @@ RSpec.describe Langfuse::Client do
 
       it "raises UnauthorizedError" do
         expect { client.delete_dataset_item("item-123") }.to raise_error(Langfuse::UnauthorizedError)
+      end
+    end
+  end
+
+  describe "#run_experiment" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:logger) { instance_double(Logger, warn: nil, error: nil, info: nil, debug: nil) }
+
+    before do
+      allow(Langfuse.configuration).to receive(:logger).and_return(logger)
+      allow(Langfuse).to receive(:force_flush)
+    end
+
+    context "with argument validation" do
+      let(:task) { ->(_item) { "output" } }
+
+      it "raises ArgumentError when both data: and dataset_name: are provided" do
+        expect do
+          client.run_experiment(name: "test", task: task, data: [{ input: "x" }], dataset_name: "ds")
+        end.to raise_error(ArgumentError, "Provide either data: or dataset_name:, not both")
+      end
+
+      it "raises ArgumentError when neither data: nor dataset_name: is provided" do
+        expect do
+          client.run_experiment(name: "test", task: task)
+        end.to raise_error(ArgumentError, "Provide data: or dataset_name:")
+      end
+    end
+
+    context "when dataset has no embedded items" do
+      let(:dataset_response) do
+        {
+          "id" => "ds-123",
+          "name" => "evaluation-qa",
+          "description" => "QA dataset"
+        }
+      end
+      let(:items_response) do
+        {
+          "data" => [
+            { "id" => "item-1", "datasetId" => "ds-123", "input" => { "q" => "test1" } },
+            { "id" => "item-2", "datasetId" => "ds-123", "input" => { "q" => "test2" } }
+          ],
+          "meta" => { "totalPages" => 1 }
+        }
+      end
+
+      before do
+        stub_request(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: hash_including("datasetName" => "evaluation-qa"))
+          .to_return(
+            status: 200, body: items_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+        stub_request(:post, "#{base_url}/api/public/dataset-run-items")
+          .to_return(status: 200, body: "{}",
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(status: 200, body: '{"successes":[],"errors":[]}',
+                     headers: { "Content-Type" => "application/json" })
+      end
+
+      it "fetches items via list_dataset_items and invokes task with each item" do
+        called_with = []
+        task = lambda { |item|
+          called_with << item
+          "output"
+        }
+        result = client.run_experiment(name: "test", dataset_name: "evaluation-qa", task: task)
+
+        expect(result.item_results.size).to eq(2)
+        expect(called_with.size).to eq(2)
+        expect(called_with).to all(be_a(Langfuse::DatasetItemClient))
+        expect(called_with.map(&:id)).to eq(%w[item-1 item-2])
+        expect(WebMock).to have_requested(:get, "#{base_url}/api/public/dataset-items")
+          .with(query: hash_including("datasetName" => "evaluation-qa"))
       end
     end
   end
