@@ -43,7 +43,7 @@ Block receives a configuration object with these properties:
 | `cache_backend`                | Symbol  | No       | `:memory`                      | `:memory` or `:rails`             |
 | `cache_lock_timeout`           | Integer | No       | `10`                           | Lock timeout (seconds)            |
 | `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Enable stale-while-revalidate     |
-| `cache_stale_ttl`              | Integer | No       | `60` when SWR is enabled       | Stale TTL (seconds)               |
+| `cache_stale_ttl`              | Integer | No       | `0`                            | Stale TTL (seconds)               |
 | `cache_refresh_threads`        | Integer | No       | `5`                            | Background refresh threads        |
 | `batch_size`                   | Integer | No       | `50`                           | Score batch size                  |
 | `flush_interval`               | Integer | No       | `10`                           | Score flush interval (seconds)    |
@@ -220,15 +220,15 @@ List all prompts in the project.
 **Signature:**
 
 ```ruby
-list_prompts(page: 1, limit: 50)
+list_prompts(page: nil, limit: nil)
 ```
 
 **Parameters:**
 
 | Parameter | Type    | Required | Default | Description      |
 | --------- | ------- | -------- | ------- | ---------------- |
-| `page`    | Integer | No       | `1`     | Page number      |
-| `limit`   | Integer | No       | `50`    | Results per page |
+| `page`    | Integer | No       | -       | Page number      |
+| `limit`   | Integer | No       | -       | Results per page |
 
 **Returns:** Array of prompt hashes
 
@@ -522,7 +522,8 @@ Create a score for a trace or observation.
 **Signature:**
 
 ```ruby
-create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil, data_type: :numeric)
+create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil,
+             data_type: :numeric, dataset_run_id: nil, config_id: nil)
 ```
 
 **Parameters:**
@@ -536,6 +537,8 @@ create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, me
 | `comment`        | String                 | No       | Score comment                             |
 | `metadata`       | Hash                   | No       | Additional metadata                       |
 | `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, or `:categorical` |
+| `dataset_run_id` | String                 | No       | Dataset run ID to associate with          |
+| `config_id`      | String                 | No       | Score config ID                           |
 
 **Note:** Must provide at least one of `trace_id` or `observation_id`.
 
@@ -588,14 +591,8 @@ Immediately flush all queued scores to API.
 **Signature:**
 
 ```ruby
-flush_scores(timeout: 30)
+flush_scores
 ```
-
-**Parameters:**
-
-| Parameter | Type    | Required | Default | Description             |
-| --------- | ------- | -------- | ------- | ----------------------- |
-| `timeout` | Integer | No       | `30`    | Flush timeout (seconds) |
 
 **Example:**
 

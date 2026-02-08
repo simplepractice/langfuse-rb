@@ -138,7 +138,7 @@ When enabled, serves stale cached data immediately while refreshing in the backg
 
 - ✅ Works with `:memory` backend
 - ✅ Works with `:rails` backend
-- Automatically sets `cache_stale_ttl` to `cache_ttl` if not customized
+- Set `cache_stale_ttl` to control how long stale data is served (e.g., same as `cache_ttl`)
 
 See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for detailed usage.
 
@@ -166,8 +166,7 @@ config.cache_stale_ttl = :indefinite  # Never expire (normalized to 1000 years i
 - `2x cache_ttl`: More tolerance for API slowdowns
 - `:indefinite`: Maximum performance, eventual consistency, high availability
 
-**Auto-configuration:**
-When `cache_stale_while_revalidate = true` and `cache_stale_ttl` is not set (still `0`), it automatically defaults to `cache_ttl`.
+**Important:** When enabling SWR, you should also set `cache_stale_ttl` to a positive value (e.g., same as `cache_ttl`), otherwise stale data expires immediately after the TTL.
 
 See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for examples.
 
@@ -256,13 +255,19 @@ config.job_queue = :langfuse  # Placeholder - no effect currently
 
 ## Environment Variables
 
-The SDK does not automatically read environment variables. You must explicitly pass them in configuration:
+The SDK automatically reads these environment variables as defaults when no explicit value is configured:
+
+- `LANGFUSE_PUBLIC_KEY` — public API key
+- `LANGFUSE_SECRET_KEY` — secret API key
+- `LANGFUSE_BASE_URL` — API endpoint (defaults to `https://cloud.langfuse.com`)
+
+Explicit configuration always takes precedence:
 
 ```ruby
 Langfuse.configure do |config|
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-  config.base_url = ENV['LANGFUSE_BASE_URL'] || 'https://cloud.langfuse.com'
+  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']   # redundant, already auto-read
+  config.secret_key = ENV['LANGFUSE_SECRET_KEY']   # redundant, already auto-read
+  config.base_url = "https://custom.langfuse.com"  # overrides env var
 end
 ```
 
