@@ -105,6 +105,12 @@ RSpec.describe Langfuse::DatasetItemClient do
       expect(client.created_at).to eq("invalid-timestamp")
     end
 
+    it "accepts optional client parameter" do
+      mock_client = instance_double(Langfuse::Client)
+      client = described_class.new(item_data, client: mock_client)
+      expect(client).to be_a(described_class)
+    end
+
     context "with invalid item data" do
       it "raises ArgumentError when item_data is not a Hash" do
         expect { described_class.new("not a hash") }.to raise_error(
@@ -144,6 +150,122 @@ RSpec.describe Langfuse::DatasetItemClient do
     it "returns false when status is ACTIVE" do
       client = described_class.new(item_data)
       expect(client.archived?).to be false
+    end
+  end
+
+  describe "#link" do
+    let(:mock_client) { instance_double(Langfuse::Client) }
+    let(:item_client) { described_class.new(item_data, client: mock_client) }
+
+    it "delegates to client.create_dataset_run_item" do
+      expect(mock_client).to receive(:create_dataset_run_item).with(
+        dataset_item_id: "item-123",
+        run_name: "my-run",
+        trace_id: "trace-abc",
+        observation_id: nil,
+        metadata: nil,
+        run_description: nil
+      )
+      item_client.link(trace_id: "trace-abc", run_name: "my-run")
+    end
+
+    it "passes optional parameters" do
+      expect(mock_client).to receive(:create_dataset_run_item).with(
+        dataset_item_id: "item-123",
+        run_name: "my-run",
+        trace_id: "trace-abc",
+        observation_id: "obs-def",
+        metadata: { "k" => "v" },
+        run_description: "a run"
+      )
+      item_client.link(
+        trace_id: "trace-abc",
+        run_name: "my-run",
+        observation_id: "obs-def",
+        metadata: { "k" => "v" },
+        run_description: "a run"
+      )
+    end
+
+    it "raises ArgumentError when no client" do
+      item = described_class.new(item_data)
+      expect { item.link(trace_id: "t", run_name: "r") }
+        .to raise_error(ArgumentError, "client is required for this operation")
+    end
+  end
+
+  describe "#run" do
+    let(:mock_client) { instance_double(Langfuse::Client) }
+    let(:item_client) { described_class.new(item_data, client: mock_client) }
+
+    before do
+      allow(mock_client).to receive(:create_dataset_run_item)
+      allow(Langfuse).to receive(:force_flush)
+    end
+
+    it "raises ArgumentError when no block given" do
+      expect { item_client.run(run_name: "test") }
+        .to raise_error(ArgumentError, "block is required")
+    end
+
+    it "raises ArgumentError when no client" do
+      item = described_class.new(item_data)
+      expect { item.run(run_name: "test") { "output" } }
+        .to raise_error(ArgumentError, "client is required for this operation")
+    end
+
+    it "yields a span to the block" do
+      yielded_span = nil
+      item_client.run(run_name: "test") do |span|
+        yielded_span = span
+        "output"
+      end
+      expect(yielded_span).to be_a(Langfuse::BaseObservation)
+    end
+
+    it "returns the block output" do
+      result = item_client.run(run_name: "test") { "my-output" }
+      expect(result).to eq("my-output")
+    end
+
+    it "links trace to dataset item" do
+      expect(mock_client).to receive(:create_dataset_run_item).with(
+        hash_including(
+          dataset_item_id: "item-123",
+          run_name: "test"
+        )
+      )
+      item_client.run(run_name: "test") { "output" }
+    end
+
+    it "passes observation_id in link call" do
+      expect(mock_client).to receive(:create_dataset_run_item).with(
+        hash_including(
+          observation_id: a_string_matching(/\A[0-9a-f]{16}\z/)
+        )
+      )
+      item_client.run(run_name: "test") { "output" }
+    end
+
+    it "calls force_flush before linking" do
+      call_order = []
+      allow(Langfuse).to receive(:force_flush) { call_order << :flush }
+      allow(mock_client).to receive(:create_dataset_run_item) { call_order << :link }
+      item_client.run(run_name: "test") { "output" }
+      expect(call_order).to eq(%i[flush link])
+    end
+
+    it "links trace and re-raises task errors after span ends" do
+      expect(mock_client).to receive(:create_dataset_run_item).with(
+        hash_including(
+          dataset_item_id: "item-123",
+          run_name: "test"
+        )
+      )
+
+      expect do
+        item_client.run(run_name: "test") { raise StandardError, "boom" }
+      end.to raise_error(StandardError, "boom")
     end
   end
 end

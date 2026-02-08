@@ -19,6 +19,9 @@ module Langfuse
   #
   # rubocop:disable Metrics/ClassLength
   class Client
+    # @return [Integer] Default page size when fetching all dataset items
+    DATASET_ITEMS_PAGE_SIZE = 50
+
     # @return [Config] The client configuration
     attr_reader :config
 
@@ -253,6 +256,8 @@ module Langfuse
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
+    # @param config_id [String, nil] Optional score config ID
     # @return [void]
     # @raise [ArgumentError] if validation fails
     #
@@ -266,7 +271,7 @@ module Langfuse
     #   client.create_score(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
     # rubocop:disable Metrics/ParameterLists
     def create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil,
-                     data_type: :numeric)
+                     data_type: :numeric, dataset_run_id: nil, config_id: nil)
       @score_client.create(
         name: name,
         value: value,
@@ -274,7 +279,9 @@ module Langfuse
         observation_id: observation_id,
         comment: comment,
         metadata: metadata,
-        data_type: data_type
+        data_type: data_type,
+        dataset_run_id: dataset_run_id,
+        config_id: config_id
       )
     end
     # rubocop:enable Metrics/ParameterLists
@@ -366,7 +373,7 @@ module Langfuse
     #   dataset = client.create_dataset(name: "my-dataset", description: "QA evaluation set")
     def create_dataset(name:, description: nil, metadata: nil)
       data = api_client.create_dataset(name: name, description: description, metadata: metadata)
-      DatasetClient.new(data)
+      DatasetClient.new(data, client: self)
     end
 
     # Fetch a dataset by name
@@ -381,7 +388,7 @@ module Langfuse
     #   dataset = client.get_dataset("my-dataset")
     def get_dataset(name)
       data = api_client.get_dataset(name)
-      DatasetClient.new(data)
+      DatasetClient.new(data, client: self)
     end
 
     # List all datasets in the project
@@ -427,7 +434,7 @@ module Langfuse
         metadata: metadata, id: id, source_trace_id: source_trace_id,
         source_observation_id: source_observation_id, status: status
       )
-      DatasetItemClient.new(data)
+      DatasetItemClient.new(data, client: self)
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -443,10 +450,13 @@ module Langfuse
     #   item = client.get_dataset_item("item-uuid-123")
     def get_dataset_item(id)
       data = api_client.get_dataset_item(id)
-      DatasetItemClient.new(data)
+      DatasetItemClient.new(data, client: self)
     end
 
-    # List all items in a dataset
+    # List items in a dataset
+    #
+    # When page is nil (default), auto-paginates to fetch all items.
+    # When page is provided, returns only that single page.
     #
     # @param dataset_name [String] Name of the dataset (required)
     # @param page [Integer, nil] Optional page number for pagination
@@ -461,11 +471,16 @@ module Langfuse
     #   items = client.list_dataset_items(dataset_name: "my-dataset", limit: 50)
     def list_dataset_items(dataset_name:, page: nil, limit: nil,
                            source_trace_id: nil, source_observation_id: nil)
-      items = api_client.list_dataset_items(
-        dataset_name: dataset_name, page: page, limit: limit,
-        source_trace_id: source_trace_id, source_observation_id: source_observation_id
-      )
-      items.map { |data| DatasetItemClient.new(data) }
+      filters = { dataset_name: dataset_name, source_trace_id: source_trace_id,
+                  source_observation_id: source_observation_id }
+
+      items = if page
+                fetch_dataset_items_page(page: page, limit: limit, **filters)
+              else
+                fetch_all_dataset_items(limit: limit, **filters)
+              end
+
+      items.map { |data| DatasetItemClient.new(data, client: self) }
     end
 
     # Delete a dataset item by ID
@@ -483,9 +498,93 @@ module Langfuse
       nil
     end
 
+    # Create a dataset run item (link a trace to a dataset item)
+    #
+    # @param dataset_item_id [String] Dataset item ID (required)
+    # @param run_name [String] Run name (required)
+    # @param trace_id [String, nil] Trace ID
+    # @param observation_id [String, nil] Observation ID
+    # @param metadata [Hash, nil] Optional metadata
+    # @param run_description [String, nil] Optional run description
+    # @return [Hash] The created dataset run item data
+    def create_dataset_run_item(dataset_item_id:, run_name:, trace_id: nil,
+                                observation_id: nil, metadata: nil, run_description: nil)
+      api_client.create_dataset_run_item(
+        dataset_item_id: dataset_item_id,
+        run_name: run_name,
+        trace_id: trace_id,
+        observation_id: observation_id,
+        metadata: metadata,
+        run_description: run_description
+      )
+    end
+
+    # Run an experiment against local data or a named dataset
+    #
+    # @param name [String] Experiment/run name (required)
+    # @param data [Array<Hash, DatasetItemClient>, nil] Local data items (each Hash with
+    #   :input/:expected_output or "input"/"expected_output"; also accepts DatasetItemClient
+    #   objects, e.g. when called from {DatasetClient#run_experiment})
+    # @param dataset_name [String, nil] Dataset name to fetch items from
+    # @param task [Proc] Callable receiving a single argument (the item).
+    #   The item is a {DatasetItemClient} (when using dataset_name:) or
+    #   {ExperimentItem} (when using data:). Tracing is handled automatically;
+    #   use {DatasetItemClient#run} for direct span access.
+    # @param description [String, nil] Optional run description
+    # @param evaluators [Array<Proc>] Item-level evaluators
+    # @param run_evaluators [Array<Proc>] Run-level evaluators
+    # @param metadata [Hash, nil] Optional metadata
+    # @param run_name [String, nil] Explicit run name (defaults to "name - timestamp")
+    # @return [ExperimentResult]
+    # rubocop:disable Metrics/ParameterLists
+    def run_experiment(name:, task:, data: nil, dataset_name: nil, description: nil,
+                       evaluators: [], run_evaluators: [], metadata: nil, run_name: nil)
+      raise ArgumentError, "Provide either data: or dataset_name:, not both" if data && dataset_name
+      raise ArgumentError, "Provide data: or dataset_name:" unless data || dataset_name
+
+      items = resolve_experiment_items(data, dataset_name)
+
+      ExperimentRunner.new(
+        client: self,
+        name: name,
+        items: items,
+        task: task,
+        evaluators: evaluators,
+        run_evaluators: run_evaluators,
+        metadata: metadata,
+        description: description,
+        run_name: run_name
+      ).execute
+    end
+    # rubocop:enable Metrics/ParameterLists
+
     private
 
     attr_reader :score_client
+
+    def fetch_dataset_items_page(page:, limit:, **filters)
+      api_client.list_dataset_items(page: page, limit: limit, **filters)
+    end
+
+    def fetch_all_dataset_items(limit:, **filters)
+      per_page = limit || DATASET_ITEMS_PAGE_SIZE
+      first_result = api_client.list_dataset_items_paginated(page: 1, limit: per_page, **filters)
+      items = first_result["data"] || []
+      total_pages = first_result.dig("meta", "totalPages") || 1
+
+      (2..total_pages).each do |pg|
+        result = api_client.list_dataset_items_paginated(page: pg, limit: per_page, **filters)
+        items.concat(result["data"] || [])
+      end
+
+      items
+    end
+
+    def resolve_experiment_items(data, dataset_name)
+      return data if data
+
+      list_dataset_items(dataset_name: dataset_name)
+    end
 
     # Check if caching is enabled in configuration
     #

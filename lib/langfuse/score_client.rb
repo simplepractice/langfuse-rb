@@ -56,6 +56,8 @@ module Langfuse
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
+    # @param config_id [String, nil] Optional score config ID
     # @return [void]
     # @raise [ArgumentError] if validation fails
     #
@@ -69,7 +71,7 @@ module Langfuse
     #   create(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
     # rubocop:disable Metrics/ParameterLists
     def create(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil,
-               data_type: :numeric)
+               data_type: :numeric, dataset_run_id: nil, config_id: nil)
       validate_name(name)
       normalized_value = normalize_value(value, data_type)
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
@@ -81,7 +83,9 @@ module Langfuse
         observation_id: observation_id,
         comment: comment,
         metadata: metadata,
-        data_type: data_type_str
+        data_type: data_type_str,
+        dataset_run_id: dataset_run_id,
+        config_id: config_id
       )
 
       @queue << event
@@ -207,7 +211,8 @@ module Langfuse
     # @param data_type [String] Data type string (NUMERIC, BOOLEAN, CATEGORICAL)
     # @return [Hash] Event hash
     # rubocop:disable Metrics/ParameterLists
-    def build_score_event(name:, value:, trace_id:, observation_id:, comment:, metadata:, data_type:)
+    def build_score_event(name:, value:, trace_id:, observation_id:, comment:, metadata:, data_type:,
+                          dataset_run_id: nil, config_id: nil)
       body = {
         id: SecureRandom.uuid,
         name: name,
@@ -218,6 +223,8 @@ module Langfuse
       body[:observationId] = observation_id if observation_id
       body[:comment] = comment if comment
       body[:metadata] = metadata if metadata
+      body[:datasetRunId] = dataset_run_id if dataset_run_id
+      body[:configId] = config_id if config_id
 
       {
         id: SecureRandom.uuid,

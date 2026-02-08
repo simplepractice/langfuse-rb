@@ -589,4 +589,28 @@ RSpec.describe Langfuse::BaseObservation do
       observation.trace_url
     end
   end
+
+  describe "#score_trace" do
+    it "delegates to Langfuse.create_score with trace_id" do
+      expect(Langfuse).to receive(:create_score).with(
+        name: "quality",
+        value: 0.9,
+        trace_id: observation.trace_id,
+        comment: "good",
+        metadata: { k: "v" },
+        data_type: :numeric
+      )
+      observation.score_trace(
+        name: "quality", value: 0.9,
+        comment: "good", metadata: { k: "v" }
+      )
+    end
+
+    it "defaults data_type to :numeric" do
+      expect(Langfuse).to receive(:create_score).with(
+        hash_including(data_type: :numeric)
+      )
+      observation.score_trace(name: "score", value: 1.0)
+    end
+  end
 end
