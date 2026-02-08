@@ -226,6 +226,35 @@ module Langfuse
       raise ApiError, "Batch send failed: #{e.message}"
     end
 
+    # Create a dataset run item (link a trace to a dataset item within a run)
+    #
+    # @param dataset_item_id [String] Dataset item ID (required)
+    # @param run_name [String] Run name (required)
+    # @param trace_id [String, nil] Trace ID to link
+    # @param observation_id [String, nil] Observation ID to link
+    # @param metadata [Hash, nil] Optional metadata
+    # @param run_description [String, nil] Optional run description
+    # @return [Hash] The created dataset run item data
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def create_dataset_run_item(dataset_item_id:, run_name:, trace_id: nil,
+                                observation_id: nil, metadata: nil, run_description: nil)
+      payload = { datasetItemId: dataset_item_id, runName: run_name }
+      payload[:traceId] = trace_id if trace_id
+      payload[:observationId] = observation_id if observation_id
+      payload[:metadata] = metadata if metadata
+      payload[:runDescription] = run_description if run_description
+
+      response = connection.post("/api/public/dataset-run-items", payload)
+      handle_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
+    end
+
     def shutdown
       cache.shutdown if cache.respond_to?(:shutdown)
     end
@@ -356,14 +385,26 @@ module Langfuse
     # @raise [ApiError] for other API errors
     def list_dataset_items(dataset_name:, page: nil, limit: nil,
                            source_trace_id: nil, source_observation_id: nil)
+      result = list_dataset_items_paginated(
+        dataset_name: dataset_name, page: page, limit: limit,
+        source_trace_id: source_trace_id, source_observation_id: source_observation_id
+      )
+      result["data"] || []
+    end
+
+    # Full paginated response including "meta" for internal pagination use
+    #
+    # @api private
+    # @return [Hash] Full response hash with "data" array and "meta" pagination info
+    def list_dataset_items_paginated(dataset_name:, page: nil, limit: nil,
+                                     source_trace_id: nil, source_observation_id: nil)
       params = build_dataset_items_params(
         dataset_name: dataset_name, page: page, limit: limit,
         source_trace_id: source_trace_id, source_observation_id: source_observation_id
       )
 
       response = connection.get("/api/public/dataset-items", params)
-      result = handle_response(response)
-      result["data"] || []
+      handle_response(response)
     rescue Faraday::RetriableResponse => e
       logger.error("Faraday error: Retries exhausted - #{e.response.status}")
       handle_response(e.response)

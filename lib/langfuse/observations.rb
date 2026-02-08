@@ -193,6 +193,25 @@ module Langfuse
       @otel_span
     end
 
+    # Create a score for the trace this observation belongs to
+    #
+    # @param name [String] score name
+    # @param value [Numeric, String, Boolean] score value
+    # @param comment [String, nil] optional comment
+    # @param metadata [Hash, nil] optional metadata
+    # @param data_type [Symbol] one of :numeric, :boolean, :categorical
+    # @return [Hash] created score data from the API
+    def score_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+      Langfuse.create_score(
+        name: name,
+        value: value,
+        trace_id: trace_id,
+        comment: comment,
+        metadata: metadata,
+        data_type: data_type
+      )
+    end
+
     # Protected method used by subclasses' public `update` methods.
     #
     # @param attrs [Hash, Types::SpanAttributes, Types::GenerationAttributes] Attributes to update
@@ -204,11 +223,7 @@ module Langfuse
       return unless @otel_span.recording?
 
       # Merge keyword arguments into attrs hash
-      attrs_hash = if kwargs.any?
-                     attrs.to_h.merge(kwargs)
-                   else
-                     attrs.to_h
-                   end
+      attrs_hash = attrs.to_h.merge(kwargs)
 
       # Use @type instance variable set during initialization
       otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash)

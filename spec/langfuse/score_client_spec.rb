@@ -102,6 +102,39 @@ RSpec.describe Langfuse::ScoreClient do
         )
         score_client.flush
       end
+
+      it "includes dataset_run_id when provided" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(datasetRunId: "run-123")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, dataset_run_id: "run-123")
+        score_client.flush
+      end
+
+      it "includes config_id when provided" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(configId: "cfg-456")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, config_id: "cfg-456")
+        score_client.flush
+      end
+
+      it "omits dataset_run_id and config_id when nil" do
+        expect(api_client).to receive(:send_batch) do |events|
+          body = events.first[:body]
+          expect(body).not_to have_key(:datasetRunId)
+          expect(body).not_to have_key(:configId)
+        end
+
+        score_client.create(name: "quality", value: 0.85)
+        score_client.flush
+      end
     end
 
     context "with boolean score" do
