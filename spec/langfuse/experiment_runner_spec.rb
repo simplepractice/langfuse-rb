@@ -765,12 +765,12 @@ RSpec.describe Langfuse::ExperimentRunner do
 
     context "with invalid data items" do
       it "raises ArgumentError for non-Hash, non-input items" do
-        expect {
+        expect do
           described_class.new(
             client: mock_client, name: "test", items: ["not a hash"],
             task: ->(_) { "a" }
           ).execute
-        }.to raise_error(ArgumentError, /each data item must be a Hash or respond to #input, got String/)
+        end.to raise_error(ArgumentError, /each data item must be a Hash or respond to #input, got String/)
       end
     end
 
