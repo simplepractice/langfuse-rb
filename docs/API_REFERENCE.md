@@ -8,6 +8,7 @@ Complete method reference for the Langfuse Ruby SDK.
 - [Client Access](#client-access)
 - [Prompt Management](#prompt-management)
 - [Tracing & Observability](#tracing--observability)
+- [Traces](#traces)
 - [Scoring](#scoring)
 - [Datasets](#datasets)
 - [Experiments](#experiments)
@@ -511,6 +512,92 @@ obs.update(
   cost_details: { total_cost: 0.05 },
   prompt: { name: "greeting", version: 1, is_fallback: false }
 )
+```
+
+## Traces
+
+### `Client#list_traces`
+
+List traces in the project.
+
+**Signature:**
+
+```ruby
+list_traces(page: nil, limit: nil, **filters)
+```
+
+**Parameters:**
+
+| Parameter        | Type          | Required | Description                                                                                                                   |
+| ---------------- | ------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `page`           | Integer       | No       | Page number                                                                                                                   |
+| `limit`          | Integer       | No       | Results per page                                                                                                              |
+| `user_id`        | String        | No       | Filter by user ID                                                                                                             |
+| `name`           | String        | No       | Filter by trace name                                                                                                          |
+| `session_id`     | String        | No       | Filter by session ID                                                                                                          |
+| `from_timestamp` | Time          | No       | Filter traces after this time                                                                                                 |
+| `to_timestamp`   | Time          | No       | Filter traces before this time                                                                                                |
+| `order_by`       | String        | No       | Order by field                                                                                                                |
+| `tags`           | Array<String> | No       | Filter by tags                                                                                                                |
+| `version`        | String        | No       | Filter by version                                                                                                             |
+| `release`        | String        | No       | Filter by release                                                                                                             |
+| `environment`    | String        | No       | Filter by environment                                                                                                         |
+| `fields`         | String        | No       | Comma-separated field groups to include (e.g. `"core,scores,metrics"`). Available: `core`, `io`, `scores`, `observations`, `metrics`. All fields returned if omitted. |
+| `filter`         | String        | No       | JSON string for advanced filtering                                                                                            |
+
+**Returns:** `Array<Hash>` of trace data
+
+**Raises:**
+
+- `UnauthorizedError` if authentication fails
+- `ApiError` for other API errors
+
+**Examples:**
+
+```ruby
+# Basic listing
+traces = client.list_traces(page: 1, limit: 20)
+
+# Filter by user and name
+traces = client.list_traces(user_id: "user-123", name: "my-trace")
+
+# Time range with field selection
+traces = client.list_traces(
+  from_timestamp: Time.utc(2025, 1, 1),
+  to_timestamp: Time.utc(2025, 1, 31),
+  fields: "core,scores"
+)
+```
+
+### `Client#get_trace`
+
+Fetch a single trace by ID.
+
+**Signature:**
+
+```ruby
+get_trace(id) # => Hash
+```
+
+**Parameters:**
+
+| Parameter | Type   | Required | Description |
+| --------- | ------ | -------- | ----------- |
+| `id`      | String | Yes      | Trace ID    |
+
+**Returns:** `Hash` of trace data
+
+**Raises:**
+
+- `NotFoundError` if the trace doesn't exist
+- `UnauthorizedError` if authentication fails
+- `ApiError` for other API errors
+
+**Example:**
+
+```ruby
+trace = client.get_trace("trace-uuid-123")
+puts trace["name"]
 ```
 
 ## Scoring

@@ -2335,4 +2335,305 @@ RSpec.describe Langfuse::ApiClient do
       end
     end
   end
+
+  describe "#list_traces" do
+    let(:traces_response) do
+      {
+        "data" => [
+          { "id" => "trace-1", "name" => "trace-one" },
+          { "id" => "trace-2", "name" => "trace-two" }
+        ],
+        "meta" => { "totalItems" => 2 }
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .to_return(
+            status: 200,
+            body: traces_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns array of traces" do
+        result = api_client.list_traces
+        expect(result).to be_an(Array)
+        expect(result.size).to eq(2)
+      end
+
+      it "makes GET request to correct endpoint" do
+        api_client.list_traces
+        expect(
+          a_request(:get, "#{base_url}/api/public/traces")
+        ).to have_been_made.once
+      end
+    end
+
+    context "with pagination" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .with(query: { page: "2", limit: "10" })
+          .to_return(
+            status: 200,
+            body: traces_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "passes pagination parameters" do
+        api_client.list_traces(page: 2, limit: 10)
+        expect(
+          a_request(:get, "#{base_url}/api/public/traces")
+            .with(query: { page: "2", limit: "10" })
+        ).to have_been_made.once
+      end
+    end
+
+    context "with filter parameters" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .with(query: { userId: "user-1", name: "my-trace", sessionId: "sess-1",
+                         tags: %w[tag1 tag2], version: "1.0", release: "prod",
+                         environment: "production" })
+          .to_return(
+            status: 200,
+            body: traces_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "maps snake_case params to camelCase query params" do
+        api_client.list_traces(
+          user_id: "user-1", name: "my-trace", session_id: "sess-1",
+          tags: %w[tag1 tag2], version: "1.0", release: "prod",
+          environment: "production"
+        )
+        expect(
+          a_request(:get, "#{base_url}/api/public/traces")
+            .with(query: { userId: "user-1", name: "my-trace", sessionId: "sess-1",
+                           tags: %w[tag1 tag2], version: "1.0", release: "prod",
+                           environment: "production" })
+        ).to have_been_made.once
+      end
+    end
+
+    context "with timestamp parameters" do
+      let(:from_time) { Time.utc(2025, 1, 1, 12, 0, 0) }
+      let(:to_time) { Time.utc(2025, 1, 2, 12, 0, 0) }
+
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .with(query: { fromTimestamp: from_time.iso8601, toTimestamp: to_time.iso8601 })
+          .to_return(
+            status: 200,
+            body: traces_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "serializes timestamps to ISO 8601" do
+        api_client.list_traces(from_timestamp: from_time, to_timestamp: to_time)
+        expect(
+          a_request(:get, "#{base_url}/api/public/traces")
+            .with(query: { fromTimestamp: from_time.iso8601, toTimestamp: to_time.iso8601 })
+        ).to have_been_made.once
+      end
+    end
+
+    context "when authentication fails" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+      end
+
+      it "raises UnauthorizedError" do
+        expect { api_client.list_traces }.to raise_error(Langfuse::UnauthorizedError)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect { api_client.list_traces }.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "with filter parameter" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .with(query: { filter: '[{"type":"string","key":"name","operator":"=","value":"test"}]' })
+          .to_return(
+            status: 200,
+            body: traces_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "passes filter param to query string" do
+        filter_json = '[{"type":"string","key":"name","operator":"=","value":"test"}]'
+        api_client.list_traces(filter: filter_json)
+        expect(
+          a_request(:get, "#{base_url}/api/public/traces")
+            .with(query: { filter: filter_json })
+        ).to have_been_made.once
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:get).and_raise(retriable_error)
+
+        expect { api_client.list_traces }.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "#list_traces_paginated" do
+    let(:traces_response) do
+      {
+        "data" => [
+          { "id" => "trace-1", "name" => "trace-one" },
+          { "id" => "trace-2", "name" => "trace-two" }
+        ],
+        "meta" => { "totalItems" => 2, "page" => 1, "limit" => 50, "totalPages" => 1 }
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .to_return(
+            status: 200,
+            body: traces_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns full hash with data and meta keys" do
+        result = api_client.list_traces_paginated
+        expect(result).to be_a(Hash)
+        expect(result).to have_key("data")
+        expect(result).to have_key("meta")
+      end
+
+      it "includes data array" do
+        result = api_client.list_traces_paginated
+        expect(result["data"]).to be_an(Array)
+        expect(result["data"].size).to eq(2)
+      end
+
+      it "includes meta pagination info" do
+        result = api_client.list_traces_paginated
+        expect(result["meta"]["totalItems"]).to eq(2)
+        expect(result["meta"]["totalPages"]).to eq(1)
+      end
+    end
+
+    context "with filter parameter" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces")
+          .with(query: { filter: '[{"type":"string","key":"name","operator":"=","value":"test"}]' })
+          .to_return(
+            status: 200,
+            body: traces_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "passes filter param to query string" do
+        filter_json = '[{"type":"string","key":"name","operator":"=","value":"test"}]'
+        api_client.list_traces_paginated(filter: filter_json)
+        expect(
+          a_request(:get, "#{base_url}/api/public/traces")
+            .with(query: { filter: filter_json })
+        ).to have_been_made.once
+      end
+    end
+  end
+
+  describe "#get_trace" do
+    let(:trace_id) { "trace-abc-123" }
+    let(:trace_response) do
+      {
+        "id" => trace_id,
+        "name" => "my-trace",
+        "userId" => "user-1"
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces/#{trace_id}")
+          .to_return(
+            status: 200,
+            body: trace_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns trace data" do
+        result = api_client.get_trace(trace_id)
+        expect(result["id"]).to eq(trace_id)
+        expect(result["name"]).to eq("my-trace")
+      end
+
+      it "makes GET request to correct endpoint" do
+        api_client.get_trace(trace_id)
+        expect(
+          a_request(:get, "#{base_url}/api/public/traces/#{trace_id}")
+        ).to have_been_made.once
+      end
+    end
+
+    context "when not found" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces/#{trace_id}")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect { api_client.get_trace(trace_id) }.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+
+    context "when authentication fails" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces/#{trace_id}")
+          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+      end
+
+      it "raises UnauthorizedError" do
+        expect { api_client.get_trace(trace_id) }.to raise_error(Langfuse::UnauthorizedError)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces/#{trace_id}")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect { api_client.get_trace(trace_id) }.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+
+    context "when retries exhausted" do
+      it "handles Faraday::RetriableResponse" do
+        mock_response = instance_double(Faraday::Response, status: 503, body: { "message" => "Service unavailable" })
+        retriable_error = Faraday::RetriableResponse.new("Retries exhausted", mock_response)
+        allow(api_client.connection).to receive(:get).and_raise(retriable_error)
+
+        expect { api_client.get_trace(trace_id) }.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
 end

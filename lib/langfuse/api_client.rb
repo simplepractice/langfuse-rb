@@ -285,6 +285,85 @@ module Langfuse
       cache.shutdown if cache.respond_to?(:shutdown)
     end
 
+    # List traces in the project
+    #
+    # @param page [Integer, nil] Optional page number for pagination
+    # @param limit [Integer, nil] Optional limit per page
+    # @param user_id [String, nil] Filter by user ID
+    # @param name [String, nil] Filter by trace name
+    # @param session_id [String, nil] Filter by session ID
+    # @param from_timestamp [Time, nil] Filter traces after this time
+    # @param to_timestamp [Time, nil] Filter traces before this time
+    # @param order_by [String, nil] Order by field
+    # @param tags [Array<String>, nil] Filter by tags
+    # @param version [String, nil] Filter by version
+    # @param release [String, nil] Filter by release
+    # @param environment [String, nil] Filter by environment
+    # @param fields [String, nil] Comma-separated field groups to include (e.g. "core,scores,metrics")
+    # @param filter [String, nil] JSON string for advanced filtering
+    # @return [Array<Hash>] Array of trace hashes
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   traces = api_client.list_traces(page: 1, limit: 10, name: "my-trace")
+    # rubocop:disable Metrics/ParameterLists
+    def list_traces(page: nil, limit: nil, user_id: nil, name: nil, session_id: nil,
+                    from_timestamp: nil, to_timestamp: nil, order_by: nil,
+                    tags: nil, version: nil, release: nil, environment: nil,
+                    fields: nil, filter: nil)
+      result = list_traces_paginated(
+        page: page, limit: limit, user_id: user_id, name: name,
+        session_id: session_id, from_timestamp: from_timestamp,
+        to_timestamp: to_timestamp, order_by: order_by, tags: tags,
+        version: version, release: release, environment: environment,
+        fields: fields, filter: filter
+      )
+      result["data"] || []
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Full paginated response including "meta" for internal pagination use
+    #
+    # @api private
+    # @return [Hash] Full response hash with "data" array and "meta" pagination info
+    # rubocop:disable Metrics/ParameterLists
+    def list_traces_paginated(page: nil, limit: nil, user_id: nil, name: nil, session_id: nil,
+                              from_timestamp: nil, to_timestamp: nil, order_by: nil,
+                              tags: nil, version: nil, release: nil, environment: nil,
+                              fields: nil, filter: nil)
+      with_faraday_error_handling do
+        params = build_traces_params(
+          page: page, limit: limit, user_id: user_id, name: name,
+          session_id: session_id, from_timestamp: from_timestamp,
+          to_timestamp: to_timestamp, order_by: order_by, tags: tags,
+          version: version, release: release, environment: environment,
+          fields: fields, filter: filter
+        )
+        response = connection.get("/api/public/traces", params)
+        handle_response(response)
+      end
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Fetch a trace by ID
+    #
+    # @param id [String] Trace ID
+    # @return [Hash] The trace data
+    # @raise [NotFoundError] if the trace is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   trace = api_client.get_trace("trace-uuid-123")
+    def get_trace(id)
+      with_faraday_error_handling do
+        encoded_id = URI.encode_uri_component(id)
+        response = connection.get("/api/public/traces/#{encoded_id}")
+        handle_response(response)
+      end
+    end
+
     # List all datasets in the project
     #
     # @param page [Integer, nil] Optional page number for pagination
@@ -524,6 +603,23 @@ module Langfuse
         sourceObservationId: source_observation_id
       }.compact
     end
+
+    # Build query params for list_traces, mapping snake_case to camelCase
+    # rubocop:disable Metrics/ParameterLists
+    def build_traces_params(page:, limit:, user_id:, name:, session_id:,
+                            from_timestamp:, to_timestamp:, order_by:,
+                            tags:, version:, release:, environment:, fields:, filter:)
+      {
+        page: page, limit: limit, userId: user_id, name: name,
+        sessionId: session_id,
+        fromTimestamp: from_timestamp&.iso8601,
+        toTimestamp: to_timestamp&.iso8601,
+        orderBy: order_by, tags: tags, version: version,
+        release: release, environment: environment, fields: fields,
+        filter: filter
+      }.compact
+    end
+    # rubocop:enable Metrics/ParameterLists
 
     # Fetch with SWR cache
     def fetch_with_swr_cache(cache_key, name, version, label)

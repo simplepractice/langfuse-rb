@@ -1713,6 +1713,115 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "#list_traces" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:traces_response) do
+      {
+        "data" => [
+          { "id" => "trace-1", "name" => "trace-one" },
+          { "id" => "trace-2", "name" => "trace-two" }
+        ],
+        "meta" => { "totalItems" => 2 }
+      }
+    end
+
+    before do
+      stub_request(:get, "#{base_url}/api/public/traces")
+        .to_return(
+          status: 200,
+          body: traces_response.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "returns array of trace data" do
+      result = client.list_traces
+      expect(result).to be_an(Array)
+      expect(result.size).to eq(2)
+    end
+
+    it "returns raw hash data" do
+      result = client.list_traces
+      expect(result.first).to be_a(Hash)
+      expect(result.first["name"]).to eq("trace-one")
+    end
+
+    it "passes through keyword arguments" do
+      stub_request(:get, "#{base_url}/api/public/traces")
+        .with(query: { page: "1", limit: "5", name: "my-trace" })
+        .to_return(
+          status: 200,
+          body: traces_response.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      client.list_traces(page: 1, limit: 5, name: "my-trace")
+      expect(
+        a_request(:get, "#{base_url}/api/public/traces")
+          .with(query: { page: "1", limit: "5", name: "my-trace" })
+      ).to have_been_made.once
+    end
+
+    it "passes filter parameter through to api_client" do
+      filter_json = '[{"type":"string","key":"name","operator":"=","value":"test"}]'
+      stub_request(:get, "#{base_url}/api/public/traces")
+        .with(query: { filter: filter_json })
+        .to_return(
+          status: 200,
+          body: traces_response.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      client.list_traces(filter: filter_json)
+      expect(
+        a_request(:get, "#{base_url}/api/public/traces")
+          .with(query: { filter: filter_json })
+      ).to have_been_made.once
+    end
+  end
+
+  describe "#get_trace" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:trace_response) do
+      {
+        "id" => "trace-123",
+        "name" => "my-trace",
+        "userId" => "user-1"
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces/trace-123")
+          .to_return(
+            status: 200,
+            body: trace_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns trace hash" do
+        result = client.get_trace("trace-123")
+        expect(result).to be_a(Hash)
+        expect(result["id"]).to eq("trace-123")
+        expect(result["name"]).to eq("my-trace")
+      end
+    end
+
+    context "when not found" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/traces/missing")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect { client.get_trace("missing") }.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+  end
+
   describe "#create_dataset_item" do
     let(:client) { described_class.new(valid_config) }
     let(:base_url) { valid_config.base_url }

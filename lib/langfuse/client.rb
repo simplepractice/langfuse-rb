@@ -439,6 +439,35 @@ module Langfuse
       api_client.list_datasets(page: page, limit: limit)
     end
 
+    # List traces in the project
+    #
+    # @param page [Integer, nil] Optional page number for pagination
+    # @param limit [Integer, nil] Optional limit per page
+    # @param filters [Hash] Additional filters (user_id, name, session_id, etc.)
+    # @return [Array<Hash>] Array of trace hashes
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   traces = client.list_traces(page: 1, limit: 10, name: "my-trace")
+    def list_traces(page: nil, limit: nil, **filters)
+      api_client.list_traces(page: page, limit: limit, **filters)
+    end
+
+    # Fetch a trace by ID
+    #
+    # @param id [String] Trace ID
+    # @return [Hash] The trace data
+    # @raise [NotFoundError] if the trace is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    #
+    # @example
+    #   trace = client.get_trace("trace-uuid-123")
+    def get_trace(id)
+      api_client.get_trace(id)
+    end
+
     # Create a new dataset item
     #
     # @param dataset_name [String] Name of the dataset to add item to (required)
