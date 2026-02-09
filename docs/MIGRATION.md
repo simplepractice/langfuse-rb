@@ -717,9 +717,10 @@ prompt.compile("name" => "Alice")
 3. Use fallbacks for critical paths
 4. Check network latency to Langfuse API
 
-## Additional Resources
+## See Also
 
-- [Main README](../README.md) - SDK overview
-- [Rails Integration Guide](RAILS.md) - Rails-specific patterns
-- [Tracing Guide](TRACING.md) - LLM observability
-- [Langfuse Documentation](https://langfuse.com/docs) - Official docs
+- [Getting Started](GETTING_STARTED.md) - Installation and first trace
+- [Rails Integration](RAILS.md) - Rails-specific patterns
+- [Prompts Guide](PROMPTS.md) - Versioning and Mustache templating
+- [Caching Guide](CACHING.md) - Cache backends and SWR
+- [Langfuse Documentation](https://langfuse.com/docs) - Official Langfuse docs

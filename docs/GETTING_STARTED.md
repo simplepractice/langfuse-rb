@@ -302,14 +302,14 @@ end
 
 See [ERROR_HANDLING.md](ERROR_HANDLING.md) for complete error reference.
 
-## Next Steps
+## See Also
 
-- **[PROMPTS.md](PROMPTS.md)** - Chat prompts, versioning, Mustache templating
-- **[TRACING.md](TRACING.md)** - Nested observations, RAG patterns, OpenTelemetry
-- **[SCORING.md](SCORING.md)** - Add quality scores to traces
-- **[DATASETS.md](DATASETS.md)** - Create and manage evaluation datasets
-- **[EXPERIMENTS.md](EXPERIMENTS.md)** - Run systematic evaluations with the experiment runner
-- **[CACHING.md](CACHING.md)** - Optimize performance with caching
-- **[RAILS.md](RAILS.md)** - Rails-specific patterns and testing
-- **[CONFIGURATION.md](CONFIGURATION.md)** - All configuration options
-- **[API_REFERENCE.md](API_REFERENCE.md)** - Complete method reference
+- [Prompts Guide](PROMPTS.md) - Chat prompts, versioning, Mustache templating
+- [Tracing Guide](TRACING.md) - Nested observations, RAG patterns, OpenTelemetry
+- [Scoring Guide](SCORING.md) - Add quality scores to traces
+- [Datasets Guide](DATASETS.md) - Create and manage evaluation datasets
+- [Experiments Guide](EXPERIMENTS.md) - Run evaluations against datasets
+- [Caching Guide](CACHING.md) - In-memory and Rails.cache backends, SWR
+- [Configuration Reference](CONFIGURATION.md) - All configuration options
+- [Rails Integration](RAILS.md) - Rails-specific patterns and testing
+- [API Reference](API_REFERENCE.md) - Complete method reference

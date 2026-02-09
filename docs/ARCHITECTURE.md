@@ -535,21 +535,9 @@ User Code
 - **In-memory**: Monitor-based locking (minimal contention)
 - **Rails.cache**: Redis atomic operations (high concurrency)
 
-## Future Enhancements
+## See Also
 
-See [docs/future-enhancements/](future-enhancements/) for detailed designs:
-
-- **Stale-While-Revalidate**: Background cache refresh for even lower latency
-- **Cost Tracking**: Automatic LLM cost calculation
-- **Automatic LLM Client Wrappers**: Zero-boilerplate tracing for OpenAI, Anthropic
-
-## Additional Resources
-
-- [Main README](../README.md) - Getting started guide
-- [Caching Guide](CACHING.md) - Detailed caching documentation
-- [Tracing Guide](TRACING.md) - LLM observability guide
-- [Rails Integration](RAILS.md) - Rails-specific patterns
-
-## Questions?
-
-Open an issue on [GitHub](https://github.com/langfuse/langfuse-ruby/issues) if you have architecture questions.
+- [Caching Guide](CACHING.md) - Cache backends, SWR, and stampede protection
+- [Tracing Guide](TRACING.md) - LLM observability and nested spans
+- [Rails Integration](RAILS.md) - Rails-specific patterns and testing
+- [API Reference](API_REFERENCE.md) - Complete method reference
