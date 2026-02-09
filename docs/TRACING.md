@@ -668,8 +668,12 @@ This allows traces to flow seamlessly across:
 - Go services
 - Any service that implements W3C Trace Context
 
-## Resources
+## See Also
 
+- [Scoring Guide](SCORING.md) - Add quality scores to traces
+- [Prompts Guide](PROMPTS.md) - Managed prompts with tracing integration
+- [Rails Integration](RAILS.md) - Controller-level tracing patterns
+- [API Reference](API_REFERENCE.md) - Complete method reference
 - [Langfuse Documentation](https://langfuse.com/docs)
 - [OpenTelemetry Ruby Documentation](https://opentelemetry.io/docs/instrumentation/ruby/)
 - [W3C Trace Context Specification](https://www.w3.org/TR/trace-context/)

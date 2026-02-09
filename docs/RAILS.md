@@ -626,9 +626,10 @@ If experiencing high memory usage:
 1. **Reduce cache_max_size**: Default is 1000, reduce if needed
 2. **Enable cache cleanup**: Implement periodic cache cleanup in background job
 
-## Additional Resources
+## See Also
 
-- [Main README](../README.md) - SDK overview and basic usage
-- [Tracing Guide](TRACING.md) - Deep dive on LLM tracing
+- [Getting Started](GETTING_STARTED.md) - Installation and first trace
+- [Configuration Reference](CONFIGURATION.md) - All config options
+- [Tracing Guide](TRACING.md) - Nested spans and OpenTelemetry
 - [Migration Guide](MIGRATION.md) - Migrating from hardcoded prompts
 - [Langfuse Documentation](https://langfuse.com/docs) - Official Langfuse docs

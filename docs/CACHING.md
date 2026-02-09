@@ -668,14 +668,9 @@ end
 2. Verify Redis is accessible
 3. Check `cache_lock_timeout` is sufficient
 
-## Additional Resources
+## See Also
 
-- [Main README](../README.md) - SDK overview
 - [Configuration Reference](CONFIGURATION.md) - All config options including SWR
-- [Rails Integration Guide](RAILS.md) - Rails-specific patterns
-- [Tracing Guide](TRACING.md) - LLM observability
-- [Architecture Guide](ARCHITECTURE.md) - Design decisions
-
-## Questions?
-
-Open an issue on [GitHub](https://github.com/langfuse/langfuse-ruby/issues) if you have questions or need help with caching.
+- [Rails Integration](RAILS.md) - Rails-specific cache patterns
+- [Architecture Guide](ARCHITECTURE.md) - Cache design decisions
+- [Error Handling](ERROR_HANDLING.md) - Cache miss fallback behavior
