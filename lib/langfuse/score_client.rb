@@ -51,6 +51,7 @@ module Langfuse
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
+    # @param id [String, nil] Score ID
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
@@ -72,8 +73,8 @@ module Langfuse
     # @example Categorical score
     #   create(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
     # rubocop:disable Metrics/ParameterLists
-    def create(name:, value:, trace_id: nil, session_id: nil, observation_id: nil, comment: nil, metadata: nil,
-               environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+    def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
+               metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       validate_name(name)
       normalized_value = normalize_value(value, data_type)
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
@@ -81,6 +82,7 @@ module Langfuse
       event = build_score_event(
         name: name,
         value: normalized_value,
+        id: id,
         trace_id: trace_id,
         session_id: session_id,
         observation_id: observation_id,
@@ -208,6 +210,7 @@ module Langfuse
     #
     # @param name [String] Score name
     # @param value [Object] Normalized score value
+    # @param id [String, nil] Score ID
     # @param trace_id [String, nil] Trace ID
     # @param session_id [String, nil] Session ID
     # @param observation_id [String, nil] Observation ID
@@ -217,10 +220,10 @@ module Langfuse
     # @param data_type [String] Data type string (NUMERIC, BOOLEAN, CATEGORICAL)
     # @return [Hash] Event hash
     # rubocop:disable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
-    def build_score_event(name:, value:, trace_id:, session_id:, observation_id:, comment:, metadata:, environment:,
-                          data_type:, dataset_run_id: nil, config_id: nil)
+    def build_score_event(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
+                          environment:, data_type:, dataset_run_id: nil, config_id: nil)
       body = {
-        id: SecureRandom.uuid,
+        id: id || SecureRandom.uuid,
         name: name,
         value: value,
         dataType: data_type

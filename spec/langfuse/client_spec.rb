@@ -1434,6 +1434,7 @@ RSpec.describe Langfuse::Client do
       expect(score_client).to receive(:create).with(
         name: "quality",
         value: 0.85,
+        id: nil,
         trace_id: "abc123",
         session_id: nil,
         observation_id: nil,
@@ -1453,6 +1454,7 @@ RSpec.describe Langfuse::Client do
       expect(score_client).to receive(:create).with(
         name: "quality",
         value: 0.85,
+        id: "my-score",
         trace_id: "abc123",
         session_id: "ghi789",
         observation_id: "def456",
@@ -1467,6 +1469,7 @@ RSpec.describe Langfuse::Client do
       client.create_score(
         name: "quality",
         value: 0.85,
+        id: "my-score",
         trace_id: "abc123",
         session_id: "ghi789",
         observation_id: "def456",

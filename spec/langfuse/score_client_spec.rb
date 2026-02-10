@@ -62,6 +62,17 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.flush
       end
 
+      it "includes id when provided" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(id: "my-score")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, id: "my-score")
+        score_client.flush
+      end
+
       it "includes trace_id when provided" do
         expect(api_client).to receive(:send_batch).with(array_including(
                                                           hash_including(
