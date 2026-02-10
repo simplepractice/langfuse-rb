@@ -52,9 +52,11 @@ module Langfuse
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
     # @param trace_id [String, nil] Trace ID to associate with the score
+    # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
+    # @param environment [String, nil] Optional environment
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
@@ -70,8 +72,8 @@ module Langfuse
     # @example Categorical score
     #   create(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
     # rubocop:disable Metrics/ParameterLists
-    def create(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil,
-               data_type: :numeric, dataset_run_id: nil, config_id: nil)
+    def create(name:, value:, trace_id: nil, session_id: nil, observation_id: nil, comment: nil, metadata: nil,
+               environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       validate_name(name)
       normalized_value = normalize_value(value, data_type)
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
@@ -80,9 +82,11 @@ module Langfuse
         name: name,
         value: normalized_value,
         trace_id: trace_id,
+        session_id: session_id,
         observation_id: observation_id,
         comment: comment,
         metadata: metadata,
+        environment: environment,
         data_type: data_type_str,
         dataset_run_id: dataset_run_id,
         config_id: config_id
@@ -205,14 +209,16 @@ module Langfuse
     # @param name [String] Score name
     # @param value [Object] Normalized score value
     # @param trace_id [String, nil] Trace ID
+    # @param session_id [String, nil] Session ID
     # @param observation_id [String, nil] Observation ID
     # @param comment [String, nil] Comment
     # @param metadata [Hash, nil] Metadata
+    # @param environment [String, nil] Environment
     # @param data_type [String] Data type string (NUMERIC, BOOLEAN, CATEGORICAL)
     # @return [Hash] Event hash
-    # rubocop:disable Metrics/ParameterLists
-    def build_score_event(name:, value:, trace_id:, observation_id:, comment:, metadata:, data_type:,
-                          dataset_run_id: nil, config_id: nil)
+    # rubocop:disable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    def build_score_event(name:, value:, trace_id:, session_id:, observation_id:, comment:, metadata:, environment:,
+                          data_type:, dataset_run_id: nil, config_id: nil)
       body = {
         id: SecureRandom.uuid,
         name: name,
@@ -220,9 +226,11 @@ module Langfuse
         dataType: data_type
       }
       body[:traceId] = trace_id if trace_id
+      body[:sessionId] = session_id if session_id
       body[:observationId] = observation_id if observation_id
       body[:comment] = comment if comment
       body[:metadata] = metadata if metadata
+      body[:environment] = environment if environment
       body[:datasetRunId] = dataset_run_id if dataset_run_id
       body[:configId] = config_id if config_id
 
@@ -233,7 +241,7 @@ module Langfuse
         body: body
       }
     end
-    # rubocop:enable Metrics/ParameterLists
+    # rubocop:enable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     # Normalize and validate score value based on data type
     #

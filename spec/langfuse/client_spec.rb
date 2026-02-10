@@ -1435,9 +1435,11 @@ RSpec.describe Langfuse::Client do
         name: "quality",
         value: 0.85,
         trace_id: "abc123",
+        session_id: nil,
         observation_id: nil,
         comment: nil,
         metadata: nil,
+        environment: nil,
         data_type: :numeric,
         dataset_run_id: nil,
         config_id: nil
@@ -1452,9 +1454,11 @@ RSpec.describe Langfuse::Client do
         name: "quality",
         value: 0.85,
         trace_id: "abc123",
+        session_id: "ghi789",
         observation_id: "def456",
         comment: "High quality",
         metadata: { source: "manual" },
+        environment: "production",
         data_type: :boolean,
         dataset_run_id: nil,
         config_id: nil
@@ -1464,9 +1468,11 @@ RSpec.describe Langfuse::Client do
         name: "quality",
         value: 0.85,
         trace_id: "abc123",
+        session_id: "ghi789",
         observation_id: "def456",
         comment: "High quality",
         metadata: { source: "manual" },
+        environment: "production",
         data_type: :boolean
       )
     end

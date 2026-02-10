@@ -286,9 +286,11 @@ module Langfuse
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
     # @param trace_id [String, nil] Trace ID to associate with the score
+    # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
+    # @param environment [String, nil] Optional environment
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
@@ -304,15 +306,17 @@ module Langfuse
     # @example Categorical score
     #   client.create_score(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
     # rubocop:disable Metrics/ParameterLists
-    def create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil,
-                     data_type: :numeric, dataset_run_id: nil, config_id: nil)
+    def create_score(name:, value:, trace_id: nil, session_id: nil, observation_id: nil, comment: nil, metadata: nil,
+                     environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       @score_client.create(
         name: name,
         value: value,
         trace_id: trace_id,
+        session_id: session_id,
         observation_id: observation_id,
         comment: comment,
         metadata: metadata,
+        environment: environment,
         data_type: data_type,
         dataset_run_id: dataset_run_id,
         config_id: config_id
