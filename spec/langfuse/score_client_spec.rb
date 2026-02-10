@@ -62,6 +62,17 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.flush
       end
 
+      it "includes id when provided" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(id: "my-score")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, id: "my-score")
+        score_client.flush
+      end
+
       it "includes trace_id when provided" do
         expect(api_client).to receive(:send_batch).with(array_including(
                                                           hash_including(
@@ -70,6 +81,17 @@ RSpec.describe Langfuse::ScoreClient do
                                                         ))
 
         score_client.create(name: "quality", value: 0.85, trace_id: "abc123")
+        score_client.flush
+      end
+
+      it "includes session_id when provided" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(sessionId: "ghi789")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, session_id: "ghi789")
         score_client.flush
       end
 
@@ -84,12 +106,13 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.flush
       end
 
-      it "includes comment and metadata when provided" do
+      it "includes comment and metadata and environment when provided" do
         expect(api_client).to receive(:send_batch).with(array_including(
                                                           hash_including(
                                                             body: hash_including(
                                                               comment: "High quality",
-                                                              metadata: { source: "manual" }
+                                                              metadata: { source: "manual" },
+                                                              environment: "production"
                                                             )
                                                           )
                                                         ))
@@ -98,7 +121,8 @@ RSpec.describe Langfuse::ScoreClient do
           name: "quality",
           value: 0.85,
           comment: "High quality",
-          metadata: { source: "manual" }
+          metadata: { source: "manual" },
+          environment: "production"
         )
         score_client.flush
       end
