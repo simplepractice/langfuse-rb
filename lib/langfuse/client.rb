@@ -283,8 +283,6 @@ module Langfuse
 
     # Create a score event and queue it for batching
     #
-    # You may only provide one of the following: trace_id (with optional observation_id), session_id, or dataset_run_id; observation_id requires a trace_id.
-    #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
     # @param id [String, nil] Score ID

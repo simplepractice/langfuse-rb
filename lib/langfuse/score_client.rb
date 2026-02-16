@@ -72,10 +72,11 @@ module Langfuse
     #
     # @example Categorical score
     #   create(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
-    # rubocop:disable Metrics/ParameterLists
+    # rubocop:disable Metrics/ParameterLists, Metrics/MethodLength
     def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       validate_name(name)
+      validate_ids(trace_id:, observation_id:, session_id:, dataset_run_id:)
       normalized_value = normalize_value(value, data_type)
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
 
@@ -102,7 +103,7 @@ module Langfuse
       logger.error("Langfuse score creation failed: #{e.message}")
       raise
     end
-    # rubocop:enable Metrics/ParameterLists
+    # rubocop:enable Metrics/ParameterLists, Metrics/MethodLength
 
     # Create a score for the currently active observation (from OTel span)
     #
@@ -286,6 +287,21 @@ module Langfuse
       raise ArgumentError, "name is required" if name.nil?
       raise ArgumentError, "name must be a String" unless name.is_a?(String)
       raise ArgumentError, "name is required" if name.empty?
+    end
+
+    # Validate score IDs
+    #
+    # @param trace_id [String, nil] Trace ID
+    # @param observation_id [String, nil] Observation ID
+    # @param session_id [String, nil] Session ID
+    # @param dataset_run_id [String, nil] Dataset run ID
+    # @raise [ArgumentError] if more than one of trace_id, session_id, or dataset_run_id is provided; or if observation_id is provided without a trace_id
+    def validate_ids(trace_id: nil, observation_id: nil, session_id: nil, dataset_run_id: nil)
+      raise ArgumentError, "observation_id requires a trace_id" if observation_id && !trace_id
+
+      return unless [trace_id, session_id, dataset_run_id].compact.length > 1
+
+      raise ArgumentError, "only one of trace_id, session_id, and dataset_run_id may be present"
     end
 
     # Extract trace_id and observation_id from active OTel span

@@ -98,11 +98,12 @@ RSpec.describe Langfuse::ScoreClient do
       it "includes observation_id when provided" do
         expect(api_client).to receive(:send_batch).with(array_including(
                                                           hash_including(
-                                                            body: hash_including(observationId: "def456")
+                                                            body: hash_including(traceId: "abc123",
+                                                                                 observationId: "def456")
                                                           )
                                                         ))
 
-        score_client.create(name: "quality", value: 0.85, observation_id: "def456")
+        score_client.create(name: "quality", value: 0.85, trace_id: "abc123", observation_id: "def456")
         score_client.flush
       end
 
@@ -242,6 +243,37 @@ RSpec.describe Langfuse::ScoreClient do
         expect do
           score_client.create(name: 123, value: 0.85)
         end.to raise_error(ArgumentError, "name must be a String")
+      end
+
+      it "raises ArgumentError for observation_id without trace_id" do
+        expect do
+          score_client.create(name: "quality", value: 0.85, observation_id: "def456")
+        end.to raise_error(ArgumentError, "observation_id requires a trace_id")
+      end
+
+      it "raises ArgumentError for trace_id and session_id both being present" do
+        expect do
+          score_client.create(name: "quality", value: 0.85, trace_id: "abc123", session_id: "ghi789")
+        end.to raise_error(ArgumentError, /only one of/)
+      end
+
+      it "raises ArgumentError for trace_id and dataset_run_id both being present" do
+        expect do
+          score_client.create(name: "quality", value: 0.85, trace_id: "abc123", dataset_run_id: "run-123")
+        end.to raise_error(ArgumentError, /only one of/)
+      end
+
+      it "raises ArgumentError for session_id and dataset_run_id both being present" do
+        expect do
+          score_client.create(name: "quality", value: 0.85, session_id: "ghi789", dataset_run_id: "run-123")
+        end.to raise_error(ArgumentError, /only one of/)
+      end
+
+      it "raises ArgumentError for trace_id, session_id, and dataset_run_id all being present" do
+        expect do
+          score_client.create(name: "quality", value: 0.85, trace_id: "abc123", session_id: "ghi789",
+                              dataset_run_id: "run-123")
+        end.to raise_error(ArgumentError, /only one of/)
       end
 
       it "raises ArgumentError for non-numeric value with numeric data_type" do
