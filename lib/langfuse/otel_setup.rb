@@ -58,7 +58,7 @@ module Langfuse
 
         # Add span processor for propagated attributes
         # This must be added AFTER the BatchSpanProcessor to ensure attributes are set before export
-        span_processor = SpanProcessor.new
+        span_processor = SpanProcessor.new(config: config)
         @tracer_provider.add_span_processor(span_processor)
 
         # Set as global tracer provider

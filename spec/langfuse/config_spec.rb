@@ -19,16 +19,58 @@ RSpec.describe Langfuse::Config do
       ENV["LANGFUSE_PUBLIC_KEY"] = "test_public"
       ENV["LANGFUSE_SECRET_KEY"] = "test_secret"
       ENV["LANGFUSE_BASE_URL"] = "https://custom.langfuse.com"
+      ENV["LANGFUSE_TRACING_ENVIRONMENT"] = "staging"
+      ENV["LANGFUSE_RELEASE"] = "release-123"
 
       config = described_class.new
 
       expect(config.public_key).to eq("test_public")
       expect(config.secret_key).to eq("test_secret")
       expect(config.base_url).to eq("https://custom.langfuse.com")
+      expect(config.environment).to eq("staging")
+      expect(config.release).to eq("release-123")
     ensure
       ENV.delete("LANGFUSE_PUBLIC_KEY")
       ENV.delete("LANGFUSE_SECRET_KEY")
       ENV.delete("LANGFUSE_BASE_URL")
+      ENV.delete("LANGFUSE_TRACING_ENVIRONMENT")
+      ENV.delete("LANGFUSE_RELEASE")
+    end
+
+    it "falls back to CI release environment variables when LANGFUSE_RELEASE is not set" do
+      release_envs = Langfuse::Config::COMMON_RELEASE_ENV_KEYS.to_h { |key| [key, ENV.fetch(key, nil)] }
+      langfuse_release = ENV.fetch("LANGFUSE_RELEASE", nil)
+      ENV.delete("LANGFUSE_RELEASE")
+      Langfuse::Config::COMMON_RELEASE_ENV_KEYS.each { |key| ENV.delete(key) }
+      ENV["GITHUB_SHA"] = "ci-sha-123"
+
+      config = described_class.new
+
+      expect(config.release).to eq("ci-sha-123")
+    ensure
+      ENV.delete("GITHUB_SHA")
+      langfuse_release.nil? ? ENV.delete("LANGFUSE_RELEASE") : ENV["LANGFUSE_RELEASE"] = langfuse_release
+      release_envs.each do |key, value|
+        value.nil? ? ENV.delete(key) : ENV[key] = value
+      end
+    end
+
+    it "prefers LANGFUSE_RELEASE over CI release environment variables" do
+      release_envs = Langfuse::Config::COMMON_RELEASE_ENV_KEYS.to_h { |key| [key, ENV.fetch(key, nil)] }
+      langfuse_release = ENV.fetch("LANGFUSE_RELEASE", nil)
+      ENV["LANGFUSE_RELEASE"] = "explicit-release"
+      Langfuse::Config::COMMON_RELEASE_ENV_KEYS.each { |key| ENV.delete(key) }
+      ENV["GITHUB_SHA"] = "ci-sha-123"
+
+      config = described_class.new
+
+      expect(config.release).to eq("explicit-release")
+    ensure
+      ENV.delete("GITHUB_SHA")
+      langfuse_release.nil? ? ENV.delete("LANGFUSE_RELEASE") : ENV["LANGFUSE_RELEASE"] = langfuse_release
+      release_envs.each do |key, value|
+        value.nil? ? ENV.delete(key) : ENV[key] = value
+      end
     end
 
     it "accepts block for configuration" do
@@ -377,6 +419,16 @@ RSpec.describe Langfuse::Config do
     it "allows setting cache_refresh_threads" do
       config.cache_refresh_threads = 10
       expect(config.cache_refresh_threads).to eq(10)
+    end
+
+    it "allows setting environment" do
+      config.environment = "production"
+      expect(config.environment).to eq("production")
+    end
+
+    it "allows setting release" do
+      config.release = "release-abc"
+      expect(config.release).to eq("release-abc")
     end
   end
 

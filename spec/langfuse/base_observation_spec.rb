@@ -148,6 +148,17 @@ RSpec.describe Langfuse::BaseObservation do
       expect(span_data.attributes["user.id"]).to eq("user-789")
       expect(span_data.attributes["langfuse.trace.metadata.version"]).to eq("1.0.0")
     end
+
+    it "overrides existing environment and release values" do
+      otel_span.set_attribute("langfuse.environment", "production")
+      otel_span.set_attribute("langfuse.release", "release-1")
+
+      observation.update_trace(environment: "staging", release: "release-2")
+
+      span_data = otel_span.to_span_data
+      expect(span_data.attributes["langfuse.environment"]).to eq("staging")
+      expect(span_data.attributes["langfuse.release"]).to eq("release-2")
+    end
   end
 
   describe "#start_observation" do

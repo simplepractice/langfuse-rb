@@ -11,6 +11,12 @@ module Langfuse
   #
   # @api private
   class SpanProcessor < OpenTelemetry::SDK::Trace::SpanProcessor
+    # @param config [Langfuse::Config, nil] SDK configuration used to build trace defaults
+    def initialize(config: Langfuse.configuration)
+      @default_trace_attributes = build_default_trace_attributes(config).freeze
+      super()
+    end
+
     # Called when a span starts
     #
     # @param span [OpenTelemetry::SDK::Trace::Span] The span that started
@@ -19,13 +25,8 @@ module Langfuse
     def on_start(span, parent_context)
       return unless span.recording?
 
-      # Get propagated attributes from context
-      propagated_attrs = Propagation.get_propagated_attributes_from_context(parent_context)
-
-      # Set attributes on span
-      propagated_attrs.each do |key, value|
-        span.set_attribute(key, value)
-      end
+      apply_attributes(span, @default_trace_attributes)
+      apply_attributes(span, propagated_attributes(parent_context))
     end
 
     # Called when a span ends
@@ -56,6 +57,27 @@ module Langfuse
       # Return 0 to match OpenTelemetry SDK expectation (it finds max timeout from processors)
       _ = timeout # Suppress unused argument warning
       0
+    end
+
+    private
+
+    def build_default_trace_attributes(config)
+      return {} unless config
+
+      OtelAttributes.create_trace_attributes(
+        environment: config.environment,
+        release: config.release
+      )
+    end
+
+    def propagated_attributes(parent_context)
+      return {} unless parent_context
+
+      Propagation.get_propagated_attributes_from_context(parent_context)
+    end
+
+    def apply_attributes(span, attributes)
+      attributes.each { |key, value| span.set_attribute(key, value) }
     end
   end
 end
