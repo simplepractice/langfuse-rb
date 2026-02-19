@@ -41,6 +41,16 @@ RSpec.describe "Langfuse module score API parity" do
   end
 
   describe "score API parity with Langfuse::Client" do
+    it "exposes the expected create_score keyword arguments" do
+      keyword_names = Langfuse.method(:create_score).parameters.filter_map do |type, name|
+        name if type == :key
+      end
+
+      expect(keyword_names).to eq(
+        %i[id trace_id session_id observation_id comment metadata environment data_type dataset_run_id config_id]
+      )
+    end
+
     it "matches create_score parameters" do
       expect(Langfuse.method(:create_score).parameters).to eq(
         Langfuse::Client.instance_method(:create_score).parameters
