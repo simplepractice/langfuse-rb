@@ -4,14 +4,8 @@ require "spec_helper"
 
 RSpec.describe Langfuse::SpanProcessor do
   let(:processor) { described_class.new }
-  let(:tracer) { OpenTelemetry.tracer_provider.tracer("test") }
-
-  before do
-    Langfuse.configure do |config|
-      config.public_key = "pk_test"
-      config.secret_key = "sk_test"
-    end
-  end
+  let(:tracer_provider) { OpenTelemetry::SDK::Trace::TracerProvider.new }
+  let(:tracer) { tracer_provider.tracer("test") }
 
   describe "#on_start" do
     it "sets configured environment and release defaults on new spans" do
