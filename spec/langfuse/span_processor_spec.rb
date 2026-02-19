@@ -4,16 +4,40 @@ require "spec_helper"
 
 RSpec.describe Langfuse::SpanProcessor do
   let(:processor) { described_class.new }
-  let(:tracer) { OpenTelemetry.tracer_provider.tracer("test") }
-
-  before do
-    Langfuse.configure do |config|
-      config.public_key = "pk_test"
-      config.secret_key = "sk_test"
-    end
-  end
+  let(:tracer_provider) { OpenTelemetry::SDK::Trace::TracerProvider.new }
+  let(:tracer) { tracer_provider.tracer("test") }
 
   describe "#on_start" do
+    it "sets configured environment and release defaults on new spans" do
+      config = instance_double(Langfuse::Config, environment: "production", release: "release-123")
+      custom_processor = described_class.new(config: config)
+      span = tracer.start_span("test-span")
+      parent_context = OpenTelemetry::Context.current
+
+      custom_processor.on_start(span, parent_context)
+
+      attrs = span.attributes
+      expect(attrs["langfuse.environment"]).to eq("production")
+      expect(attrs["langfuse.release"]).to eq("release-123")
+
+      span.finish
+    end
+
+    it "does not set environment/release defaults when they are nil" do
+      config = instance_double(Langfuse::Config, environment: nil, release: nil)
+      custom_processor = described_class.new(config: config)
+      span = tracer.start_span("test-span")
+      parent_context = OpenTelemetry::Context.current
+
+      custom_processor.on_start(span, parent_context)
+
+      attrs = span.attributes
+      expect(attrs).not_to have_key("langfuse.environment")
+      expect(attrs).not_to have_key("langfuse.release")
+
+      span.finish
+    end
+
     it "sets propagated attributes on new spans" do
       span = nil
 

@@ -68,6 +68,12 @@ module Langfuse
     # @return [Symbol] ActiveJob queue name for async processing
     attr_accessor :job_queue
 
+    # @return [String, nil] Default tracing environment applied to new traces/observations
+    attr_accessor :environment
+
+    # @return [String, nil] Default release identifier applied to new traces/observations
+    attr_accessor :release
+
     # @return [String] Default Langfuse API base URL
     DEFAULT_BASE_URL = "https://cloud.langfuse.com"
 
@@ -107,6 +113,20 @@ module Langfuse
     # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
 
+    # @return [Array<String>] Common CI environment variables that contain a release SHA
+    COMMON_RELEASE_ENV_KEYS = %w[
+      RENDER_GIT_COMMIT
+      CI_COMMIT_SHA
+      CIRCLE_SHA1
+      SOURCE_VERSION
+      TRAVIS_COMMIT
+      GIT_COMMIT
+      GITHUB_SHA
+      BITBUCKET_COMMIT
+      BUILD_SOURCEVERSION
+      DRONE_COMMIT_SHA
+    ].freeze
+
     # Initialize a new Config object
     #
     # @yield [config] Optional block for configuration
@@ -128,6 +148,8 @@ module Langfuse
       @batch_size = DEFAULT_BATCH_SIZE
       @flush_interval = DEFAULT_FLUSH_INTERVAL
       @job_queue = DEFAULT_JOB_QUEUE
+      @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
+      @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
       @logger = default_logger
 
       yield(self) if block_given?
@@ -222,6 +244,22 @@ module Langfuse
       return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
 
       raise ConfigurationError, "cache_refresh_threads must be positive"
+    end
+
+    def detect_release_from_ci_env
+      COMMON_RELEASE_ENV_KEYS.each do |key|
+        value = env_value(key)
+        return value if value
+      end
+
+      nil
+    end
+
+    def env_value(key)
+      value = ENV.fetch(key, nil)
+      return nil if value.nil? || value.empty?
+
+      value
     end
   end
 end
