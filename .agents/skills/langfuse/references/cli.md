@@ -12,6 +12,8 @@ npm i -g langfuse-cli
 langfuse api <resource> <action>
 ```
 
+Use the command form matching your installation method (`langfuse` for global install; `npx langfuse-cli` or `bunx langfuse-cli` otherwise) in all examples below.
+
 ## Discovery
 
 ```bash
@@ -72,7 +74,7 @@ langfuse api dataset-items list --dataset-name my-dataset
 
 ```bash
 langfuse api score-v2s get-scores --limit 20
-langfuse api score-v2s get-get-by-id <score-id>
+langfuse api score-v2s get-by-id <score-id>
 langfuse api score-configs get-public
 ```
 

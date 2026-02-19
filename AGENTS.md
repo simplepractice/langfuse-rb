@@ -7,7 +7,7 @@ This repository is the official `langfuse-rb` SDK for LLM tracing, observability
 - Ruby version must stay `>= 3.2.0` (see `.ruby-version` and `langfuse.gemspec`).
 - Keep the SDK framework-agnostic (no Rails dependency).
 - Do not delete existing inline comments unless code changes make them invalid.
-- After any change, validate output/expectations against the Langfuse API using the installed `langfuse` Codex skill.
+- After any change, validate output/expectations against the Langfuse API using the installed `langfuse` agent skill (see `.agents/skills/langfuse/`).
 - After any change, run:
 
 ```bash
