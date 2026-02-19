@@ -1,109 +1,55 @@
-This is the official **Langfuse Ruby SDK** (langfuse-rb), providing LLM tracing, observability, and prompt management capabilities.
+Langfuse Ruby SDK — LLM tracing, observability, and prompt management.
 
-**Key Design Principles:**
-- **Rails-Friendly**: Global configuration pattern with `Langfuse.configure` block
-- **Minimal Dependencies**: Only add dependencies when needed
-- **Thread-Safe**: Safe for multi-threaded environments
+Ruby >= 3.2.0. No Rails dependency.
 
-## Requirements
-
-- **Ruby**: >= 3.2.0 (specified in `.ruby-version` and `langfuse.gemspec`)
-- No Rails dependency - works in any Ruby project
-
-## MUST RUN After Making Any Changes
+## Verify After Every Change
 
 ```bash
-bundle exec rspec
-
-# coverage should stay over 95%
+bundle exec rspec          # coverage must stay > 95%
 bundle exec rubocop
 ```
 
+- After any change, validate output/expectations against the Langfuse API using the `langfuse` skill (`.claude/skills/langfuse/`).
 
-## API Design Pattern (Critical!)
+## Hard Constraints
 
-**✅ CORRECT - Flat API:**
+- **Flat API only.** All methods live directly on `Client`. Never nest behind sub-objects like `client.prompt.get(...)` or `client.prompt_manager.compile(...)`.
+- **Thread-safe.** All shared state must be safe for concurrent access.
+- **Minimal dependencies.** Don't add gems unless truly necessary.
+- **Max 22 lines per method** (excluding specs). Extract when exceeded.
+- **Do not delete existing inline comments** unless the associated code changes in a way that invalidates them.
+
+## API Shape
+
 ```ruby
-client.get_prompt("name")
-client.compile_prompt("name", variables: {})
-client.create_prompt(...)
-```
-
-**❌ INCORRECT - Nested managers:**
-```ruby
-client.prompt.get("name")          # Don't do this
-client.prompt_manager.compile(...) # Don't do this
-```
-
-## Global Configuration Pattern
-```ruby
-# Rails initializer or configuration file
 Langfuse.configure do |config|
   config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
   config.secret_key = ENV['LANGFUSE_SECRET_KEY']
   config.cache_ttl = 60
 end
 
-# Use global singleton client
 client = Langfuse.client
-prompt = client.get_prompt("greeting")
+client.get_prompt("name")
+client.compile_prompt("name", variables: {})
+client.create_prompt(...)
 ```
 
-## Ruby Conventions
+## Style
 
-- **snake_case** for all methods: `get_prompt`, not `getPrompt`
-- **Symbol keys** in hashes: `{ role: :user }`, not `{ "role" => "user" }`
-- **Keyword arguments**: `get_prompt(name, version: 2)`, not `get_prompt(name, { version: 2 })`
-- **Blocks for config**: `configure { |c| ... }`
+- Keyword arguments over option hashes: `get_prompt(name, version: 2)`
+- Symbol keys: `{ role: :user }`, not `{ "role" => "user" }`
+- Blocks for configuration: `configure { |c| ... }`
+- YARD docs (`@param`, `@return`, `@raise`) on every public method
+- Private methods: document only non-obvious "why". Use `@api private` tag. Skip `@param`/`@return` when types are obvious from naming.
 
-## Testing Strategy
+## Testing
 
-**Test Types:**
-- Unit tests for each class in isolation
-- Integration tests for `Client → ApiClient → (mocked HTTP)`
-- WebMock for HTTP stubbing
-- VCR tests for real API responses (Phase 2+)
+- WebMock disables external HTTP by default (`spec_helper.rb`)
+- `Langfuse.reset!` runs before each test
+- Use `instance_double` for mocking
+- SimpleCov runs automatically
 
-**Common Test Pattern:**
-```ruby
-RSpec.describe Langfuse::SomeClass do
-  describe "#some_method" do
-    context "when condition is met" do
-      it "does the expected thing" do
-        # Arrange, Act, Assert
-      end
-    end
-  end
-end
-```
+## References
 
-**Important Testing Notes:**
-- WebMock disables external HTTP by default (see `spec_helper.rb`)
-- SimpleCov generates coverage report automatically
-- Global `Langfuse.reset!` runs before each test
-- Use `instance_double` for mocking dependencies
-
-## Comments
-
-- **Do not delete existing inline comments** unless the associated code is modified in a way that makes the comment no longer valid.
-
-## Code Style
-
-### Naming Conventions
-- **Classes**: `PascalCase` (e.g., `TextPromptClient`)
-- **Methods**: `snake_case` (e.g., `get_prompt`)
-- **Constants**: `SCREAMING_SNAKE_CASE` (e.g., `DEFAULT_TTL`)
-- **Instance vars**: `@snake_case` (e.g., `@api_client`)
-
-### Documentation
-- Every public method must have YARD-format docs (`@param`, `@return`, `@raise`)
-- **Private methods**: Only document when the "why" isn't obvious (non-trivial algorithms, invariants, surprising behavior). Use `@api private` tag. Skip `@param`/`@return` when types are obvious from naming.
-
-### Method Length
-- Max 22 lines (excluding specs)
-- Break longer methods into smaller, testable units
-
-## Important References
-
-- **Langfuse API Docs**: https://langfuse.com/docs/api
-- **Langfuse TypeScript SDK**: https://github.com/langfuse/langfuse-js (reference implementation)
+- API docs: https://langfuse.com/docs/api
+- TypeScript SDK (reference impl): https://github.com/langfuse/langfuse-js
