@@ -1449,21 +1449,21 @@ RSpec.describe Langfuse::Client do
       client.create_score(name: "quality", value: 0.85, trace_id: "abc123")
     end
 
-    it "passes all parameters to score_client, identified by trace_id" do
+    it "passes the full score kwarg set to score_client" do
       score_client = client.instance_variable_get(:@score_client)
       expect(score_client).to receive(:create).with(
         name: "quality",
         value: 0.85,
         id: "my-score",
         trace_id: "abc123",
-        session_id: nil,
+        session_id: "ghi789",
         observation_id: "def456",
         comment: "High quality",
         metadata: { source: "manual" },
         environment: "production",
         data_type: :boolean,
-        dataset_run_id: nil,
-        config_id: nil
+        dataset_run_id: "run-123",
+        config_id: "cfg-456"
       )
 
       client.create_score(
@@ -1471,11 +1471,14 @@ RSpec.describe Langfuse::Client do
         value: 0.85,
         id: "my-score",
         trace_id: "abc123",
+        session_id: "ghi789",
         observation_id: "def456",
         comment: "High quality",
         metadata: { source: "manual" },
         environment: "production",
-        data_type: :boolean
+        data_type: :boolean,
+        dataset_run_id: "run-123",
+        config_id: "cfg-456"
       )
     end
 

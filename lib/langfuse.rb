@@ -198,6 +198,8 @@ module Langfuse
     # @param metadata [Hash, nil] Optional metadata hash
     # @param environment [String, nil] Optional environment
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
+    # @param config_id [String, nil] Optional score config ID
     # @return [void]
     # @raise [ArgumentError] if validation fails
     #
@@ -211,7 +213,7 @@ module Langfuse
     #   Langfuse.create_score(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
     # rubocop:disable Metrics/ParameterLists
     def create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
-                     metadata: nil, environment: nil, data_type: :numeric)
+                     metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       client.create_score(
         name: name,
         value: value,
@@ -222,7 +224,9 @@ module Langfuse
         comment: comment,
         metadata: metadata,
         environment: environment,
-        data_type: data_type
+        data_type: data_type,
+        dataset_run_id: dataset_run_id,
+        config_id: config_id
       )
     end
     # rubocop:enable Metrics/ParameterLists

@@ -181,6 +181,43 @@ RSpec.describe Langfuse do
     end
   end
 
+  describe ".create_score" do
+    it "forwards the full score kwarg set to client" do
+      client = instance_double(Langfuse::Client)
+      allow(described_class).to receive(:client).and_return(client)
+
+      expect(client).to receive(:create_score).with(
+        name: "quality",
+        value: 0.85,
+        id: "score-123",
+        trace_id: "trace-123",
+        session_id: "session-123",
+        observation_id: "observation-123",
+        comment: "High quality",
+        metadata: { source: "manual" },
+        environment: "production",
+        data_type: :numeric,
+        dataset_run_id: "run-123",
+        config_id: "cfg-123"
+      )
+
+      described_class.create_score(
+        name: "quality",
+        value: 0.85,
+        id: "score-123",
+        trace_id: "trace-123",
+        session_id: "session-123",
+        observation_id: "observation-123",
+        comment: "High quality",
+        metadata: { source: "manual" },
+        environment: "production",
+        data_type: :numeric,
+        dataset_run_id: "run-123",
+        config_id: "cfg-123"
+      )
+    end
+  end
+
   describe ".start_observation" do
     it "creates a root span observation" do
       observation = described_class.start_observation("test-span", { input: { data: "test" } })
