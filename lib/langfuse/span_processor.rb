@@ -3,11 +3,12 @@
 require "opentelemetry/sdk"
 
 module Langfuse
-  # Span processor that automatically sets propagated attributes on new spans.
+  # Span processor that applies default and propagated trace attributes on new spans.
   #
-  # This processor reads propagated attributes from OpenTelemetry context and
-  # sets them on spans when they are created. This ensures that attributes set
-  # via `propagate_attributes` are automatically applied to all child spans.
+  # On span start, this processor first applies configured trace defaults
+  # (environment/release), then overlays attributes propagated in OpenTelemetry
+  # context (user/session/metadata/tags/version). This ensures consistent
+  # trace dimensions while still honoring per-request propagation.
   #
   # @api private
   class SpanProcessor < OpenTelemetry::SDK::Trace::SpanProcessor
