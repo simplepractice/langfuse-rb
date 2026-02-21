@@ -2336,6 +2336,181 @@ RSpec.describe Langfuse::ApiClient do
     end
   end
 
+  describe "#get_dataset_run" do
+    let(:dataset_name) { "evaluation suite/qa" }
+    let(:run_name) { "baseline v1/run-a" }
+
+    context "with successful response" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:get, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_return(
+            status: 200,
+            body: {
+              "id" => "run-123",
+              "name" => run_name,
+              "datasetName" => dataset_name,
+              "datasetRunItems" => [{ "id" => "run-item-1" }]
+            }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns dataset run data" do
+        result = api_client.get_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        expect(result["id"]).to eq("run-123")
+        expect(result["datasetRunItems"].size).to eq(1)
+      end
+    end
+
+    context "when not found" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:get, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect do
+          api_client.get_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        end.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:get, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect do
+          api_client.get_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        end.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+  end
+
+  describe "#list_dataset_runs" do
+    let(:dataset_name) { "my-dataset" }
+    let(:runs_response) do
+      {
+        "data" => [
+          { "id" => "run-1", "name" => "baseline-a" },
+          { "id" => "run-2", "name" => "baseline-b" }
+        ],
+        "meta" => {}
+      }
+    end
+
+    context "with successful response" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+          .to_return(
+            status: 200,
+            body: runs_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns array of run hashes" do
+        result = api_client.list_dataset_runs(dataset_name: dataset_name)
+        expect(result).to be_an(Array)
+        expect(result.size).to eq(2)
+        expect(result.first["id"]).to eq("run-1")
+      end
+    end
+
+    context "with pagination" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+          .with(query: { page: "2", limit: "10" })
+          .to_return(
+            status: 200,
+            body: runs_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "passes page and limit query parameters" do
+        api_client.list_dataset_runs(dataset_name: dataset_name, page: 2, limit: 10)
+        expect(
+          a_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+            .with(query: { "page" => "2", "limit" => "10" })
+        ).to have_been_made.once
+      end
+    end
+
+    context "when network error occurs" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+          .to_timeout
+      end
+
+      it "raises ApiError" do
+        expect do
+          api_client.list_dataset_runs(dataset_name: dataset_name)
+        end.to raise_error(Langfuse::ApiError, /HTTP request failed/)
+      end
+    end
+  end
+
+  describe "#delete_dataset_run" do
+    let(:dataset_name) { "evaluation suite/qa" }
+    let(:run_name) { "baseline v1/run-a" }
+
+    context "with successful response" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:delete, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_return(
+            status: 200,
+            body: { "deleted" => true }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns response body" do
+        result = api_client.delete_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        expect(result["deleted"]).to be(true)
+      end
+    end
+
+    context "when API returns 204" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:delete, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_return(status: 204, body: "", headers: {})
+      end
+
+      it "returns nil" do
+        result = api_client.delete_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        expect(result).to be_nil
+      end
+    end
+
+    context "when not found" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:delete, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect do
+          api_client.delete_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        end.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+  end
+
   describe "#list_traces" do
     let(:traces_response) do
       {
