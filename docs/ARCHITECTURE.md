@@ -201,7 +201,7 @@ The SDK uses an observation-based model where all tracing operations create "obs
 Langfuse.observe("user-request") do |span|
   span.start_observation("llm-call", { model: "gpt-4" }, as_type: :generation) do |gen|
     gen.output = "Response"
-    gen.usage = { prompt_tokens: 10, completion_tokens: 20 }
+    gen.usage_details = { prompt_tokens: 10, completion_tokens: 20 }
   end
 end
 ```
@@ -212,7 +212,7 @@ end
 span = Langfuse.start_observation("user-request")
 gen = span.start_observation("llm-call", { model: "gpt-4" }, as_type: :generation)
 gen.output = "Response"
-gen.usage = { prompt_tokens: 10, completion_tokens: 20 }
+gen.usage_details = { prompt_tokens: 10, completion_tokens: 20 }
 gen.end
 span.end
 ```
@@ -446,7 +446,7 @@ User Code
        └─> span.start_observation("llm-call", { model: "gpt-4" }, as_type: :generation) do |gen|
             ├─> BaseObservation wraps OTel child span
             ├─> OtelAttributes.create_observation_attributes() sets Langfuse attributes
-            └─> gen.usage = {...} → Sets token attributes via OTel span.set_attribute()
+            └─> gen.usage_details = {...} → Sets token attributes via OTel span.set_attribute()
        ├─> OTel BatchSpanProcessor collects spans
        ├─> SpanProcessor propagates trace-level attributes to new spans
        └─> OTLP Exporter sends spans to Langfuse

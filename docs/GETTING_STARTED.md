@@ -193,7 +193,7 @@ response = Langfuse.observe("openai-chat", { model: "gpt-4" }, as_type: :generat
 
   gen.model = "gpt-4"
   gen.model_parameters = { temperature: 0.7 }
-  gen.usage = {
+  gen.usage_details = {
     prompt_tokens: result.dig("usage", "prompt_tokens"),
     completion_tokens: result.dig("usage", "completion_tokens"),
     total_tokens: result.dig("usage", "total_tokens")
@@ -226,7 +226,7 @@ class AiSummaryJob < ApplicationJob
       gen.model = "gpt-4"
       gen.input = { article_body: article.body[0..100] }
       gen.output = { summary: summary }
-      gen.usage = {
+      gen.usage_details = {
         prompt_tokens: response.dig("usage", "prompt_tokens"),
         completion_tokens: response.dig("usage", "completion_tokens"),
         total_tokens: response.dig("usage", "total_tokens")

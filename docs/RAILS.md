@@ -85,7 +85,7 @@ class AiAssistantService
 
           result = call_openai(messages)
           gen.output = result[:content]
-          gen.usage = result[:usage]
+          gen.usage_details = result[:usage]
           result[:content]
         end
 

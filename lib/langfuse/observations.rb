@@ -299,7 +299,7 @@ module Langfuse
   #     gen.input = [{ role: "user", content: "Hello" }]
   #     response = call_llm(gen.input)
   #     gen.output = response
-  #     gen.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
+  #     gen.usage_details = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
   #   end
   #
   # @example Stateful API
@@ -331,18 +331,22 @@ module Langfuse
 
     # @param value [Hash] Usage hash with token counts (:prompt_tokens, :completion_tokens, :total_tokens)
     # @return [void]
+    # @deprecated Use #usage_details= instead.
     def usage=(value)
-      return unless @otel_span.recording?
+      warn_usage_deprecation
+      self.usage_details = value
+    end
 
-      # Convert to Langfuse API format (camelCase keys)
-      usage_hash = {
-        promptTokens: value[:prompt_tokens] || value["prompt_tokens"],
-        completionTokens: value[:completion_tokens] || value["completion_tokens"],
-        totalTokens: value[:total_tokens] || value["total_tokens"]
-      }.compact
+    # @param value [Hash] Usage details hash (preserves key shape as provided)
+    # @return [void]
+    def usage_details=(value)
+      update_observation_attributes(usage_details: value)
+    end
 
-      usage_json = usage_hash.to_json
-      @otel_span.set_attribute("langfuse.observation.usage", usage_json)
+    # @param value [Hash] Cost details hash (e.g., total_cost and provider-specific fields)
+    # @return [void]
+    def cost_details=(value)
+      update_observation_attributes(cost_details: value)
     end
 
     # @param value [String] Model name (e.g., "gpt-4", "claude-3-opus")
@@ -368,6 +372,17 @@ module Langfuse
       end
       params_json = params_hash.to_json
       @otel_span.set_attribute("langfuse.observation.modelParameters", params_json)
+    end
+
+    private
+
+    def warn_usage_deprecation
+      return if defined?(@usage_deprecation_logged) && @usage_deprecation_logged
+
+      Langfuse.configuration.logger&.warn(
+        "Langfuse::Generation#usage= is deprecated; use #usage_details= instead."
+      )
+      @usage_deprecation_logged = true
     end
   end
 

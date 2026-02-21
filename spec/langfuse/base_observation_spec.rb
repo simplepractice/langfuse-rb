@@ -437,15 +437,41 @@ RSpec.describe Langfuse::BaseObservation do
 
     let(:generation) { Langfuse.start_observation("generation", {}, as_type: :generation) }
 
-    it "sets usage via assignment" do
-      generation.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
+    it "sets usage_details via assignment" do
+      generation.usage_details = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
       span_data = generation.otel_span.to_span_data
-      usage_attr_value = span_data.attributes["langfuse.observation.usage"]
+      usage_attr_value = span_data.attributes["langfuse.observation.usage_details"]
       expect(usage_attr_value).not_to be_nil
       usage_attr = JSON.parse(usage_attr_value)
-      expect(usage_attr["promptTokens"]).to eq(100)
-      expect(usage_attr["completionTokens"]).to eq(50)
-      expect(usage_attr["totalTokens"]).to eq(150)
+      expect(usage_attr["prompt_tokens"]).to eq(100)
+      expect(usage_attr["completion_tokens"]).to eq(50)
+      expect(usage_attr["total_tokens"]).to eq(150)
+    end
+
+    it "sets cost_details via assignment" do
+      generation.cost_details = { total_cost: 0.002 }
+      span_data = generation.otel_span.to_span_data
+      cost_attr_value = span_data.attributes["langfuse.observation.cost_details"]
+      expect(cost_attr_value).not_to be_nil
+      cost_attr = JSON.parse(cost_attr_value)
+      expect(cost_attr["total_cost"]).to eq(0.002)
+    end
+
+    it "keeps usage assignment as a deprecated alias to usage_details" do
+      allow(Langfuse.configuration.logger).to receive(:warn)
+
+      generation.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
+      span_data = generation.otel_span.to_span_data
+      usage_attr_value = span_data.attributes["langfuse.observation.usage_details"]
+      expect(usage_attr_value).not_to be_nil
+      usage_attr = JSON.parse(usage_attr_value)
+      expect(usage_attr["prompt_tokens"]).to eq(100)
+      expect(usage_attr["completion_tokens"]).to eq(50)
+      expect(usage_attr["total_tokens"]).to eq(150)
+      expect(span_data.attributes).not_to have_key("langfuse.observation.usage")
+      expect(Langfuse.configuration.logger).to have_received(:warn).with(
+        "Langfuse::Generation#usage= is deprecated; use #usage_details= instead."
+      )
     end
 
     it "sets model via assignment" do

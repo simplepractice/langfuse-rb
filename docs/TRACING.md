@@ -73,7 +73,7 @@ Langfuse.observe("gpt4-call", as_type: :generation) do |gen|
   response = openai_client.chat(...)
   
   gen.output = response.choices.first.message.content
-  gen.usage = {
+  gen.usage_details = {
     prompt_tokens: 10,
     completion_tokens: 20,
     total_tokens: 30
@@ -151,7 +151,7 @@ Langfuse.propagate_attributes(user_id: "user-123") do
     )
 
     gen.output = response.choices.first.message.content
-    gen.usage = {
+    gen.usage_details = {
       prompt_tokens: response.usage.prompt_tokens,
       completion_tokens: response.usage.completion_tokens,
       total_tokens: response.usage.total_tokens
@@ -199,7 +199,7 @@ def answer_question(user_id:, question:)
           parameters: { model: "text-embedding-ada-002", input: question }
         )
         gen.output = result.data.first.embedding
-        gen.usage = { total_tokens: result.usage.total_tokens }
+        gen.usage_details = { total_tokens: result.usage.total_tokens }
         result.data.first.embedding
       end
 
@@ -235,7 +235,7 @@ def answer_question(user_id:, question:)
       )
 
       gen.output = response.choices.first.message.content
-      gen.usage = {
+      gen.usage_details = {
         prompt_tokens: response.usage.prompt_tokens,
         completion_tokens: response.usage.completion_tokens,
         total_tokens: response.usage.total_tokens
@@ -302,7 +302,7 @@ def chat_conversation(user_id:, session_id:, messages:)
       )
 
       gen.output = result.choices.first.message.content
-      gen.usage = {
+      gen.usage_details = {
         prompt_tokens: result.usage.prompt_tokens,
         completion_tokens: result.usage.completion_tokens
       }
@@ -341,7 +341,7 @@ def call_llm_with_retry(prompt:, max_retries: 3)
         )
 
         gen.output = response.choices.first.message.content
-        gen.usage = {
+        gen.usage_details = {
           prompt_tokens: response.usage.prompt_tokens,
           completion_tokens: response.usage.completion_tokens
         }
@@ -380,7 +380,7 @@ Langfuse.observe("gpt4", as_type: :generation) do |gen|
   
   response = openai_client.chat(...)
   gen.output = response.choices.first.message.content
-  gen.usage = {
+  gen.usage_details = {
     prompt_tokens: response.usage.prompt_tokens,
     completion_tokens: response.usage.completion_tokens,
     total_tokens: response.usage.total_tokens
@@ -394,7 +394,7 @@ Langfuse.observe("gpt4", as_type: :generation) do |gen|
   
   response = openai_client.chat(...)
   gen.output = response.choices.first.message.content
-  # Missing: gen.usage = ...
+  # Missing: gen.usage_details = ...
 end
 ```
 

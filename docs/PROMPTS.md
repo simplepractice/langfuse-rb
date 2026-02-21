@@ -543,7 +543,7 @@ Langfuse.observe("generate-response", as_type: :generation) do |gen|
   gen.model = prompt.config["model"]
   gen.input = messages
   gen.output = response.dig("choices", 0, "message", "content")
-  gen.usage = {
+  gen.usage_details = {
     prompt_tokens: response.dig("usage", "prompt_tokens"),
     completion_tokens: response.dig("usage", "completion_tokens"),
     total_tokens: response.dig("usage", "total_tokens")
