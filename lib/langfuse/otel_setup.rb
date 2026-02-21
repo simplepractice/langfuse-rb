@@ -14,6 +14,7 @@ module Langfuse
       base_url
       environment
       release
+      sample_rate
       should_export_span
       tracing_async
       batch_size
@@ -126,7 +127,9 @@ module Langfuse
       end
 
       def build_tracer_provider(config)
-        provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+        provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
+          sampler: build_sampler(config.sample_rate)
+        )
         provider.add_span_processor(
           SpanProcessor.new(config: config, exporter: build_exporter(config))
         )
@@ -171,6 +174,14 @@ module Langfuse
         credentials = "#{public_key}:#{secret_key}"
         encoded = Base64.strict_encode64(credentials)
         { "Authorization" => "Basic #{encoded}" }
+      end
+
+      def build_sampler(sample_rate)
+        if sample_rate < 1.0
+          OpenTelemetry::SDK::Trace::Samplers::TraceIdRatioBased.new(sample_rate)
+        else
+          OpenTelemetry::SDK::Trace::Samplers::ALWAYS_ON
+        end
       end
     end
   end
