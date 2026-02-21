@@ -212,6 +212,20 @@ Used by scoring API. See [SCORING.md](SCORING.md).
 config.flush_interval = 5  # Flush more frequently
 ```
 
+#### `sample_rate`
+
+- **Type:** Float (`0.0..1.0`)
+- **Default:** `1.0`
+- **Description:** Deterministic trace sampling rate based on trace ID
+
+```ruby
+config.sample_rate = 0.1  # Sample ~10% of traces
+```
+
+`0.0` drops all traces, `1.0` preserves current always-on behavior.
+When sampling is below `1.0`, scores linked to sampled-out traces are dropped.
+Session-only and dataset-run-only scores are still sent.
+
 #### `logger`
 
 - **Type:** Logger
@@ -260,6 +274,7 @@ The SDK automatically reads these environment variables as defaults when no expl
 - `LANGFUSE_PUBLIC_KEY` — public API key
 - `LANGFUSE_SECRET_KEY` — secret API key
 - `LANGFUSE_BASE_URL` — API endpoint (defaults to `https://cloud.langfuse.com`)
+- `LANGFUSE_SAMPLE_RATE` — trace sampling rate (`0.0..1.0`, defaults to `1.0`)
 
 Explicit configuration always takes precedence:
 
@@ -277,6 +292,7 @@ end
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_BASE_URL=https://cloud.langfuse.com  # Optional
+LANGFUSE_SAMPLE_RATE=0.25                     # Optional
 ```
 
 ## Rails-Specific Configuration

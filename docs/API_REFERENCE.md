@@ -48,6 +48,7 @@ Block receives a configuration object with these properties:
 | `cache_refresh_threads`        | Integer | No       | `5`                            | Background refresh threads        |
 | `batch_size`                   | Integer | No       | `50`                           | Score batch size                  |
 | `flush_interval`               | Integer | No       | `10`                           | Score flush interval (seconds)    |
+| `sample_rate`                  | Float   | No       | `1.0`                          | Trace sampling rate (`0.0..1.0`)  |
 | `logger`                       | Logger  | No       | Auto-detected                  | Logger instance                   |
 | `tracing_async`                | Boolean | No       | `true`                         | ⚠️ Experimental (not implemented) |
 | `job_queue`                    | Symbol  | No       | `:default`                     | ⚠️ Experimental (not implemented) |

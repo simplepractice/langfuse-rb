@@ -52,8 +52,10 @@ module Langfuse
                       )
                     end
 
-        # Create TracerProvider with processor
-        @tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+        # Create TracerProvider with deterministic trace-id-based sampling.
+        @tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
+          sampler: build_sampler(config.sample_rate)
+        )
         @tracer_provider.add_span_processor(processor)
 
         # Add span processor for propagated attributes and env/release defaults
@@ -119,6 +121,14 @@ module Langfuse
         {
           "Authorization" => "Basic #{encoded}"
         }
+      end
+
+      def build_sampler(sample_rate)
+        if sample_rate < 1.0
+          OpenTelemetry::SDK::Trace::Samplers::TraceIdRatioBased.new(sample_rate)
+        else
+          OpenTelemetry::SDK::Trace::Samplers::ALWAYS_ON
+        end
       end
     end
   end

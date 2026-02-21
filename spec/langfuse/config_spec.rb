@@ -13,6 +13,7 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_stale_while_revalidate).to be false
       expect(config.cache_stale_ttl).to eq(0) # Defaults to 0 (SWR disabled)
       expect(config.cache_refresh_threads).to eq(5)
+      expect(config.sample_rate).to eq(1.0)
     end
 
     it "reads from environment variables" do
@@ -21,6 +22,7 @@ RSpec.describe Langfuse::Config do
       ENV["LANGFUSE_BASE_URL"] = "https://custom.langfuse.com"
       ENV["LANGFUSE_TRACING_ENVIRONMENT"] = "staging"
       ENV["LANGFUSE_RELEASE"] = "release-123"
+      ENV["LANGFUSE_SAMPLE_RATE"] = "0.25"
 
       config = described_class.new
 
@@ -29,12 +31,37 @@ RSpec.describe Langfuse::Config do
       expect(config.base_url).to eq("https://custom.langfuse.com")
       expect(config.environment).to eq("staging")
       expect(config.release).to eq("release-123")
+      expect(config.sample_rate).to eq(0.25)
     ensure
       ENV.delete("LANGFUSE_PUBLIC_KEY")
       ENV.delete("LANGFUSE_SECRET_KEY")
       ENV.delete("LANGFUSE_BASE_URL")
       ENV.delete("LANGFUSE_TRACING_ENVIRONMENT")
       ENV.delete("LANGFUSE_RELEASE")
+      ENV.delete("LANGFUSE_SAMPLE_RATE")
+    end
+
+    it "raises ConfigurationError for invalid LANGFUSE_SAMPLE_RATE" do
+      ENV["LANGFUSE_SAMPLE_RATE"] = "invalid"
+
+      expect { described_class.new }.to raise_error(
+        Langfuse::ConfigurationError,
+        "sample_rate must be numeric"
+      )
+    ensure
+      ENV.delete("LANGFUSE_SAMPLE_RATE")
+    end
+
+    it "does not fallback from explicit 0.0 to LANGFUSE_SAMPLE_RATE" do
+      ENV["LANGFUSE_SAMPLE_RATE"] = "0.5"
+
+      config = described_class.new do |c|
+        c.sample_rate = 0.0
+      end
+
+      expect(config.sample_rate).to eq(0.0)
+    ensure
+      ENV.delete("LANGFUSE_SAMPLE_RATE")
     end
 
     it "falls back to CI release environment variables when LANGFUSE_RELEASE is not set" do
@@ -257,6 +284,39 @@ RSpec.describe Langfuse::Config do
       end
     end
 
+    context "when sample_rate is invalid" do
+      it "raises ConfigurationError when below 0.0" do
+        expect { config.sample_rate = -0.1 }.to raise_error(
+          Langfuse::ConfigurationError,
+          "sample_rate must be between 0.0 and 1.0"
+        )
+      end
+
+      it "raises ConfigurationError when above 1.0" do
+        expect { config.sample_rate = 1.1 }.to raise_error(
+          Langfuse::ConfigurationError,
+          "sample_rate must be between 0.0 and 1.0"
+        )
+      end
+
+      it "raises ConfigurationError when non-numeric" do
+        expect { config.sample_rate = "abc" }.to raise_error(
+          Langfuse::ConfigurationError,
+          "sample_rate must be numeric"
+        )
+      end
+
+      it "allows 0.0" do
+        config.sample_rate = 0.0
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "allows 1.0" do
+        config.sample_rate = 1.0
+        expect { config.validate! }.not_to raise_error
+      end
+    end
+
     context "when cache_stale_ttl is invalid" do
       it "raises ConfigurationError when negative" do
         config.cache_stale_ttl = -1
@@ -429,6 +489,11 @@ RSpec.describe Langfuse::Config do
     it "allows setting release" do
       config.release = "release-abc"
       expect(config.release).to eq("release-abc")
+    end
+
+    it "allows setting sample_rate" do
+      config.sample_rate = 0.2
+      expect(config.sample_rate).to eq(0.2)
     end
   end
 
