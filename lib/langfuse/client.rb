@@ -588,6 +588,51 @@ module Langfuse
       )
     end
 
+    # Fetch a dataset run by dataset and run name
+    #
+    # @param dataset_name [String] Dataset name (required)
+    # @param run_name [String] Run name (required)
+    # @return [Hash] The dataset run data, including linked run items
+    # @raise [NotFoundError] if the dataset run is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_dataset_run(dataset_name:, run_name:)
+      api_client.get_dataset_run(dataset_name: dataset_name, run_name: run_name)
+    end
+
+    # List dataset runs for a dataset
+    #
+    # When page is nil (default), auto-paginates to fetch all runs.
+    # When page is provided, returns only that single page.
+    #
+    # @param dataset_name [String] Dataset name (required)
+    # @param page [Integer, nil] Optional page number for pagination
+    # @param limit [Integer, nil] Optional limit per page
+    # @return [Array<Hash>] Array of dataset run hashes
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_dataset_runs(dataset_name:, page: nil, limit: nil)
+      if page
+        fetch_dataset_runs_page(dataset_name: dataset_name, page: page, limit: limit)
+      else
+        fetch_all_dataset_runs(dataset_name: dataset_name, limit: limit)
+      end
+    end
+
+    # Delete a dataset run by name
+    #
+    # @param dataset_name [String] Dataset name (required)
+    # @param run_name [String] Run name (required)
+    # @return [nil]
+    # @raise [NotFoundError] if the dataset run is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    # @note 404 responses raise NotFoundError to preserve strict delete semantics
+    def delete_dataset_run(dataset_name:, run_name:)
+      api_client.delete_dataset_run(dataset_name: dataset_name, run_name: run_name)
+      nil
+    end
+
     # Run an experiment against local data or a named dataset
     #
     # @param name [String] Experiment/run name (required)
@@ -667,6 +712,24 @@ module Langfuse
       end
 
       items
+    end
+
+    def fetch_dataset_runs_page(dataset_name:, page:, limit:)
+      api_client.list_dataset_runs(dataset_name: dataset_name, page: page, limit: limit)
+    end
+
+    def fetch_all_dataset_runs(dataset_name:, limit:)
+      per_page = limit || DATASET_ITEMS_PAGE_SIZE
+      first_result = api_client.list_dataset_runs_paginated(dataset_name: dataset_name, page: 1, limit: per_page)
+      runs = first_result["data"] || []
+      total_pages = first_result.dig("meta", "totalPages") || 1
+
+      (2..total_pages).each do |pg|
+        result = api_client.list_dataset_runs_paginated(dataset_name: dataset_name, page: pg, limit: per_page)
+        runs.concat(result["data"] || [])
+      end
+
+      runs
     end
 
     def resolve_experiment_items(data, dataset_name)
