@@ -2145,6 +2145,124 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "#get_dataset_run" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:dataset_name) { "evaluation suite/qa" }
+    let(:run_name) { "baseline v1/run-a" }
+
+    context "with successful response" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:get, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_return(
+            status: 200,
+            body: {
+              "id" => "run-123",
+              "name" => run_name,
+              "datasetRunItems" => [{ "id" => "run-item-1" }]
+            }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns dataset run data" do
+        result = client.get_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        expect(result["id"]).to eq("run-123")
+        expect(result["datasetRunItems"].size).to eq(1)
+      end
+    end
+  end
+
+  describe "#list_dataset_runs" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+
+    context "with auto-pagination" do
+      it "fetches all pages when totalPages > 1" do
+        page1_response = {
+          "data" => [{ "id" => "run-1", "name" => "baseline-a" }],
+          "meta" => { "totalPages" => 2 }
+        }
+        page2_response = {
+          "data" => [{ "id" => "run-2", "name" => "baseline-b" }],
+          "meta" => { "totalPages" => 2 }
+        }
+
+        stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+          .with(query: hash_including("page" => "1"))
+          .to_return(status: 200, body: page1_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+          .with(query: hash_including("page" => "2"))
+          .to_return(status: 200, body: page2_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = client.list_dataset_runs(dataset_name: "my-dataset")
+        expect(result.map { |run| run["id"] }).to eq(%w[run-1 run-2])
+      end
+    end
+
+    context "with explicit page parameter" do
+      it "returns single page without auto-pagination" do
+        single_page_response = {
+          "data" => [{ "id" => "run-2", "name" => "baseline-b" }],
+          "meta" => { "totalPages" => 5 }
+        }
+
+        stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+          .with(query: hash_including("page" => "2", "limit" => "10"))
+          .to_return(status: 200, body: single_page_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = client.list_dataset_runs(dataset_name: "my-dataset", page: 2, limit: 10)
+        expect(result.size).to eq(1)
+        expect(result.first["id"]).to eq("run-2")
+      end
+    end
+  end
+
+  describe "#delete_dataset_run" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:dataset_name) { "evaluation suite/qa" }
+    let(:run_name) { "baseline v1/run-a" }
+
+    context "with successful response" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:delete, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_return(
+            status: 200,
+            body: { "deleted" => true }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "returns nil" do
+        result = client.delete_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        expect(result).to be_nil
+      end
+    end
+
+    context "when dataset run is missing" do
+      before do
+        encoded_dataset_name = URI.encode_uri_component(dataset_name)
+        encoded_run_name = URI.encode_uri_component(run_name)
+        stub_request(:delete, "#{base_url}/api/public/datasets/#{encoded_dataset_name}/runs/#{encoded_run_name}")
+          .to_return(status: 404, body: { message: "Not found" }.to_json)
+      end
+
+      it "raises NotFoundError" do
+        expect do
+          client.delete_dataset_run(dataset_name: dataset_name, run_name: run_name)
+        end.to raise_error(Langfuse::NotFoundError)
+      end
+    end
+  end
+
   describe "#run_experiment" do
     let(:client) { described_class.new(valid_config) }
     let(:base_url) { valid_config.base_url }
