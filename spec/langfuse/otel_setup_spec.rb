@@ -106,6 +106,65 @@ RSpec.describe Langfuse::OtelSetup do
         expect { tracer.in_span("test") { |span| } }.not_to raise_error
       end
     end
+
+    context "with sample_rate below 1.0" do
+      before do
+        config.sample_rate = 0.1
+      end
+
+      it "uses TraceIdRatioBased sampler" do
+        described_class.setup(config)
+
+        expect(described_class.tracer_provider.sampler).to be_a(OpenTelemetry::SDK::Trace::Samplers::TraceIdRatioBased)
+      end
+
+      it "makes deterministic decisions for the same trace id" do
+        described_class.setup(config)
+
+        sampler = described_class.tracer_provider.sampler
+        trace_id = ["aabbccddeeff00112233445566778899"].pack("H*")
+        decision_one = sampler.should_sample?(
+          trace_id: trace_id,
+          parent_context: nil,
+          links: [],
+          name: "score",
+          kind: OpenTelemetry::Trace::SpanKind::INTERNAL,
+          attributes: {}
+        ).sampled?
+        decision_two = sampler.should_sample?(
+          trace_id: trace_id,
+          parent_context: nil,
+          links: [],
+          name: "score",
+          kind: OpenTelemetry::Trace::SpanKind::INTERNAL,
+          attributes: {}
+        ).sampled?
+
+        expect(decision_one).to eq(decision_two)
+      end
+    end
+
+    context "with sample_rate at 1.0" do
+      before do
+        config.sample_rate = 1.0
+      end
+
+      it "uses always-on sampling behavior" do
+        described_class.setup(config)
+
+        sampler = described_class.tracer_provider.sampler
+        decision = sampler.should_sample?(
+          trace_id: ["00112233445566778899aabbccddeeff"].pack("H*"),
+          parent_context: nil,
+          links: [],
+          name: "score",
+          kind: OpenTelemetry::Trace::SpanKind::INTERNAL,
+          attributes: {}
+        )
+
+        expect(decision.sampled?).to be(true)
+      end
+    end
   end
 
   describe ".shutdown" do

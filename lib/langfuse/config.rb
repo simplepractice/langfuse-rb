@@ -18,6 +18,7 @@ module Langfuse
   #     c.secret_key = "sk_..."
   #   end
   #
+  # rubocop:disable Metrics/ClassLength
   class Config
     # @return [String, nil] Langfuse public API key
     attr_accessor :public_key
@@ -74,6 +75,9 @@ module Langfuse
     # @return [String, nil] Default release identifier applied to new traces/observations
     attr_accessor :release
 
+    # @return [Float] Trace sampling rate from 0.0 to 1.0
+    attr_reader :sample_rate
+
     # @return [String] Default Langfuse API base URL
     DEFAULT_BASE_URL = "https://cloud.langfuse.com"
 
@@ -110,6 +114,9 @@ module Langfuse
     # @return [Symbol] Default ActiveJob queue name
     DEFAULT_JOB_QUEUE = :default
 
+    # @return [Float] Default trace sampling rate (sample all traces)
+    DEFAULT_SAMPLE_RATE = 1.0
+
     # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
 
@@ -132,6 +139,7 @@ module Langfuse
     # @yield [config] Optional block for configuration
     # @yieldparam config [Config] The config instance
     # @return [Config] a new Config instance
+    # rubocop:disable Metrics/AbcSize
     def initialize
       @public_key = ENV.fetch("LANGFUSE_PUBLIC_KEY", nil)
       @secret_key = ENV.fetch("LANGFUSE_SECRET_KEY", nil)
@@ -150,10 +158,15 @@ module Langfuse
       @job_queue = DEFAULT_JOB_QUEUE
       @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
       @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
+      @sample_rate = DEFAULT_SAMPLE_RATE
       @logger = default_logger
+
+      env_sample_rate = env_value("LANGFUSE_SAMPLE_RATE")
+      self.sample_rate = env_sample_rate if env_sample_rate
 
       yield(self) if block_given?
     end
+    # rubocop:enable Metrics/AbcSize
 
     # Validate the configuration
     #
@@ -176,6 +189,7 @@ module Langfuse
       validate_swr_config!
 
       validate_cache_backend!
+      validate_sample_rate!
     end
     # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
@@ -194,6 +208,15 @@ module Langfuse
     #   config.normalized_stale_ttl # => 31536000000
     def normalized_stale_ttl
       cache_stale_ttl == :indefinite ? INDEFINITE_SECONDS : cache_stale_ttl
+    end
+
+    # Set trace sampling rate.
+    #
+    # @param value [Numeric, String] Sampling rate from 0.0 to 1.0
+    # @raise [ConfigurationError] if value is non-numeric or outside 0.0..1.0
+    # @return [Float]
+    def sample_rate=(value)
+      @sample_rate = coerce_sample_rate(value)
     end
 
     private
@@ -246,6 +269,12 @@ module Langfuse
       raise ConfigurationError, "cache_refresh_threads must be positive"
     end
 
+    def validate_sample_rate!
+      return if sample_rate.is_a?(Numeric) && sample_rate.between?(0.0, 1.0)
+
+      raise ConfigurationError, "sample_rate must be between 0.0 and 1.0"
+    end
+
     def detect_release_from_ci_env
       COMMON_RELEASE_ENV_KEYS.each do |key|
         value = env_value(key)
@@ -261,5 +290,22 @@ module Langfuse
 
       value
     end
+
+    def coerce_sample_rate(value)
+      numeric_value = if value.is_a?(Numeric)
+                        value.to_f
+                      elsif value.is_a?(String)
+                        Float(value)
+                      else
+                        raise ConfigurationError, "sample_rate must be numeric"
+                      end
+
+      return numeric_value if numeric_value.between?(0.0, 1.0)
+
+      raise ConfigurationError, "sample_rate must be between 0.0 and 1.0"
+    rescue ArgumentError, TypeError
+      raise ConfigurationError, "sample_rate must be numeric"
+    end
   end
+  # rubocop:enable Metrics/ClassLength
 end

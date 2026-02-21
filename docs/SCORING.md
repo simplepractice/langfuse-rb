@@ -358,6 +358,20 @@ Use before shutdown:
 Langfuse.flush_scores
 ```
 
+## Sampling Behavior
+
+Trace-linked scores follow the same sampler as traces.
+
+- If a trace is sampled out (`sample_rate < 1.0`), scores with `trace_id` are dropped.
+- Scores without `trace_id` (for example, session-only or dataset-run-only) are not sampled out.
+- Legacy/non-hex trace IDs are treated as in-sample for backwards compatibility.
+
+```ruby
+Langfuse.configure do |config|
+  config.sample_rate = 0.1
+end
+```
+
 ## Getting Trace/Observation IDs
 
 ### From Observation Object
