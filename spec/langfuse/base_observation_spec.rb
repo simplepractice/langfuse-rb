@@ -357,6 +357,33 @@ RSpec.describe Langfuse::BaseObservation do
       expect(events.length).to eq(1)
       expect(events.first.attributes).not_to have_key("langfuse.observation.input")
     end
+
+    it "applies configured mask to event input" do
+      Langfuse.configuration.mask = lambda do |data:|
+        next data unless data.is_a?(Hash)
+
+        data.transform_values { |_| "[MASKED]" }
+      end
+
+      observation.event(name: "cache-miss", input: { key: "user:123" })
+      events = otel_span.to_span_data.events
+
+      expect(JSON.parse(events.first.attributes["langfuse.observation.input"])).to eq({ "key" => "[MASKED]" })
+    end
+
+    it "falls back to full masking when event input mask raises" do
+      logger = instance_double(Logger, warn: nil)
+      Langfuse.configuration.logger = logger
+      Langfuse.configuration.mask = ->(_data:) { raise StandardError, "mask failed" }
+
+      observation.event(name: "cache-miss", input: { key: "user:123" })
+      events = otel_span.to_span_data.events
+
+      expect(events.length).to eq(1)
+      expect(events.first.attributes["langfuse.observation.input"])
+        .to eq('"<fully masked due to failed mask function>"')
+      expect(logger).to have_received(:warn).with(/mask function failed/)
+    end
   end
 
   describe "#current_span" do

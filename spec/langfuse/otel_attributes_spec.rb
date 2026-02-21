@@ -389,4 +389,62 @@ RSpec.describe Langfuse::OtelAttributes do
       end
     end
   end
+
+  describe "mask integration" do
+    let(:logger) { instance_double(Logger, warn: nil) }
+
+    before do
+      Langfuse.configuration.logger = logger
+    end
+
+    it "applies mask to trace input, output, and metadata" do
+      Langfuse.configuration.mask = lambda do |data:|
+        next data unless data.is_a?(Hash)
+
+        data.transform_values { |_| "[MASKED]" }
+      end
+
+      result = described_class.create_trace_attributes(
+        input: { query: "secret" },
+        output: { answer: "classified" },
+        metadata: { source: "api" }
+      )
+
+      expect(JSON.parse(result["langfuse.trace.input"])).to eq({ "query" => "[MASKED]" })
+      expect(JSON.parse(result["langfuse.trace.output"])).to eq({ "answer" => "[MASKED]" })
+      expect(result["langfuse.trace.metadata.source"]).to eq("[MASKED]")
+    end
+
+    it "applies mask to observation input, output, and metadata" do
+      Langfuse.configuration.mask = lambda do |data:|
+        next data unless data.is_a?(Hash)
+
+        data.transform_values { |_| "[MASKED]" }
+      end
+
+      result = described_class.create_observation_attributes(
+        "span",
+        input: { prompt: "secret" },
+        output: { completion: "secret-response" },
+        metadata: { pii: "email@example.com" }
+      )
+
+      expect(JSON.parse(result["langfuse.observation.input"])).to eq({ "prompt" => "[MASKED]" })
+      expect(JSON.parse(result["langfuse.observation.output"])).to eq({ "completion" => "[MASKED]" })
+      expect(result["langfuse.observation.metadata.pii"]).to eq("[MASKED]")
+    end
+
+    it "falls back to full masking when the mask callable raises" do
+      Langfuse.configuration.mask = ->(_data:) { raise StandardError, "mask failed" }
+
+      result = described_class.create_trace_attributes(
+        input: { query: "secret" },
+        metadata: { source: "api" }
+      )
+
+      expect(result["langfuse.trace.input"]).to eq('"<fully masked due to failed mask function>"')
+      expect(result["langfuse.trace.metadata"]).to eq("<fully masked due to failed mask function>")
+      expect(logger).to have_received(:warn).with(/mask function failed/).at_least(:once)
+    end
+  end
 end

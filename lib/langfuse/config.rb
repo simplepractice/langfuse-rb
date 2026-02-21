@@ -74,6 +74,10 @@ module Langfuse
     # @return [String, nil] Default release identifier applied to new traces/observations
     attr_accessor :release
 
+    # @return [#call, nil] Optional callable for redacting payloads before they are serialized.
+    #   The callable receives keyword argument `data:` and should return masked data.
+    attr_accessor :mask
+
     # @return [String] Default Langfuse API base URL
     DEFAULT_BASE_URL = "https://cloud.langfuse.com"
 
@@ -176,6 +180,7 @@ module Langfuse
       validate_swr_config!
 
       validate_cache_backend!
+      validate_mask!
     end
     # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
@@ -244,6 +249,12 @@ module Langfuse
       return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
 
       raise ConfigurationError, "cache_refresh_threads must be positive"
+    end
+
+    def validate_mask!
+      return if mask.nil? || mask.respond_to?(:call)
+
+      raise ConfigurationError, "mask must be callable"
     end
 
     def detect_release_from_ci_env

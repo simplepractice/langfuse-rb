@@ -196,8 +196,9 @@ module Langfuse
     # @param level [String] Log level (debug, default, warning, error)
     # @return [void]
     def event(name:, input: nil, level: "default")
+      masked_input = OtelAttributes.apply_mask(input)
       attributes = {
-        "langfuse.observation.input" => input&.to_json,
+        "langfuse.observation.input" => OtelAttributes.serialize(masked_input),
         "langfuse.observation.level" => level
       }.compact
 
