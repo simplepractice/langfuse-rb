@@ -180,9 +180,11 @@ Langfuse.configure do |config|
   config.cache_backend = :memory  # Works with both :memory and :rails
   config.cache_ttl = 300  # Fresh for 5 minutes
   config.cache_stale_while_revalidate = true  # Enable SWR
-  # cache_stale_ttl automatically set to 300 (same as cache_ttl)
+  config.cache_stale_ttl = 300  # Serve stale for up to 5 minutes
 end
 ```
+
+**Important:** SWR is only active when `cache_stale_ttl` is a positive value.
 
 #### Custom Stale TTL
 
@@ -236,6 +238,7 @@ Langfuse.configure do |config|
   config.cache_backend = :memory
   config.cache_ttl = 60
   config.cache_stale_while_revalidate = true
+  config.cache_stale_ttl = 60
   config.cache_refresh_threads = 5  # Background refresh threads
 end
 
