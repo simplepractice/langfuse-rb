@@ -518,10 +518,10 @@ RSpec.describe Langfuse::ApiClient do
 
           expect(Langfuse::PromptCache).to receive(:build_key)
             .with("greeting", version: nil, label: nil)
-            .and_return("greeting:latest")
+            .and_return("greeting:production")
 
           expect(swr_cache).to receive(:fetch_with_stale_while_revalidate)
-            .with("greeting:latest")
+            .with("greeting:production")
             .and_yield
             .and_return(prompt_data)
 
@@ -624,10 +624,10 @@ RSpec.describe Langfuse::ApiClient do
 
           expect(Langfuse::PromptCache).to receive(:build_key)
             .with("greeting", version: nil, label: nil)
-            .and_return("greeting:latest")
+            .and_return("greeting:production")
 
           expect(simple_cache).to receive(:get)
-            .with("greeting:latest")
+            .with("greeting:production")
             .and_return(nil)
 
           expect(client).to receive(:fetch_prompt_from_api)
@@ -635,7 +635,7 @@ RSpec.describe Langfuse::ApiClient do
             .and_return(prompt_data)
 
           expect(simple_cache).to receive(:set)
-            .with("greeting:latest", prompt_data)
+            .with("greeting:production", prompt_data)
 
           result = client.get_prompt("greeting")
           expect(result).to eq(prompt_data)
@@ -661,10 +661,10 @@ RSpec.describe Langfuse::ApiClient do
 
           expect(Langfuse::PromptCache).to receive(:build_key)
             .with("greeting", version: nil, label: nil)
-            .and_return("greeting:latest")
+            .and_return("greeting:production")
 
           expect(simple_cache).to receive(:get)
-            .with("greeting:latest")
+            .with("greeting:production")
             .and_return(prompt_data)
 
           expect(client).not_to receive(:fetch_prompt_from_api)
