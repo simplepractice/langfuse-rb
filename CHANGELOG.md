@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Prompt cache key generation now defaults unlabeled/unversioned prompt fetches to production, matching JS/Python client semantics.
+
 ## [0.5.0] - 2026-02-09
 
 ### Added
