@@ -164,6 +164,7 @@ module Langfuse
       key = name.to_s
       key += ":v#{version}" if version
       key += ":#{label}" if label
+      key += ":production" if version.nil? && label.nil?
       key
     end
 

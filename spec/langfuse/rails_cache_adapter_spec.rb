@@ -291,7 +291,7 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
     it "builds key with name only" do
       key = described_class.build_key("greeting")
-      expect(key).to eq("greeting")
+      expect(key).to eq("greeting:production")
     end
 
     it "builds key with name and version" do

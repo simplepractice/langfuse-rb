@@ -321,7 +321,7 @@ RSpec.describe Langfuse::PromptCache do
   describe ".build_key" do
     it "builds key from name only" do
       key = described_class.build_key("greeting")
-      expect(key).to eq("greeting")
+      expect(key).to eq("greeting:production")
     end
 
     it "builds key with version" do
@@ -341,7 +341,7 @@ RSpec.describe Langfuse::PromptCache do
 
     it "handles string names" do
       key = described_class.build_key(:greeting)
-      expect(key).to eq("greeting")
+      expect(key).to eq("greeting:production")
     end
   end
 
