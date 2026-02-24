@@ -348,8 +348,10 @@ module Langfuse
         otel_tracer: otel_tracer
       )
 
+      normalized_attrs = attrs.to_h
+
       # Wrap in appropriate class
-      observation = wrap_otel_span(otel_span, type_str, otel_tracer, attributes: attrs)
+      observation = wrap_otel_span(otel_span, type_str, otel_tracer, attributes: normalized_attrs)
 
       # Events auto-end immediately when created
       observation.end if type_str == OBSERVATION_TYPES[:event]

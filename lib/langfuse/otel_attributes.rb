@@ -59,6 +59,7 @@ module Langfuse
     RELEASE = "langfuse.release"
     ENVIRONMENT = "langfuse.environment"
     MASK_FAILURE_PLACEHOLDER = "<fully masked due to failed mask function>"
+    MASKABLE_KEYS = %i[input output metadata].freeze
 
     # Creates OpenTelemetry attributes from Langfuse trace attributes
     #
@@ -80,7 +81,7 @@ module Langfuse
     #
     def self.create_trace_attributes(attrs)
       # Convert to hash if it's a TraceAttributes object
-      attrs = attrs.to_h
+      attrs = mask_fields(attrs.to_h)
       get_value = ->(key) { get_hash_value(attrs, key) }
 
       attributes = {
@@ -89,12 +90,12 @@ module Langfuse
         TRACE_SESSION_ID => get_value.call(:session_id),
         VERSION => get_value.call(:version),
         RELEASE => get_value.call(:release),
-        TRACE_INPUT => serialize_masked(get_value, :input),
-        TRACE_OUTPUT => serialize_masked(get_value, :output),
+        TRACE_INPUT => serialize(get_value.call(:input)),
+        TRACE_OUTPUT => serialize(get_value.call(:output)),
         TRACE_TAGS => serialize(get_value.call(:tags)),
         ENVIRONMENT => get_value.call(:environment),
         TRACE_PUBLIC => get_value.call(:public),
-        **flatten_masked_metadata(get_value, :metadata, TRACE_METADATA)
+        **flatten_metadata(get_value.call(:metadata), TRACE_METADATA)
       }
 
       # Remove nil values
@@ -119,7 +120,7 @@ module Langfuse
     #   otel_attrs = Langfuse::OtelAttributes.create_observation_attributes("generation", attrs)
     #
     def self.create_observation_attributes(type, attrs)
-      attrs = attrs.to_h
+      attrs = mask_fields(attrs.to_h)
       get_value = ->(key) { get_hash_value(attrs, key) }
 
       otel_attributes = build_observation_base_attributes(type, get_value)
@@ -127,6 +128,21 @@ module Langfuse
 
       # Remove nil values
       otel_attributes.compact
+    end
+
+    # Creates OpenTelemetry attributes for span events.
+    #
+    # @param attrs [Hash] Event attributes
+    # @return [Hash] Event attributes hash with non-nil values
+    # @raise [StandardError] Never raises; mask failures are logged and replaced with a placeholder
+    def self.create_event_attributes(attrs)
+      attrs = mask_fields(attrs.to_h)
+      get_value = ->(key) { get_hash_value(attrs, key) }
+
+      {
+        OBSERVATION_INPUT => serialize(get_value.call(:input)),
+        OBSERVATION_LEVEL => get_value.call(:level)
+      }.compact
     end
 
     # Safely serializes an object to JSON string
@@ -237,15 +253,15 @@ module Langfuse
         OBSERVATION_LEVEL => get_value.call(:level),
         OBSERVATION_STATUS_MESSAGE => get_value.call(:status_message),
         VERSION => get_value.call(:version),
-        OBSERVATION_INPUT => serialize_masked(get_value, :input),
-        OBSERVATION_OUTPUT => serialize_masked(get_value, :output),
+        OBSERVATION_INPUT => serialize(get_value.call(:input)),
+        OBSERVATION_OUTPUT => serialize(get_value.call(:output)),
         OBSERVATION_MODEL => get_value.call(:model),
         OBSERVATION_USAGE_DETAILS => serialize(get_value.call(:usage_details)),
         OBSERVATION_COST_DETAILS => serialize(get_value.call(:cost_details)),
         OBSERVATION_COMPLETION_START_TIME => serialize(get_value.call(:completion_start_time)),
         OBSERVATION_MODEL_PARAMETERS => serialize(get_value.call(:model_parameters)),
         ENVIRONMENT => get_value.call(:environment),
-        **flatten_masked_metadata(get_value, :metadata, OBSERVATION_METADATA)
+        **flatten_metadata(get_value.call(:metadata), OBSERVATION_METADATA)
       }
     end
 
@@ -272,9 +288,32 @@ module Langfuse
       end
     end
 
-    def self.apply_mask(data)
-      mask = mask_callable
-      return data if data.nil? || mask.nil?
+    def self.log_mask_failure(error)
+      logger = Langfuse.configuration.logger
+      logger.warn("Langfuse: mask function failed (#{error.class}); using placeholder")
+    rescue StandardError
+      nil
+    end
+
+    def self.mask_fields(attrs)
+      mask = Langfuse.configuration.mask
+      return attrs unless mask
+
+      attrs.each_with_object(attrs.dup) do |(key, value), masked|
+        next unless maskable_key?(key)
+
+        masked[key] = safe_mask(mask, value)
+      end
+    end
+
+    def self.maskable_key?(key)
+      MASKABLE_KEYS.include?(key.to_sym)
+    rescue StandardError
+      false
+    end
+
+    def self.safe_mask(mask, data)
+      return data if data.nil?
 
       mask.call(data: data)
     rescue StandardError => e
@@ -282,27 +321,7 @@ module Langfuse
       MASK_FAILURE_PLACEHOLDER
     end
 
-    def self.mask_callable
-      config = Langfuse.configuration
-      return nil unless config.respond_to?(:mask)
-
-      config.mask
-    end
-
-    def self.log_mask_failure(error)
-      logger = Langfuse.configuration.logger
-      logger.warn("Langfuse: mask function failed (#{error.class}): #{error.message}")
-    rescue StandardError
-      nil
-    end
-
-    def self.serialize_masked(get_value, key)
-      serialize(apply_mask(get_value.call(key)))
-    end
-
-    def self.flatten_masked_metadata(get_value, key, prefix)
-      flatten_metadata(apply_mask(get_value.call(key)), prefix)
-    end
+    private_class_method :mask_fields, :maskable_key?, :safe_mask, :log_mask_failure
   end
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/ModuleLength
 end

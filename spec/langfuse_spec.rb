@@ -239,6 +239,15 @@ RSpec.describe Langfuse do
       expect(observation.otel_span.recording?).to be(false)
     end
 
+    it "sets observation type when attrs are nil for auto-ended events" do
+      observation = described_class.start_observation("test-event-nil", nil, as_type: :event)
+      span_data = observation.otel_span.to_span_data
+
+      expect(observation).to be_a(Langfuse::Event)
+      expect(span_data.attributes["langfuse.observation.type"]).to eq("event")
+      expect(observation.otel_span.recording?).to be(false)
+    end
+
     it "creates a root agent observation" do
       observation = described_class.start_observation("test-agent", { input: { task: "test" } }, as_type: :agent)
       expect(observation).to be_a(Langfuse::Agent)

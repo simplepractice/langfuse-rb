@@ -415,6 +415,24 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(result["langfuse.trace.metadata.source"]).to eq("[MASKED]")
     end
 
+    it "applies mask to trace maskable fields when hash keys are strings" do
+      Langfuse.configuration.mask = lambda do |data:|
+        next data unless data.is_a?(Hash)
+
+        data.transform_values { |_| "[MASKED]" }
+      end
+
+      result = described_class.create_trace_attributes(
+        "input" => { "query" => "secret" },
+        "output" => { "answer" => "classified" },
+        "metadata" => { "source" => "api" }
+      )
+
+      expect(JSON.parse(result["langfuse.trace.input"])).to eq({ "query" => "[MASKED]" })
+      expect(JSON.parse(result["langfuse.trace.output"])).to eq({ "answer" => "[MASKED]" })
+      expect(result["langfuse.trace.metadata.source"]).to eq("[MASKED]")
+    end
+
     it "applies mask to observation input, output, and metadata" do
       Langfuse.configuration.mask = lambda do |data:|
         next data unless data.is_a?(Hash)
@@ -434,6 +452,19 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(result["langfuse.observation.metadata.pii"]).to eq("[MASKED]")
     end
 
+    it "applies mask to event input" do
+      Langfuse.configuration.mask = lambda do |data:|
+        next data unless data.is_a?(Hash)
+
+        data.transform_values { |_| "[MASKED]" }
+      end
+
+      result = described_class.create_event_attributes(input: { prompt: "secret" }, level: "default")
+
+      expect(JSON.parse(result["langfuse.observation.input"])).to eq({ "prompt" => "[MASKED]" })
+      expect(result["langfuse.observation.level"]).to eq("default")
+    end
+
     it "falls back to full masking when the mask callable raises" do
       Langfuse.configuration.mask = ->(_data:) { raise StandardError, "mask failed" }
 
@@ -445,6 +476,36 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(result["langfuse.trace.input"]).to eq('"<fully masked due to failed mask function>"')
       expect(result["langfuse.trace.metadata"]).to eq("<fully masked due to failed mask function>")
       expect(logger).to have_received(:warn).with(/mask function failed/).at_least(:once)
+    end
+
+    it "falls back to full masking when event mask callable raises" do
+      Langfuse.configuration.mask = ->(_data:) { raise StandardError, "mask failed" }
+
+      result = described_class.create_event_attributes(input: { prompt: "secret" }, level: "default")
+
+      expect(result["langfuse.observation.input"]).to eq('"<fully masked due to failed mask function>"')
+      expect(result["langfuse.observation.level"]).to eq("default")
+      expect(logger).to have_received(:warn).with(/mask function failed/).at_least(:once)
+    end
+
+    it "does not include payload data in mask failure logs" do
+      warnings = []
+      allow(logger).to receive(:warn) { |message| warnings << message }
+      Langfuse.configuration.mask = lambda do |data:|
+        raise StandardError, "payload leak: #{data.inspect}"
+      end
+
+      described_class.create_trace_attributes(
+        input: { secret: "do-not-log" },
+        metadata: { source: "api" }
+      )
+
+      expect(warnings).not_to be_empty
+      warnings.each do |warning|
+        expect(warning).to include("Langfuse: mask function failed (StandardError)")
+        expect(warning).not_to include("do-not-log")
+        expect(warning).not_to include("payload leak")
+      end
     end
   end
 end
