@@ -114,9 +114,8 @@ RSpec.describe Langfuse::SpanProcessor do
 
       attrs = span.attributes
       tags_value = attrs["langfuse.trace.tags"]
-      expect(tags_value).to be_a(String) # JSON serialized
-      tags = JSON.parse(tags_value)
-      expect(tags).to contain_exactly("production", "api-v2")
+      expect(tags_value).to be_an(Array)
+      expect(tags_value).to contain_exactly("production", "api-v2")
 
       span.finish
     end

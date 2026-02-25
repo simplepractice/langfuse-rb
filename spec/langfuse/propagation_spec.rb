@@ -94,23 +94,22 @@ RSpec.describe Langfuse::Propagation do
           described_class.propagate_attributes(tags: %w[production api-v2]) do
             attrs = span.otel_span.attributes
             tags_value = attrs["langfuse.trace.tags"]
-            expect(tags_value).to be_a(String) # JSON serialized
-            tags = JSON.parse(tags_value)
-            expect(tags).to contain_exactly("production", "api-v2")
+            expect(tags_value).to be_an(Array)
+            expect(tags_value).to contain_exactly("production", "api-v2")
           end
         end
       end
 
       it "merges tags from nested contexts" do
-        described_class.propagate_attributes(tags: %w[outer shared]) do
+          described_class.propagate_attributes(tags: %w[outer shared]) do
           described_class.propagate_attributes(tags: %w[inner shared]) do
             span = Langfuse.observe("test")
             attrs = span.otel_span.attributes
             tags_value = attrs["langfuse.trace.tags"]
-            tags = JSON.parse(tags_value)
+            expect(tags_value).to be_an(Array)
             # Should contain all tags, with duplicates removed
-            expect(tags).to include("outer", "inner", "shared")
-            expect(tags.count("shared")).to eq(1)
+            expect(tags_value).to include("outer", "inner", "shared")
+            expect(tags_value.count("shared")).to eq(1)
             span.end
           end
         end
@@ -238,7 +237,8 @@ RSpec.describe Langfuse::Propagation do
             expect(attrs["user.id"]).to eq("user_123")
             expect(attrs["session.id"]).to eq("session_abc")
             expect(attrs["langfuse.version"]).to eq("v1.2.3")
-            tags = JSON.parse(attrs["langfuse.trace.tags"])
+            tags = attrs["langfuse.trace.tags"]
+            expect(tags).to be_an(Array)
             expect(tags).to include("production")
             expect(attrs["langfuse.trace.metadata.environment"]).to eq("prod")
           end
@@ -339,8 +339,8 @@ RSpec.describe Langfuse::Propagation do
             attrs = span.otel_span.attributes
             tags_value = attrs["langfuse.trace.tags"]
             if tags_value
-              tags = JSON.parse(tags_value)
-              expect(tags).to contain_exactly("valid", "also_valid")
+              expect(tags_value).to be_an(Array)
+              expect(tags_value).to contain_exactly("valid", "also_valid")
             end
           end
         end

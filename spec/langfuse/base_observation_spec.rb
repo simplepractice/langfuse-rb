@@ -128,7 +128,8 @@ RSpec.describe Langfuse::BaseObservation do
       span_data = otel_span.to_span_data
       expect(span_data.attributes["user.id"]).to eq("user-123")
       expect(span_data.attributes["session.id"]).to eq("session-456")
-      tags = JSON.parse(span_data.attributes["langfuse.trace.tags"])
+      tags = span_data.attributes["langfuse.trace.tags"]
+      expect(tags).to be_an(Array)
       expect(tags).to eq(%w[production api-v2])
     end
 

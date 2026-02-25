@@ -82,6 +82,7 @@ module Langfuse
       attrs = attrs.to_h
       get_value = ->(key) { get_hash_value(attrs, key) }
 
+      tags_val = get_value.call(:tags)
       attributes = {
         TRACE_NAME => get_value.call(:name),
         TRACE_USER_ID => get_value.call(:user_id),
@@ -90,7 +91,7 @@ module Langfuse
         RELEASE => get_value.call(:release),
         TRACE_INPUT => serialize(get_value.call(:input)),
         TRACE_OUTPUT => serialize(get_value.call(:output)),
-        TRACE_TAGS => serialize(get_value.call(:tags)),
+        TRACE_TAGS => (tags_val if tags_val.is_a?(Array) && tags_val.any?),
         ENVIRONMENT => get_value.call(:environment),
         TRACE_PUBLIC => get_value.call(:public),
         **flatten_metadata(get_value.call(:metadata), TRACE_METADATA)
