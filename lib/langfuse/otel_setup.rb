@@ -71,7 +71,11 @@ module Langfuse
 
         # Configure W3C TraceContext propagator if not already set
         if OpenTelemetry.propagation.is_a?(OpenTelemetry::Context::Propagation::NoopTextMapPropagator)
-          OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
+          # OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
+          OpenTelemetry.propagation = OpenTelemetry::Context::Propagation::CompositeTextMapPropagator.new([
+            OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new,
+            OpenTelemetry::Baggage::Propagation::TextMapPropagator.new
+          ])
           config.logger.debug("Langfuse: Configured W3C TraceContext propagator")
         else
           config.logger.debug("Langfuse: Using existing propagator: #{OpenTelemetry.propagation.class}")
