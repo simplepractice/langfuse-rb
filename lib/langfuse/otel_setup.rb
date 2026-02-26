@@ -5,6 +5,9 @@ require "opentelemetry/exporter/otlp"
 require "opentelemetry/trace/propagation/trace_context"
 require "base64"
 
+require 'opentelemetry/propagation/trace_context'
+require 'opentelemetry/baggage/propagation'
+
 module Langfuse
   # OpenTelemetry initialization and setup
   #
