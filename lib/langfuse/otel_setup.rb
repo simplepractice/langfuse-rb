@@ -3,10 +3,8 @@
 require "opentelemetry/sdk"
 require "opentelemetry/exporter/otlp"
 require "opentelemetry/trace/propagation/trace_context"
+require "opentelemetry/baggage/propagation"
 require "base64"
-
-require 'opentelemetry/propagation/trace_context'
-require 'opentelemetry/baggage/propagation'
 
 module Langfuse
   # OpenTelemetry initialization and setup
@@ -72,17 +70,14 @@ module Langfuse
         # Set as global tracer provider
         OpenTelemetry.tracer_provider = @tracer_provider
 
-        # Configure W3C TraceContext propagator if not already set
-        if OpenTelemetry.propagation.is_a?(OpenTelemetry::Context::Propagation::NoopTextMapPropagator)
-          # OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
-          OpenTelemetry.propagation = OpenTelemetry::Context::Propagation::CompositeTextMapPropagator.new([
-            OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new,
-            OpenTelemetry::Baggage::Propagation::TextMapPropagator.new
-          ])
-          config.logger.debug("Langfuse: Configured W3C TraceContext propagator")
-        else
-          config.logger.debug("Langfuse: Using existing propagator: #{OpenTelemetry.propagation.class}")
-        end
+        # Configure composite propagator (TraceContext + Baggage) for cross-service propagation
+        trace_context = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
+        baggage = OpenTelemetry::Baggage::Propagation::TextMapPropagator.new
+
+        OpenTelemetry.propagation = OpenTelemetry::Context::Propagation::CompositeTextMapPropagator.compose(
+          injectors: [trace_context, baggage],
+          extractors: [trace_context, baggage]
+        )
 
         mode = config.tracing_async ? "async" : "sync"
         config.logger.info("Langfuse tracing initialized with OpenTelemetry (#{mode} mode)")
