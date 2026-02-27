@@ -82,7 +82,6 @@ module Langfuse
       attrs = attrs.to_h
       get_value = ->(key) { get_hash_value(attrs, key) }
 
-      tags_val = get_value.call(:tags)
       attributes = {
         TRACE_NAME => get_value.call(:name),
         TRACE_USER_ID => get_value.call(:user_id),
@@ -91,7 +90,7 @@ module Langfuse
         RELEASE => get_value.call(:release),
         TRACE_INPUT => serialize(get_value.call(:input)),
         TRACE_OUTPUT => serialize(get_value.call(:output)),
-        TRACE_TAGS => (tags_val if tags_val.is_a?(Array) && tags_val.any?),
+        TRACE_TAGS => valid_tags(get_value.call(:tags)),
         ENVIRONMENT => get_value.call(:environment),
         TRACE_PUBLIC => get_value.call(:public),
         **flatten_metadata(get_value.call(:metadata), TRACE_METADATA)
@@ -127,6 +126,22 @@ module Langfuse
 
       # Remove nil values
       otel_attributes.compact
+    end
+
+    # Returns tags array if valid (non-empty array), nil otherwise
+    #
+    # @param value [Array, Object, nil] Value to validate as tags
+    # @return [Array, nil] The tags array if valid, nil otherwise
+    #
+    # @example
+    #   valid_tags(["tag1", "tag2"]) # => ["tag1", "tag2"]
+    #   valid_tags([]) # => nil
+    #   valid_tags("not an array") # => nil
+    #   valid_tags(nil) # => nil
+    #
+    # @api private
+    def self.valid_tags(value)
+      value if value.is_a?(Array) && value.any?
     end
 
     # Safely serializes an object to JSON string
