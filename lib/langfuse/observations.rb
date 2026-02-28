@@ -352,37 +352,24 @@ module Langfuse
     # @param value [String] Model name (e.g., "gpt-4", "claude-3-opus")
     # @return [void]
     def model=(value)
-      return unless @otel_span.recording?
-
-      @otel_span.set_attribute("langfuse.observation.model", value.to_s)
+      update_observation_attributes(model: value)
     end
 
     # @param value [Hash] Model parameters (temperature, max_tokens, etc.)
     # @return [void]
     def model_parameters=(value)
-      return unless @otel_span.recording?
-
-      # Convert to Langfuse API format (camelCase keys)
-      params_hash = {}
-      value.each do |k, v|
-        key_str = k.to_s
-        # Convert snake_case to camelCase
-        camel_key = key_str.gsub(/_([a-z])/) { Regexp.last_match(1).upcase }
-        params_hash[camel_key] = v
-      end
-      params_json = params_hash.to_json
-      @otel_span.set_attribute("langfuse.observation.modelParameters", params_json)
+      update_observation_attributes(model_parameters: value)
     end
 
     private
 
     def warn_usage_deprecation
-      return if defined?(@usage_deprecation_logged) && @usage_deprecation_logged
+      return if @usage_deprecation_logged
 
+      @usage_deprecation_logged = true
       Langfuse.configuration.logger&.warn(
         "Langfuse::Generation#usage= is deprecated; use #usage_details= instead."
       )
-      @usage_deprecation_logged = true
     end
   end
 

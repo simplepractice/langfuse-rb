@@ -477,17 +477,17 @@ RSpec.describe Langfuse::BaseObservation do
     it "sets model via assignment" do
       generation.model = "gpt-4"
       span_data = generation.otel_span.to_span_data
-      expect(span_data.attributes["langfuse.observation.model"]).to eq("gpt-4")
+      expect(span_data.attributes["langfuse.observation.model.name"]).to eq("gpt-4")
     end
 
     it "sets model_parameters via assignment" do
       generation.model_parameters = { temperature: 0.7, max_tokens: 100 }
       span_data = generation.otel_span.to_span_data
-      params_attr_value = span_data.attributes["langfuse.observation.modelParameters"]
+      params_attr_value = span_data.attributes["langfuse.observation.model.parameters"]
       expect(params_attr_value).not_to be_nil
       params_attr = JSON.parse(params_attr_value)
       expect(params_attr["temperature"]).to eq(0.7)
-      expect(params_attr["maxTokens"]).to eq(100)
+      expect(params_attr["max_tokens"]).to eq(100)
     end
 
     it "returns self from update" do
