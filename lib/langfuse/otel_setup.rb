@@ -23,15 +23,11 @@ module Langfuse
       # @return [void]
       # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       def setup(config)
-        # Create OTLP exporter configured for Langfuse.
-        # Use compression: "none" to avoid "Failed to decompress request body" from some
-        # Langfuse deployments; when the server returns 4xx with JSON, the Ruby OTLP gem
-        # tries to decode the body as protobuf rpc.Status and raises the misleading
-        # "unexpected error decoding rpc.Status" / "Unable to export N spans" errors.
+        # Create OTLP exporter configured for Langfuse
         exporter = OpenTelemetry::Exporter::OTLP::Exporter.new(
           endpoint: "#{config.base_url}/api/public/otel/v1/traces",
           headers: build_headers(config.public_key, config.secret_key),
-          compression: "none"
+          compression: "gzip"
         )
 
         # Create processor based on async configuration

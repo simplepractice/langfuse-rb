@@ -176,7 +176,7 @@ RSpec.describe Langfuse::OtelAttributes do
         "langfuse.release" => "v1.0.0",
         "langfuse.trace.input" => '{"query":"test"}',
         "langfuse.trace.output" => '{"result":"success"}',
-        "langfuse.trace.tags" => %w[checkout payment],
+        "langfuse.trace.tags" => ["checkout", "payment"],
         "langfuse.trace.public" => false,
         "langfuse.environment" => "production"
       )

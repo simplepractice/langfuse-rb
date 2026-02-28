@@ -172,7 +172,7 @@ module Langfuse
             propagated_attributes[metadata_key] = v.to_s
           end
         elsif key == "tags" && value.is_a?(Array)
-          # Handle tags - pass array for OTLP (Langfuse expects array, not JSON string)
+          # Handle tags - pass array for OTLP (Langfuse expects array)
           propagated_attributes[span_key] = value
         else
           propagated_attributes[span_key] = value.to_s
@@ -248,7 +248,7 @@ module Langfuse
             span.set_attribute(metadata_key, v.to_s)
           end
         elsif key == "tags" && value.is_a?(Array)
-          # Handle tags - set as array for OTLP (Langfuse expects array, not JSON string)
+          # Handle tags - set as array for OTLP (Langfuse expects array)
           span.set_attribute(span_key, value) unless value.empty?
         else
           span.set_attribute(span_key, value.to_s)
