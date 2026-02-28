@@ -299,17 +299,17 @@ module Langfuse
       mask = Langfuse.configuration.mask
       return attrs unless mask
 
-      attrs.each_with_object(attrs.dup) do |(key, value), masked|
-        next unless maskable_key?(key)
-
-        masked[key] = safe_mask(mask, value)
+      attrs.dup.tap do |masked|
+        MASKABLE_KEYS.each do |key|
+          sym_key = key.to_sym
+          str_key = key.to_s
+          if masked.key?(sym_key)
+            masked[sym_key] = safe_mask(mask, masked[sym_key])
+          elsif masked.key?(str_key)
+            masked[str_key] = safe_mask(mask, masked[str_key])
+          end
+        end
       end
-    end
-
-    def self.maskable_key?(key)
-      MASKABLE_KEYS.include?(key.to_sym)
-    rescue StandardError
-      false
     end
 
     def self.safe_mask(mask, data)
@@ -321,7 +321,7 @@ module Langfuse
       MASK_FAILURE_PLACEHOLDER
     end
 
-    private_class_method :mask_fields, :maskable_key?, :safe_mask, :log_mask_failure
+    private_class_method :mask_fields, :safe_mask, :log_mask_failure
   end
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/ModuleLength
 end
