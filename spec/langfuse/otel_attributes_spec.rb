@@ -433,6 +433,32 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(result["langfuse.trace.metadata.source"]).to eq("[MASKED]")
     end
 
+    it "masks both symbol and string variants when both keys exist" do
+      Langfuse.configuration.mask = lambda do |data:|
+        next data unless data.is_a?(Hash)
+
+        data.transform_values { |_| "[MASKED]" }
+      end
+
+      attrs = {
+        input: { query: "secret-symbol" },
+        "input" => { "query" => "secret-string" },
+        output: { answer: "classified-symbol" },
+        "output" => { "answer" => "classified-string" },
+        metadata: { source: "api-symbol" },
+        "metadata" => { "source" => "api-string" }
+      }
+
+      masked = described_class.send(:mask_fields, attrs)
+
+      expect(masked[:input]).to eq({ query: "[MASKED]" })
+      expect(masked["input"]).to eq({ "query" => "[MASKED]" })
+      expect(masked[:output]).to eq({ answer: "[MASKED]" })
+      expect(masked["output"]).to eq({ "answer" => "[MASKED]" })
+      expect(masked[:metadata]).to eq({ source: "[MASKED]" })
+      expect(masked["metadata"]).to eq({ "source" => "[MASKED]" })
+    end
+
     it "applies mask to observation input, output, and metadata" do
       Langfuse.configuration.mask = lambda do |data:|
         next data unless data.is_a?(Hash)

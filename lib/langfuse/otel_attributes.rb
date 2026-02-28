@@ -303,11 +303,8 @@ module Langfuse
         MASKABLE_KEYS.each do |key|
           sym_key = key.to_sym
           str_key = key.to_s
-          if masked.key?(sym_key)
-            masked[sym_key] = safe_mask(mask, masked[sym_key])
-          elsif masked.key?(str_key)
-            masked[str_key] = safe_mask(mask, masked[str_key])
-          end
+          masked[sym_key] = safe_mask(mask, masked[sym_key]) if masked.key?(sym_key)
+          masked[str_key] = safe_mask(mask, masked[str_key]) if masked.key?(str_key)
         end
       end
     end
