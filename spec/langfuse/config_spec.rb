@@ -13,6 +13,7 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_stale_while_revalidate).to be false
       expect(config.cache_stale_ttl).to eq(0) # Defaults to 0 (SWR disabled)
       expect(config.cache_refresh_threads).to eq(5)
+      expect(config.mask).to be_nil
     end
 
     it "reads from environment variables" do
@@ -355,6 +356,21 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.not_to raise_error
       end
     end
+
+    context "when mask is invalid" do
+      it "raises ConfigurationError for non-callable values" do
+        config.mask = "redact"
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "mask must be callable"
+        )
+      end
+
+      it "allows callable values" do
+        config.mask = ->(data:) { data }
+        expect { config.validate! }.not_to raise_error
+      end
+    end
   end
 
   describe "attribute setters" do
@@ -429,6 +445,12 @@ RSpec.describe Langfuse::Config do
     it "allows setting release" do
       config.release = "release-abc"
       expect(config.release).to eq("release-abc")
+    end
+
+    it "allows setting mask" do
+      callable = ->(data:) { data }
+      config.mask = callable
+      expect(config.mask).to eq(callable)
     end
   end
 

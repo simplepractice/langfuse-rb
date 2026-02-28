@@ -348,15 +348,8 @@ module Langfuse
         otel_tracer: otel_tracer
       )
 
-      # Serialize attributes
-      # Only set attributes if span is still recording (should always be true here, but guard for safety)
-      if otel_span.recording?
-        otel_attrs = OtelAttributes.create_observation_attributes(type_str, attrs.to_h)
-        otel_attrs.each { |key, value| otel_span.set_attribute(key, value) }
-      end
-
       # Wrap in appropriate class
-      observation = wrap_otel_span(otel_span, type_str, otel_tracer, attributes: attrs)
+      observation = wrap_otel_span(otel_span, type_str, otel_tracer, attributes: attrs.to_h)
 
       # Events auto-end immediately when created
       observation.end if type_str == OBSERVATION_TYPES[:event]
