@@ -59,7 +59,7 @@ module Langfuse
     RELEASE = "langfuse.release"
     ENVIRONMENT = "langfuse.environment"
     MASK_FAILURE_PLACEHOLDER = "<fully masked due to failed mask function>"
-    MASKABLE_KEYS = %i[input output metadata].freeze
+    MASKABLE_KEYS = [[:input, "input"], [:output, "output"], [:metadata, "metadata"]].freeze
 
     # Creates OpenTelemetry attributes from Langfuse trace attributes
     #
@@ -80,9 +80,7 @@ module Langfuse
     #   otel_attrs = Langfuse::OtelAttributes.create_trace_attributes(attrs)
     #
     def self.create_trace_attributes(attrs)
-      # Convert to hash if it's a TraceAttributes object
-      attrs = mask_fields(attrs.to_h)
-      get_value = ->(key) { get_hash_value(attrs, key) }
+      _attrs, get_value = prepare_attrs(attrs)
 
       attributes = {
         TRACE_NAME => get_value.call(:name),
@@ -120,8 +118,7 @@ module Langfuse
     #   otel_attrs = Langfuse::OtelAttributes.create_observation_attributes("generation", attrs)
     #
     def self.create_observation_attributes(type, attrs)
-      attrs = mask_fields(attrs.to_h)
-      get_value = ->(key) { get_hash_value(attrs, key) }
+      _attrs, get_value = prepare_attrs(attrs)
 
       otel_attributes = build_observation_base_attributes(type, get_value)
       add_prompt_attributes(otel_attributes, get_value.call(:prompt))
@@ -136,8 +133,7 @@ module Langfuse
     # @return [Hash] Event attributes hash with non-nil values
     # @raise [StandardError] Never raises; mask failures are logged and replaced with a placeholder
     def self.create_event_attributes(attrs)
-      attrs = mask_fields(attrs.to_h)
-      get_value = ->(key) { get_hash_value(attrs, key) }
+      _attrs, get_value = prepare_attrs(attrs)
 
       {
         OBSERVATION_INPUT => serialize(get_value.call(:input)),
@@ -300,9 +296,7 @@ module Langfuse
       return attrs unless mask
 
       attrs.dup.tap do |masked|
-        MASKABLE_KEYS.each do |key|
-          sym_key = key.to_sym
-          str_key = key.to_s
+        MASKABLE_KEYS.each do |sym_key, str_key|
           masked[sym_key] = safe_mask(mask, masked[sym_key]) if masked.key?(sym_key)
           masked[str_key] = safe_mask(mask, masked[str_key]) if masked.key?(str_key)
         end
@@ -318,7 +312,12 @@ module Langfuse
       MASK_FAILURE_PLACEHOLDER
     end
 
-    private_class_method :mask_fields, :safe_mask, :log_mask_failure
+    def self.prepare_attrs(attrs)
+      masked = mask_fields(attrs.to_h)
+      [masked, ->(key) { get_hash_value(masked, key) }]
+    end
+
+    private_class_method :prepare_attrs, :mask_fields, :safe_mask, :log_mask_failure
   end
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/ModuleLength
 end
