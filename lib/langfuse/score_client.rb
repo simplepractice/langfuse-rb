@@ -31,6 +31,8 @@ module Langfuse
     # @return [Logger] Logger instance
     attr_reader :logger
 
+    HEX_TRACE_ID_PATTERN = /\A\h{32}\z/
+
     # Initialize a new ScoreClient
     #
     # @param api_client [ApiClient] The API client for sending batches
@@ -75,25 +77,21 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
-      event = prepare_score_event(
-        name: name,
-        value: value,
-        id: id,
-        trace_id: trace_id,
-        session_id: session_id,
-        observation_id: observation_id,
-        comment: comment,
-        metadata: metadata,
-        environment: environment,
-        data_type: data_type,
-        dataset_run_id: dataset_run_id,
-        config_id: config_id
-      )
+      validate_name(name)
+      normalized_value = normalize_value(value, data_type)
+      data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
 
       return unless enqueue_trace_linked_score?(trace_id)
 
+      event = build_score_event(
+        name: name, value: normalized_value, id: id, trace_id: trace_id,
+        session_id: session_id, observation_id: observation_id, comment: comment,
+        metadata: metadata, environment: environment, data_type: data_type_str,
+        dataset_run_id: dataset_run_id, config_id: config_id
+      )
+
       @queue << event
-      flush if @queue.size >= config.batch_size # Trigger flush if batch size reached
+      flush if @queue.size >= config.batch_size
     rescue StandardError => e
       logger.error("Langfuse score creation failed: #{e.message}")
       raise
@@ -215,32 +213,6 @@ module Langfuse
     # @param environment [String, nil] Environment
     # @param data_type [String] Data type string (NUMERIC, BOOLEAN, CATEGORICAL)
     # @return [Hash] Event hash
-    # rubocop:disable Metrics/ParameterLists
-    def prepare_score_event(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
-                            environment:, data_type:, dataset_run_id:, config_id:)
-      validate_name(name)
-      # Keep identifier policy server-side to preserve cross-SDK parity and avoid blocking valid future payloads.
-      normalized_value = normalize_value(value, data_type)
-      data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
-
-      build_score_event(
-        name: name,
-        value: normalized_value,
-        id: id,
-        trace_id: trace_id,
-        session_id: session_id,
-        observation_id: observation_id,
-        comment: comment,
-        metadata: metadata,
-        environment: environment,
-        data_type: data_type_str,
-        dataset_run_id: dataset_run_id,
-        config_id: config_id
-      )
-    end
-    # rubocop:enable Metrics/ParameterLists
-
-    # @return [Hash] Event hash
     # rubocop:disable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def build_score_event(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
                           environment:, data_type:, dataset_run_id: nil, config_id: nil)
@@ -326,8 +298,8 @@ module Langfuse
 
     # Keep score sampling aligned with trace sampling to avoid orphaned trace-linked scores.
     def enqueue_trace_linked_score?(trace_id)
-      return true if sampling_disabled_for_score?(trace_id)
-      return true unless valid_trace_id?(trace_id)
+      return true if trace_id.nil? || config.sample_rate >= 1.0
+      return true unless HEX_TRACE_ID_PATTERN.match?(trace_id)
 
       sampler = active_sampler
       return true unless sampler.respond_to?(:should_sample?)
@@ -346,17 +318,9 @@ module Langfuse
       true
     end
 
-    def sampling_disabled_for_score?(trace_id)
-      trace_id.nil? || !config.sample_rate.is_a?(Numeric) || config.sample_rate >= 1.0
-    end
-
     def active_sampler
       provider = OpenTelemetry.tracer_provider
       provider.sampler if provider.respond_to?(:sampler)
-    end
-
-    def valid_trace_id?(trace_id)
-      trace_id.match?(/\A\h{32}\z/)
     end
 
     # Send a batch of events to the API
