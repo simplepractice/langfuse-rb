@@ -489,8 +489,11 @@ Available on observations with `as_type: :generation`:
 ```ruby
 obs.model = "gpt-4"
 obs.model_parameters = { temperature: 0.7, max_tokens: 100 }
-obs.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
+obs.usage_details = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
+obs.cost_details = { total_cost: 0.05 }
 ```
+
+`obs.usage = {...}` is still accepted for compatibility, but it is deprecated and forwards to `usage_details`.
 
 Or via `update`:
 
@@ -498,7 +501,7 @@ Or via `update`:
 # Using setters (preferred)
 obs.model = "gpt-4"
 obs.model_parameters = { temperature: 0.7 }
-obs.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
+obs.usage_details = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
 obs.completion_start_time = Time.now
 obs.cost_details = { total_cost: 0.05 }
 obs.prompt = { name: "greeting", version: 1, is_fallback: false }

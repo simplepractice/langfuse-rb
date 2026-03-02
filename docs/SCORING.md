@@ -209,7 +209,7 @@ def generate_with_quality_check(prompt)
     gen.model = "gpt-4"
     gen.input = prompt
     gen.output = output
-    gen.usage = {
+    gen.usage_details = {
       prompt_tokens: response.dig("usage", "prompt_tokens"),
       completion_tokens: response.dig("usage", "completion_tokens"),
       total_tokens: response.dig("usage", "total_tokens")
