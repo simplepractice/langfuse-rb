@@ -2202,6 +2202,46 @@ RSpec.describe Langfuse::Client do
         result = client.list_dataset_runs(dataset_name: "my-dataset")
         expect(result.map { |run| run["id"] }).to eq(%w[run-1 run-2])
       end
+
+      it "treats responses without totalPages as a single page" do
+        single_page_response = {
+          "data" => [{ "id" => "run-1", "name" => "baseline-a" }]
+        }
+
+        stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+          .with(query: hash_including("page" => "1"))
+          .to_return(status: 200, body: single_page_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = client.list_dataset_runs(dataset_name: "my-dataset")
+
+        expect(result.size).to eq(1)
+        expect(result.first["id"]).to eq("run-1")
+        expect(
+          a_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+            .with(query: hash_including("page" => "2"))
+        ).not_to have_been_made
+      end
+
+      it "returns an empty array and does not paginate when totalPages is 0" do
+        empty_page_response = {
+          "data" => [],
+          "meta" => { "totalPages" => 0 }
+        }
+
+        stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+          .with(query: hash_including("page" => "1"))
+          .to_return(status: 200, body: empty_page_response.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = client.list_dataset_runs(dataset_name: "my-dataset")
+
+        expect(result).to eq([])
+        expect(
+          a_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
+            .with(query: hash_including("page" => "2"))
+        ).not_to have_been_made
+      end
     end
 
     context "with explicit page parameter" do

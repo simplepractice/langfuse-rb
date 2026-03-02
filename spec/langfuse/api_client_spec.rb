@@ -2445,6 +2445,27 @@ RSpec.describe Langfuse::ApiClient do
       end
     end
 
+    context "with dataset names requiring encoding" do
+      let(:dataset_name) { "folder name/with spaces" }
+
+      before do
+        stub_request(:get, "#{base_url}/api/public/datasets/folder%20name%2Fwith%20spaces/runs")
+          .to_return(
+            status: 200,
+            body: runs_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "encodes dataset name in request path" do
+        api_client.list_dataset_runs(dataset_name: dataset_name)
+
+        expect(
+          a_request(:get, "#{base_url}/api/public/datasets/folder%20name%2Fwith%20spaces/runs")
+        ).to have_been_made.once
+      end
+    end
+
     context "when network error occurs" do
       before do
         stub_request(:get, "#{base_url}/api/public/datasets/my-dataset/runs")
