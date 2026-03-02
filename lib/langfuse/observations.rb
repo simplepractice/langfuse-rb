@@ -367,9 +367,14 @@ module Langfuse
       return if @usage_deprecation_logged
 
       @usage_deprecation_logged = true
-      Langfuse.configuration.logger&.warn(
-        "Langfuse::Generation#usage= is deprecated; use #usage_details= instead."
-      )
+      message = "Langfuse::Generation#usage= is deprecated; use #usage_details= instead."
+      logger = Langfuse.configuration.logger
+
+      if logger
+        logger.warn(message)
+      else
+        warn(message)
+      end
     end
   end
 
@@ -632,7 +637,7 @@ module Langfuse
   #     vectors = embedding_service.generate(embedding.input, model: embedding.model)
   #     embedding.update(
   #       output: vectors,
-  #       usage: { prompt_tokens: 20, total_tokens: 20 }
+  #       usage_details: { prompt_tokens: 20, total_tokens: 20 }
   #     )
   #   end
   #
@@ -665,7 +670,15 @@ module Langfuse
 
     # @param value [Hash] Usage hash with token counts (:prompt_tokens, :total_tokens)
     # @return [void]
+    # @deprecated Use #usage_details= instead.
     def usage=(value)
+      warn_usage_deprecation
+      self.usage_details = value
+    end
+
+    # @param value [Hash] Usage details hash (preserves key shape as provided)
+    # @return [void]
+    def usage_details=(value)
       update_observation_attributes(usage_details: value)
     end
 
@@ -679,6 +692,22 @@ module Langfuse
     # @return [void]
     def model_parameters=(value)
       update_observation_attributes(model_parameters: value)
+    end
+
+    private
+
+    def warn_usage_deprecation
+      return if @usage_deprecation_logged
+
+      @usage_deprecation_logged = true
+      message = "Langfuse::Embedding#usage= is deprecated; use #usage_details= instead."
+      logger = Langfuse.configuration.logger
+
+      if logger
+        logger.warn(message)
+      else
+        warn(message)
+      end
     end
   end
 end
