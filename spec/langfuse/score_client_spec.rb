@@ -315,6 +315,65 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.flush
       end
     end
+
+    context "with probabilistic trace sampling" do
+      let(:original_tracer_provider) { OpenTelemetry.tracer_provider }
+
+      before do
+        config.sample_rate = 0.5
+        OpenTelemetry.tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
+          sampler: OpenTelemetry::SDK::Trace::Samplers::ALWAYS_OFF
+        )
+      end
+
+      after do
+        OpenTelemetry.tracer_provider = original_tracer_provider
+      end
+
+      it "drops trace-linked scores when sampler rejects the trace id" do
+        expect(api_client).not_to receive(:send_batch)
+
+        score_client.create(
+          name: "quality",
+          value: 0.85,
+          trace_id: "abcdef1234567890abcdef1234567890"
+        )
+        score_client.flush
+      end
+
+      it "keeps session-only scores regardless of sampler" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(sessionId: "session-123")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, session_id: "session-123")
+        score_client.flush
+      end
+
+      it "keeps dataset-run-only scores regardless of sampler" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(datasetRunId: "run-123")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, dataset_run_id: "run-123")
+        score_client.flush
+      end
+
+      it "keeps trace-linked scores for legacy non-hex trace ids" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(traceId: "legacy-trace-id")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, trace_id: "legacy-trace-id")
+        score_client.flush
+      end
+    end
   end
 
   describe "#score_active_observation" do
@@ -373,6 +432,26 @@ RSpec.describe Langfuse::ScoreClient do
       expect do
         score_client.score_active_trace(name: "overall_quality", value: 5)
       end.to raise_error(ArgumentError, "No active OpenTelemetry span found")
+    end
+
+    it "does not enqueue when active span is sampled out" do
+      original_tracer_provider = OpenTelemetry.tracer_provider
+      sampled_out_provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
+        sampler: OpenTelemetry::SDK::Trace::Samplers::ALWAYS_OFF
+      )
+      OpenTelemetry.tracer_provider = sampled_out_provider
+      config.sample_rate = 0.5
+      tracer = sampled_out_provider.tracer("sampled-out")
+      expect(api_client).not_to receive(:send_batch)
+
+      tracer.in_span("sampled-out-span") do
+        expect do
+          score_client.score_active_trace(name: "overall_quality", value: 5)
+        end.not_to raise_error
+      end
+      score_client.flush
+    ensure
+      OpenTelemetry.tracer_provider = original_tracer_provider
     end
   end
 

@@ -31,6 +31,8 @@ module Langfuse
     # @return [Logger] Logger instance
     attr_reader :logger
 
+    HEX_TRACE_ID_PATTERN = /\A\h{32}\z/
+
     # Initialize a new ScoreClient
     #
     # @param api_client [ApiClient] The API client for sending batches
@@ -76,28 +78,19 @@ module Langfuse
     def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       validate_name(name)
-      # Keep identifier policy server-side to preserve cross-SDK parity and avoid blocking valid future payloads.
       normalized_value = normalize_value(value, data_type)
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
 
+      return unless enqueue_trace_linked_score?(trace_id)
+
       event = build_score_event(
-        name: name,
-        value: normalized_value,
-        id: id,
-        trace_id: trace_id,
-        session_id: session_id,
-        observation_id: observation_id,
-        comment: comment,
-        metadata: metadata,
-        environment: environment,
-        data_type: data_type_str,
-        dataset_run_id: dataset_run_id,
-        config_id: config_id
+        name: name, value: normalized_value, id: id, trace_id: trace_id,
+        session_id: session_id, observation_id: observation_id, comment: comment,
+        metadata: metadata, environment: environment, data_type: data_type_str,
+        dataset_run_id: dataset_run_id, config_id: config_id
       )
 
       @queue << event
-
-      # Trigger flush if batch size reached
       flush if @queue.size >= config.batch_size
     rescue StandardError => e
       logger.error("Langfuse score creation failed: #{e.message}")
@@ -294,12 +287,40 @@ module Langfuse
     # @return [Hash] Hash with :trace_id and :observation_id (may be nil)
     def extract_ids_from_active_span
       span = OpenTelemetry::Trace.current_span
-      return { trace_id: nil, observation_id: nil } unless span&.recording?
+      span_context = span&.context
+      return { trace_id: nil, observation_id: nil } unless span_context&.valid?
 
       {
-        trace_id: span.context.trace_id.unpack1("H*"),
-        observation_id: span.context.span_id.unpack1("H*")
+        trace_id: span_context.trace_id.unpack1("H*"),
+        observation_id: span_context.span_id.unpack1("H*")
       }
+    end
+
+    # Keep score sampling aligned with trace sampling to avoid orphaned trace-linked scores.
+    def enqueue_trace_linked_score?(trace_id)
+      return true if trace_id.nil? || config.sample_rate >= 1.0
+      return true unless HEX_TRACE_ID_PATTERN.match?(trace_id)
+
+      sampler = active_sampler
+      return true unless sampler.respond_to?(:should_sample?)
+
+      sample_result = sampler.should_sample?(
+        trace_id: [trace_id].pack("H*"),
+        parent_context: nil,
+        links: [],
+        name: "score",
+        kind: OpenTelemetry::Trace::SpanKind::INTERNAL,
+        attributes: {}
+      )
+      sample_result.sampled?
+    rescue StandardError => e
+      logger.warn("Langfuse score sampling fallback for trace_id=#{trace_id}: #{e.message}")
+      true
+    end
+
+    def active_sampler
+      provider = OpenTelemetry.tracer_provider
+      provider.sampler if provider.respond_to?(:sampler)
     end
 
     # Send a batch of events to the API
