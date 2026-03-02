@@ -442,12 +442,9 @@ RSpec.describe Langfuse::ScoreClient do
       OpenTelemetry.tracer_provider = sampled_out_provider
       config.sample_rate = 0.5
       tracer = sampled_out_provider.tracer("sampled-out")
-      span = tracer.start_span("sampled-out-span")
       expect(api_client).not_to receive(:send_batch)
 
-      OpenTelemetry::Context.with_current(
-        OpenTelemetry::Trace.context_with_span(span)
-      ) do
+      tracer.in_span("sampled-out-span") do
         expect do
           score_client.score_active_trace(name: "overall_quality", value: 5)
         end.not_to raise_error
