@@ -101,7 +101,7 @@ RSpec.describe Langfuse::Propagation do
       end
 
       it "merges tags from nested contexts" do
-          described_class.propagate_attributes(tags: %w[outer shared]) do
+        described_class.propagate_attributes(tags: %w[outer shared]) do
           described_class.propagate_attributes(tags: %w[inner shared]) do
             span = Langfuse.observe("test")
             attrs = span.otel_span.attributes

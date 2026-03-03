@@ -152,7 +152,7 @@ module Langfuse
     # @return [Hash<String, String, Array<String>>] Hash of span key => value
     #
     # @api private
-    # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def self.get_propagated_attributes_from_context(context)
       propagated_attributes = _extract_baggage_attributes(context)
 
@@ -178,7 +178,7 @@ module Langfuse
           propagated_attributes[span_key] = value.to_s
         end
       end
-      # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+      # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
       propagated_attributes
     end
