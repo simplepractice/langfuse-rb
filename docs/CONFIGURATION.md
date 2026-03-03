@@ -162,7 +162,7 @@ config.cache_stale_ttl = :indefinite  # Never expire (normalized to 1000 years i
 
 **Recommended values:**
 
-- Same as `cache_ttl` (default when SWR enabled): Balanced freshness/latency
+- Same as `cache_ttl`: Balanced freshness/latency
 - `2x cache_ttl`: More tolerance for API slowdowns
 - `:indefinite`: Maximum performance, eventual consistency, high availability
 
@@ -253,6 +253,26 @@ config.job_queue = :langfuse  # Placeholder - no effect currently
 
 **Current Behavior:** No ActiveJob integration yet. Reserved for future implementation.
 
+#### `environment`
+
+- **Type:** String
+- **Default:** `nil` (or `LANGFUSE_TRACING_ENVIRONMENT` if set)
+- **Description:** Default tracing environment applied to new traces/observations
+
+```ruby
+config.environment = "production"
+```
+
+#### `release`
+
+- **Type:** String
+- **Default:** `nil` (or auto-detected from env)
+- **Description:** Default release identifier applied to new traces/observations
+
+```ruby
+config.release = "v2026.03.02"
+```
+
 ## Environment Variables
 
 The SDK automatically reads these environment variables as defaults when no explicit value is configured:
@@ -260,6 +280,10 @@ The SDK automatically reads these environment variables as defaults when no expl
 - `LANGFUSE_PUBLIC_KEY` — public API key
 - `LANGFUSE_SECRET_KEY` — secret API key
 - `LANGFUSE_BASE_URL` — API endpoint (defaults to `https://cloud.langfuse.com`)
+- `LANGFUSE_TRACING_ENVIRONMENT` — default trace environment
+- `LANGFUSE_RELEASE` — default release identifier
+
+If `LANGFUSE_RELEASE` is not set, the SDK falls back to common CI SHA variables (first non-empty): `RENDER_GIT_COMMIT`, `CI_COMMIT_SHA`, `CIRCLE_SHA1`, `SOURCE_VERSION`, `TRAVIS_COMMIT`, `GIT_COMMIT`, `GITHUB_SHA`, `BITBUCKET_COMMIT`, `BUILD_SOURCEVERSION`, `DRONE_COMMIT_SHA`.
 
 Explicit configuration always takes precedence:
 
@@ -268,6 +292,8 @@ Langfuse.configure do |config|
   config.public_key = ENV['LANGFUSE_PUBLIC_KEY']   # redundant, already auto-read
   config.secret_key = ENV['LANGFUSE_SECRET_KEY']   # redundant, already auto-read
   config.base_url = "https://custom.langfuse.com"  # overrides env var
+  config.environment = "staging"                    # overrides LANGFUSE_TRACING_ENVIRONMENT
+  config.release = "manual-release-123"             # overrides LANGFUSE_RELEASE/CI fallback
 end
 ```
 
@@ -277,6 +303,8 @@ end
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_BASE_URL=https://cloud.langfuse.com  # Optional
+LANGFUSE_TRACING_ENVIRONMENT=production        # Optional
+LANGFUSE_RELEASE=release-123                   # Optional
 ```
 
 ## Rails-Specific Configuration

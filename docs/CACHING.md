@@ -180,7 +180,7 @@ Langfuse.configure do |config|
   config.cache_backend = :memory  # Works with both :memory and :rails
   config.cache_ttl = 300  # Fresh for 5 minutes
   config.cache_stale_while_revalidate = true  # Enable SWR
-  # cache_stale_ttl automatically set to 300 (same as cache_ttl)
+  config.cache_stale_ttl = 300  # Set stale window explicitly
 end
 ```
 
@@ -561,7 +561,7 @@ config.cache_stale_while_revalidate = !Rails.env.development?
 
 # Production: enabled for best performance
 if Rails.env.production?
-  config.cache_stale_ttl = config.cache_ttl  # Auto-set, but can customize
+  config.cache_stale_ttl = config.cache_ttl  # Set explicitly to match fresh TTL
 end
 ```
 
