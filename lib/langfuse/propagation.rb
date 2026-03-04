@@ -172,9 +172,7 @@ module Langfuse
             propagated_attributes[metadata_key] = v.to_s
           end
         elsif key == "tags" && value.is_a?(Array)
-          # Handle tags - serialize as JSON array for span attributes
-          serialized_tags = OtelAttributes.serialize(value)
-          propagated_attributes[span_key] = serialized_tags if serialized_tags
+          propagated_attributes[span_key] = value unless value.empty?
         else
           propagated_attributes[span_key] = value.to_s
         end
@@ -249,9 +247,7 @@ module Langfuse
             span.set_attribute(metadata_key, v.to_s)
           end
         elsif key == "tags" && value.is_a?(Array)
-          # Handle tags - serialize as JSON array
-          serialized_tags = OtelAttributes.serialize(value)
-          span.set_attribute(span_key, serialized_tags) if serialized_tags
+          span.set_attribute(span_key, value) unless value.empty?
         else
           span.set_attribute(span_key, value.to_s)
         end
