@@ -155,7 +155,7 @@ module Langfuse
       end
     end
 
-    # Filters tags to String-only elements, returns nil if empty or nil
+    # Filters tags to String-only elements within 200-char limit, returns nil if empty or nil
     #
     # @param tags [Array, nil] Raw tags array
     # @return [Array<String>, nil] Filtered tags or nil
@@ -163,7 +163,17 @@ module Langfuse
     def self.normalize_tags(tags)
       return nil if tags.nil?
 
-      filtered = tags.select { |t| t.is_a?(String) }
+      filtered = tags.select do |t|
+        next false unless t.is_a?(String)
+
+        if t.length > 200
+          Langfuse.configuration.logger.warn(
+            "Langfuse: Tag exceeds 200 characters (#{t.length} chars). Dropping."
+          )
+          next false
+        end
+        true
+      end
       filtered.empty? ? nil : filtered
     end
 
