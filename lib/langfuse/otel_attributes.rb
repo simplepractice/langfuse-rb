@@ -160,7 +160,7 @@ module Langfuse
 
     # Filters tags to String-only elements within 200-char limit, returns nil if empty or nil
     #
-    # @param tags [Array, nil] Raw tags array
+    # @param tags [Array, nil] Raw tags array (each tag must be ≤200 characters; oversized tags are dropped with a warning)
     # @return [Array<String>, nil] Filtered tags or nil
     # @api private
     def self.normalize_tags(tags)

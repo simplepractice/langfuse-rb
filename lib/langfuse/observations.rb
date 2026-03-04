@@ -111,6 +111,7 @@ module Langfuse
     end
 
     # Updates trace-level attributes (user_id, session_id, tags, etc.) for the entire trace.
+    # Tags exceeding 200 characters are silently dropped with a warning log.
     #
     # @param attrs [Hash, Types::TraceAttributes] Trace attributes to set
     # @return [self]
