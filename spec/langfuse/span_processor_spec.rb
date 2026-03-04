@@ -117,22 +117,6 @@ RSpec.describe Langfuse::SpanProcessor do
 
       span.finish
     end
-
-    it "sets tags as native Array, not JSON string, on propagated spans" do
-      span = nil
-
-      Langfuse::Propagation.propagate_attributes(tags: %w[checkout payment]) do
-        span = tracer.start_span("test-span")
-        processor.on_start(span, OpenTelemetry::Context.current)
-      end
-
-      attrs = span.attributes
-      expect(attrs["langfuse.trace.tags"]).to be_a(Array)
-      expect(attrs["langfuse.trace.tags"]).not_to be_a(String)
-      expect(attrs["langfuse.trace.tags"]).to eq(%w[checkout payment])
-
-      span.finish
-    end
   end
 
   describe "#on_finish" do

@@ -207,7 +207,7 @@ module Langfuse
     def self._merge_tags(context, context_key, new_tags)
       existing = context.value(context_key) || []
       existing = existing.to_a if existing.respond_to?(:to_a)
-      (existing + new_tags).uniq
+      (existing + new_tags).uniq.freeze
     end
 
     # Set a propagated attribute in context and on current span
