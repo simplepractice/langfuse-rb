@@ -249,16 +249,16 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(result["langfuse.trace.tags"]).to eq(%w[valid also_valid])
     end
 
-    it "drops tags exceeding 200 characters" do
-      oversized = "x" * 201
+    it "drops tags exceeding MAX_TAG_LENGTH" do
+      oversized = "x" * (described_class::MAX_TAG_LENGTH + 1)
       attrs = { tags: [oversized] }
       result = described_class.create_trace_attributes(attrs)
 
       expect(result).not_to have_key("langfuse.trace.tags")
     end
 
-    it "accepts tags exactly 200 characters long" do
-      tag = "x" * 200
+    it "accepts tags exactly MAX_TAG_LENGTH characters long" do
+      tag = "x" * described_class::MAX_TAG_LENGTH
       attrs = { tags: [tag] }
       result = described_class.create_trace_attributes(attrs)
 
@@ -266,7 +266,7 @@ RSpec.describe Langfuse::OtelAttributes do
     end
 
     it "keeps valid tags and drops oversized ones" do
-      oversized = "x" * 201
+      oversized = "x" * (described_class::MAX_TAG_LENGTH + 1)
       attrs = { tags: ["valid", oversized, "also_valid"] }
       result = described_class.create_trace_attributes(attrs)
 
@@ -278,12 +278,13 @@ RSpec.describe Langfuse::OtelAttributes do
       allow(Langfuse.configuration).to receive(:logger).and_return(logger)
       allow(logger).to receive(:warn)
 
-      oversized = "x" * 250
+      limit = described_class::MAX_TAG_LENGTH
+      oversized = "x" * (limit + 50)
       attrs = { tags: [oversized] }
       described_class.create_trace_attributes(attrs)
 
       expect(logger).to have_received(:warn).with(
-        "Langfuse: Tag exceeds 200 characters (250 chars). Dropping."
+        "Langfuse: Tag exceeds #{limit} characters (#{limit + 50} chars). Dropping."
       )
     end
   end
