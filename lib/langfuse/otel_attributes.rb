@@ -90,7 +90,7 @@ module Langfuse
         RELEASE => get_value.call(:release),
         TRACE_INPUT => serialize(get_value.call(:input)),
         TRACE_OUTPUT => serialize(get_value.call(:output)),
-        TRACE_TAGS => get_value.call(:tags),
+        TRACE_TAGS => normalize_tags(get_value.call(:tags)),
         ENVIRONMENT => get_value.call(:environment),
         TRACE_PUBLIC => get_value.call(:public),
         **flatten_metadata(get_value.call(:metadata), TRACE_METADATA)
@@ -153,6 +153,18 @@ module Langfuse
       rescue StandardError
         nil
       end
+    end
+
+    # Filters tags to String-only elements, returns nil if empty or nil
+    #
+    # @param tags [Array, nil] Raw tags array
+    # @return [Array<String>, nil] Filtered tags or nil
+    # @api private
+    def self.normalize_tags(tags)
+      return nil if tags.nil?
+
+      filtered = tags.select { |t| t.is_a?(String) }
+      filtered.empty? ? nil : filtered
     end
 
     # Flattens and serializes metadata into OpenTelemetry attribute format

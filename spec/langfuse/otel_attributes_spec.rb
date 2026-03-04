@@ -234,6 +234,20 @@ RSpec.describe Langfuse::OtelAttributes do
 
       expect(result).not_to have_key("langfuse.trace.tags")
     end
+
+    it "omits tags key when tags are empty" do
+      attrs = Langfuse::Types::TraceAttributes.new(tags: [])
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result).not_to have_key("langfuse.trace.tags")
+    end
+
+    it "filters non-string elements from tags" do
+      attrs = { tags: ["valid", 123, nil, "also_valid"] }
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result["langfuse.trace.tags"]).to eq(%w[valid also_valid])
+    end
   end
 
   describe ".create_observation_attributes" do
