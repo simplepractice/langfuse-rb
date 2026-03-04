@@ -250,6 +250,7 @@ RSpec.describe Langfuse::OtelAttributes do
     end
 
     it "drops tags exceeding MAX_TAG_LENGTH" do
+      allow(Langfuse.configuration.logger).to receive(:warn)
       oversized = "x" * (described_class::MAX_TAG_LENGTH + 1)
       attrs = { tags: [oversized] }
       result = described_class.create_trace_attributes(attrs)
@@ -266,6 +267,7 @@ RSpec.describe Langfuse::OtelAttributes do
     end
 
     it "keeps valid tags and drops oversized ones" do
+      allow(Langfuse.configuration.logger).to receive(:warn)
       oversized = "x" * (described_class::MAX_TAG_LENGTH + 1)
       attrs = { tags: ["valid", oversized, "also_valid"] }
       result = described_class.create_trace_attributes(attrs)
