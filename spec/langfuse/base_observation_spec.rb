@@ -131,6 +131,15 @@ RSpec.describe Langfuse::BaseObservation do
       expect(span_data.attributes["langfuse.trace.tags"]).to eq(%w[production api-v2])
     end
 
+    it "sets tags as native Array on span attributes" do
+      observation.update_trace(tags: %w[checkout payment])
+      span_data = otel_span.to_span_data
+
+      expect(span_data.attributes["langfuse.trace.tags"]).to be_a(Array)
+      expect(span_data.attributes["langfuse.trace.tags"]).not_to be_a(String)
+      expect(span_data.attributes["langfuse.trace.tags"]).to eq(%w[checkout payment])
+    end
+
     it "supports method chaining" do
       result = observation.update_trace(user_id: "user-123")
       expect(result).to eq(observation)

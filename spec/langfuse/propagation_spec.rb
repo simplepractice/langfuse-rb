@@ -372,6 +372,17 @@ RSpec.describe Langfuse::Propagation do
       end
     end
 
+    it "returns tags as a native Array from context" do
+      described_class.propagate_attributes(tags: %w[api production]) do
+        context = OpenTelemetry::Context.current
+        attrs = described_class.get_propagated_attributes_from_context(context)
+
+        expect(attrs["langfuse.trace.tags"]).to be_a(Array)
+        expect(attrs["langfuse.trace.tags"]).not_to be_a(String)
+        expect(attrs["langfuse.trace.tags"]).to contain_exactly("api", "production")
+      end
+    end
+
     context "with baggage extraction" do
       include_context "with baggage mock"
 

@@ -227,6 +227,22 @@ RSpec.describe Langfuse::OtelAttributes do
       result_nil = described_class.create_trace_attributes(nil)
       expect(result_nil).to eq({})
     end
+
+    it "sets tags as a native Array, not a JSON string" do
+      attrs = Langfuse::Types::TraceAttributes.new(tags: %w[checkout payment])
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result["langfuse.trace.tags"]).to be_a(Array)
+      expect(result["langfuse.trace.tags"]).not_to be_a(String)
+      expect(result["langfuse.trace.tags"]).to eq(%w[checkout payment])
+    end
+
+    it "omits tags key when tags are nil" do
+      attrs = Langfuse::Types::TraceAttributes.new(tags: nil)
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result).not_to have_key("langfuse.trace.tags")
+    end
   end
 
   describe ".create_observation_attributes" do
