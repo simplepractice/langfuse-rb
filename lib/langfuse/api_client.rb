@@ -260,6 +260,61 @@ module Langfuse
       end
     end
 
+    # Fetch a dataset run by dataset and run name
+    #
+    # @param dataset_name [String] Dataset name (required)
+    # @param run_name [String] Run name (required)
+    # @return [Hash] The dataset run data
+    # @raise [NotFoundError] if the dataset run is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_dataset_run(dataset_name:, run_name:)
+      with_faraday_error_handling do
+        response = connection.get(dataset_run_path(dataset_name: dataset_name, run_name: run_name))
+        handle_response(response)
+      end
+    end
+
+    # List dataset runs in a dataset
+    #
+    # @param dataset_name [String] Dataset name (required)
+    # @param page [Integer, nil] Optional page number for pagination
+    # @param limit [Integer, nil] Optional limit per page
+    # @return [Array<Hash>] Array of dataset run hashes
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_dataset_runs(dataset_name:, page: nil, limit: nil)
+      result = list_dataset_runs_paginated(dataset_name: dataset_name, page: page, limit: limit)
+      result["data"] || []
+    end
+
+    # Full paginated response including "meta" for internal pagination use
+    #
+    # @api private
+    # @return [Hash] Full response hash with "data" array and "meta" pagination info
+    def list_dataset_runs_paginated(dataset_name:, page: nil, limit: nil)
+      with_faraday_error_handling do
+        response = connection.get(dataset_runs_path(dataset_name), build_dataset_runs_params(page: page, limit: limit))
+        handle_response(response)
+      end
+    end
+
+    # Delete a dataset run by name
+    #
+    # @param dataset_name [String] Dataset name (required)
+    # @param run_name [String] Run name (required)
+    # @return [Hash, nil] Response body, or nil for 204 responses
+    # @raise [NotFoundError] if the dataset run is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    # @note 404 responses raise NotFoundError to preserve strict delete semantics
+    def delete_dataset_run(dataset_name:, run_name:)
+      with_faraday_error_handling do
+        response = connection.delete(dataset_run_path(dataset_name: dataset_name, run_name: run_name))
+        response.status == 204 ? nil : handle_response(response)
+      end
+    end
+
     # Fetch projects accessible with the current API keys
     #
     # @return [Hash] The parsed response body containing project data
@@ -602,6 +657,23 @@ module Langfuse
         sourceTraceId: source_trace_id,
         sourceObservationId: source_observation_id
       }.compact
+    end
+
+    # Build params for list_dataset_runs
+    def build_dataset_runs_params(page:, limit:)
+      { page: page, limit: limit }.compact
+    end
+
+    # Build endpoint path for dataset runs
+    def dataset_runs_path(dataset_name)
+      encoded_name = URI.encode_uri_component(dataset_name)
+      "/api/public/datasets/#{encoded_name}/runs"
+    end
+
+    # Build endpoint path for a specific dataset run
+    def dataset_run_path(dataset_name:, run_name:)
+      encoded_run_name = URI.encode_uri_component(run_name)
+      "#{dataset_runs_path(dataset_name)}/#{encoded_run_name}"
     end
 
     # Build query params for list_traces, mapping snake_case to camelCase
