@@ -275,6 +275,30 @@ config.environment = "production"
 config.release = "2024.1"
 ```
 
+#### `mask`
+
+- **Type:** Callable
+- **Default:** `nil`
+- **Description:** Redacts `input`, `output`, and `metadata` before serialization
+
+The callable receives structured Ruby data via `data:` and is applied to:
+
+- Trace `input`, `output`, and `metadata`
+- Observation `input`, `output`, and `metadata`
+- Event `input`
+- Trace metadata passed through `Langfuse.propagate_attributes`
+
+Failures replace the entire field with `"<fully masked due to failed mask function>"`.
+Return values must stay JSON-serializable.
+
+```ruby
+config.mask = lambda do |data:|
+  next data unless data.is_a?(Hash)
+
+  data.transform_values { |_| "[MASKED]" }
+end
+```
+
 ## Environment Variables
 
 The SDK automatically reads these environment variables as defaults when no explicit value is configured:
@@ -441,6 +465,7 @@ Validation rules:
 - `secret_key` must be present
 - `cache_backend` must be `:memory` or `:rails`
 - If `:rails`, Rails must be defined
+- `mask` must respond to `#call` (if provided)
 
 ## Accessing Current Configuration
 

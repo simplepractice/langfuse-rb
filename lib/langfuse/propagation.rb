@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "opentelemetry/context"
+require "json"
 
 module Langfuse
   # Attribute propagation utilities for Langfuse OpenTelemetry integration.
@@ -54,7 +55,9 @@ module Langfuse
     #
     # @param user_id [String, nil] User identifier (≤200 characters)
     # @param session_id [String, nil] Session identifier (≤200 characters)
-    # @param metadata [Hash<String, String>, nil] Additional metadata (all values ≤200 characters)
+    # @param metadata [Hash, nil] Structured trace metadata. When `config.mask` is set,
+    #   the masked value is stored on the active span, in OpenTelemetry context, and
+    #   optionally in baggage so child spans do not reintroduce raw metadata.
     # @param version [String, nil] Version identifier (≤200 characters)
     # @param tags [Array<String>, nil] List of tags (each ≤200 characters)
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
@@ -128,23 +131,17 @@ module Langfuse
     # @return [Object, nil] Validated value or nil if invalid
     #
     # @api private
-    # rubocop:disable Metrics/CyclomaticComplexity
     def self._validate_attribute_value(key, value)
       case key
       when "tags"
         validated_tags = value.filter_map { |tag| _validate_propagated_value(tag, "tag") }
         validated_tags.any? ? validated_tags : nil
       when "metadata"
-        validated_metadata = {}
-        value.each do |k, v|
-          validated_metadata[k.to_s] = v.to_s if _validate_string_value(v, "metadata.#{k}")
-        end
-        validated_metadata.any? ? validated_metadata : nil
+        _validate_metadata_value(value)
       else
         _validate_propagated_value(value, key)
       end
     end
-    # rubocop:enable Metrics/CyclomaticComplexity
 
     # Get propagated attributes from context for span processor
     #
@@ -152,7 +149,6 @@ module Langfuse
     # @return [Hash<String, String, Array<String>>] Hash of span key => value
     #
     # @api private
-    # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def self.get_propagated_attributes_from_context(context)
       propagated_attributes = _extract_baggage_attributes(context)
 
@@ -165,19 +161,14 @@ module Langfuse
 
         span_key = _get_propagated_span_key(key)
 
-        if key == "metadata" && value.is_a?(Hash)
-          # Handle metadata - flatten into individual attributes
-          value.each do |k, v|
-            metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
-            propagated_attributes[metadata_key] = v.to_s
-          end
+        if key == "metadata"
+          propagated_attributes.merge!(_flatten_metadata_attributes(value))
         elsif key == "tags" && value.is_a?(Array)
           propagated_attributes[span_key] = value unless value.empty?
         else
           propagated_attributes[span_key] = value.to_s
         end
       end
-      # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
       propagated_attributes
     end
@@ -187,12 +178,14 @@ module Langfuse
     # @param context [OpenTelemetry::Context] Current context
     # @param context_key [OpenTelemetry::Context::Key] Context key for metadata
     # @param new_metadata [Hash<String, String>] New metadata to merge
-    # @return [Hash<String, String>] Merged metadata
+    # @return [Hash, String] Merged metadata
     #
     # @api private
     def self._merge_metadata(context, context_key, new_metadata)
       existing = context.value(context_key) || {}
       existing = existing.to_h if existing.respond_to?(:to_h)
+      return new_metadata unless existing.is_a?(Hash) && new_metadata.is_a?(Hash)
+
       existing.merge(new_metadata)
     end
 
@@ -240,11 +233,9 @@ module Langfuse
 
       # Set on current span (if recording)
       if span&.recording?
-        if key == "metadata" && value.is_a?(Hash)
-          # Handle metadata - flatten into individual attributes
-          value.each do |k, v|
-            metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
-            span.set_attribute(metadata_key, v.to_s)
+        if key == "metadata"
+          _flatten_metadata_attributes(value).each do |attribute_key, attribute_value|
+            span.set_attribute(attribute_key, attribute_value)
           end
         elsif key == "tags" && value.is_a?(Array)
           span.set_attribute(span_key, value) unless value.empty?
@@ -364,6 +355,8 @@ module Langfuse
 
       suffix = baggage_key[BAGGAGE_PREFIX.length..]
 
+      return OtelAttributes::TRACE_METADATA if suffix == "metadata"
+
       # Handle metadata keys (format: langfuse_metadata_{key_name})
       if suffix.start_with?("metadata_")
         metadata_key = suffix[("metadata_".length)..]
@@ -382,33 +375,6 @@ module Langfuse
       defined?(OpenTelemetry::Baggage)
     end
 
-    # Extract propagated attributes from baggage
-    #
-    # @param context [OpenTelemetry::Context] The context to read baggage from
-    # @return [Hash<String, String, Array<String>>] Hash of span key => value
-    #
-    # @api private
-    def self._extract_baggage_attributes(context)
-      return {} unless baggage_available?
-
-      baggage = OpenTelemetry::Baggage.values(context: context)
-      return {} unless baggage.is_a?(Hash)
-
-      attributes = {}
-      baggage.each do |baggage_key, baggage_value|
-        next unless baggage_key.to_s.start_with?(BAGGAGE_PREFIX)
-
-        span_key = _get_span_key_from_baggage_key(baggage_key.to_s)
-        next unless span_key
-
-        attributes[span_key] = _parse_baggage_value(span_key, baggage_value)
-      end
-      attributes
-    rescue StandardError => e
-      Langfuse.configuration.logger.debug("Langfuse: Baggage extraction failed: #{e.message}")
-      {}
-    end
-
     # Parse a baggage value into the appropriate format
     #
     # @param span_key [String] The span attribute key
@@ -419,6 +385,8 @@ module Langfuse
     def self._parse_baggage_value(span_key, baggage_value)
       if span_key == OtelAttributes::TRACE_TAGS && baggage_value.is_a?(String)
         baggage_value.split(",")
+      elsif span_key == OtelAttributes::TRACE_METADATA
+        _deserialize_metadata_value(baggage_value)
       else
         baggage_value.to_s
       end
@@ -433,15 +401,14 @@ module Langfuse
     # @return [OpenTelemetry::Context] New context with baggage set
     #
     # @api private
-    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def self._set_baggage_attribute(context:, key:, value:, baggage_key:)
       return context unless baggage_available?
 
-      if key == "metadata" && value.is_a?(Hash)
-        value.each do |k, v|
-          entry_key = "#{baggage_key}_#{k}"
-          context = OpenTelemetry::Baggage.set_value(entry_key, v.to_s, context: context)
-        end
+      if key == "metadata"
+        serialized = OtelAttributes.serialize(value, preserve_strings: true)
+        return context unless serialized
+
+        context = OpenTelemetry::Baggage.set_value(baggage_key, serialized, context: context)
       elsif key == "tags" && value.is_a?(Array)
         context = OpenTelemetry::Baggage.set_value(baggage_key, value.join(","), context: context)
       else
@@ -452,7 +419,104 @@ module Langfuse
       Langfuse.configuration.logger.warn("Langfuse: Failed to set baggage: #{e.message}")
       context
     end
-    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+
+    def self._validate_metadata_value(value)
+      masked_value = PayloadMasker.mask(value)
+      return nil if masked_value.nil?
+      return masked_value if masked_value == PayloadMasker::MASK_FAILURE_PLACEHOLDER
+
+      unless masked_value.is_a?(Hash)
+        Langfuse.configuration.logger.warn(
+          "Langfuse: Propagated attribute 'metadata' value must be a Hash. Dropping value."
+        )
+        return nil
+      end
+
+      _normalize_metadata_value(masked_value)
+    end
+
+    def self._normalize_metadata_value(value, active = {}.compare_by_identity)
+      case value
+      when Hash
+        _normalize_metadata_hash(value, active)
+      when Array
+        _normalize_metadata_array(value, active)
+      else
+        value
+      end
+    end
+
+    def self._normalize_metadata_hash(value, active)
+      return {} if active.key?(value)
+
+      active = active.dup.compare_by_identity
+      active[value] = true
+      value.each_with_object({}) do |(key, nested_value), normalized|
+        normalized_value = _normalize_metadata_value(nested_value, active)
+        normalized[key.to_s] = normalized_value unless normalized_value.nil?
+      end
+    end
+
+    def self._normalize_metadata_array(value, active)
+      return [] if active.key?(value)
+
+      active = active.dup.compare_by_identity
+      active[value] = true
+      value.map { |nested_value| _normalize_metadata_value(nested_value, active) }
+    end
+
+    def self._extract_baggage_attributes(context)
+      return {} unless baggage_available?
+
+      baggage = OpenTelemetry::Baggage.values(context: context)
+      return {} unless baggage.is_a?(Hash)
+
+      metadata, attributes = _extract_langfuse_baggage_values(baggage)
+      attributes.merge!(_flatten_metadata_attributes(metadata))
+    rescue StandardError => e
+      Langfuse.configuration.logger.debug("Langfuse: Baggage extraction failed: #{e.message}")
+      {}
+    end
+
+    def self._extract_langfuse_baggage_values(baggage)
+      metadata = nil
+      attributes = {}
+
+      baggage.each do |baggage_key, baggage_value|
+        span_key = _langfuse_span_key_for_baggage(baggage_key)
+        next unless span_key
+
+        if span_key == OtelAttributes::TRACE_METADATA
+          metadata = _parse_baggage_value(span_key, baggage_value)
+          next
+        end
+
+        attributes[span_key] = _parse_baggage_value(span_key, baggage_value)
+      end
+
+      [metadata, attributes]
+    end
+
+    def self._langfuse_span_key_for_baggage(baggage_key)
+      return nil unless baggage_key.to_s.start_with?(BAGGAGE_PREFIX)
+
+      _get_span_key_from_baggage_key(baggage_key.to_s)
+    end
+
+    def self._flatten_metadata_attributes(value)
+      OtelAttributes.flatten_metadata(value, OtelAttributes::TRACE_METADATA)
+    end
+
+    def self._deserialize_metadata_value(value)
+      JSON.parse(value.to_s)
+    rescue JSON::ParserError
+      value.to_s
+    end
+
+    private_class_method :_validate_metadata_value, :_normalize_metadata_value, :_normalize_metadata_hash,
+                         :_normalize_metadata_array, :_extract_langfuse_baggage_values,
+                         :_langfuse_span_key_for_baggage, :_flatten_metadata_attributes,
+                         :_deserialize_metadata_value
   end
 end
 # rubocop:enable Metrics/ModuleLength

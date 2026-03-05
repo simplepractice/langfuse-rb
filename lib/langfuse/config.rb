@@ -75,7 +75,10 @@ module Langfuse
     attr_accessor :release
 
     # @return [#call, nil] Optional callable for redacting payloads before they are serialized.
-    #   The callable receives keyword argument `data:` and should return masked data.
+    #   The callable receives keyword argument `data:` with structured Ruby data for `input`,
+    #   `output`, and `metadata` fields, including trace metadata passed via
+    #   `Langfuse.propagate_attributes`. Failures replace the full field with a placeholder,
+    #   and return values must remain JSON-serializable.
     attr_accessor :mask
 
     # @return [String] Default Langfuse API base URL

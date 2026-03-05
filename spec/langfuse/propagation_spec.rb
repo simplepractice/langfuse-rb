@@ -124,6 +124,19 @@ RSpec.describe Langfuse::Propagation do
         end
       end
 
+      it "masks metadata on the current span immediately" do
+        Langfuse.configuration.mask = lambda do |data:|
+          data.transform_values { |_| "[MASKED]" }
+        end
+
+        Langfuse.observe("test-operation") do |span|
+          described_class.propagate_attributes(metadata: { secret: "raw" }) do
+            attrs = span.otel_span.attributes
+            expect(attrs["langfuse.trace.metadata.secret"]).to eq("[MASKED]")
+          end
+        end
+      end
+
       it "merges metadata from nested contexts" do
         described_class.propagate_attributes(metadata: { key1: "value1" }) do
           described_class.propagate_attributes(metadata: { key2: "value2" }) do
@@ -144,6 +157,25 @@ RSpec.describe Langfuse::Propagation do
             expect(attrs["langfuse.trace.metadata.key1"]).to eq("value2")
             span.end
           end
+        end
+      end
+
+      it "propagates masked metadata to child spans without re-masking it" do
+        mask_calls = 0
+        Langfuse.configuration.mask = lambda do |data:|
+          mask_calls += 1
+          data.transform_values { |_| "[MASKED]" }
+        end
+
+        described_class.propagate_attributes(metadata: { secret: "raw" }) do
+          parent = Langfuse.observe("parent")
+          child = parent.start_observation("child")
+
+          expect(child.otel_span.attributes["langfuse.trace.metadata.secret"]).to eq("[MASKED]")
+          expect(mask_calls).to eq(1)
+
+          child.end
+          parent.end
         end
       end
     end
@@ -304,12 +336,17 @@ RSpec.describe Langfuse::Propagation do
           end
         end
 
-        it "sets baggage for metadata with prefixed keys" do
+        it "stores masked metadata in baggage as a single serialized value" do
+          Langfuse.configuration.mask = lambda do |data:|
+            data.transform_values { |_| "[MASKED]" }
+          end
+
           described_class.propagate_attributes(metadata: { env: "prod", region: "us-east" }, as_baggage: true) do
             context = OpenTelemetry::Context.current
             baggage = OpenTelemetry::Baggage.values(context: context)
-            expect(baggage["langfuse_metadata_env"]).to eq("prod")
-            expect(baggage["langfuse_metadata_region"]).to eq("us-east")
+            expect(baggage["langfuse_metadata"]).to eq('{"env":"[MASKED]","region":"[MASKED]"}')
+            expect(baggage["langfuse_metadata_env"]).to be_nil
+            expect(baggage["langfuse_metadata_region"]).to be_nil
           end
         end
 
@@ -335,6 +372,62 @@ RSpec.describe Langfuse::Propagation do
             tags_value = attrs["langfuse.trace.tags"]
             expect(tags_value).to contain_exactly("valid", "also_valid") if tags_value
           end
+        end
+      end
+    end
+
+    context "with metadata masking failures" do
+      include_context "with baggage mock"
+
+      it "writes a single placeholder attribute and never logs raw payloads" do
+        warnings = []
+        allow(Langfuse.configuration.logger).to receive(:warn) { |message| warnings << message }
+        Langfuse.configuration.mask = lambda do |data:|
+          raise StandardError, "payload leak: #{data.inspect}"
+        end
+
+        Langfuse.observe("test-operation") do |span|
+          described_class.propagate_attributes(metadata: { secret: "do-not-log" }, as_baggage: true) do
+            attrs = span.otel_span.attributes
+            baggage = OpenTelemetry::Baggage.values(context: OpenTelemetry::Context.current)
+
+            expect(attrs["langfuse.trace.metadata"]).to eq(Langfuse::PayloadMasker::MASK_FAILURE_PLACEHOLDER)
+            expect(attrs.keys.grep(/\Alangfuse\.trace\.metadata\./)).to be_empty
+            expect(baggage["langfuse_metadata"]).to eq(Langfuse::PayloadMasker::MASK_FAILURE_PLACEHOLDER)
+          end
+        end
+
+        warnings.each do |warning|
+          expect(warning).to include("Langfuse: mask function failed (StandardError)")
+          expect(warning).not_to include("do-not-log")
+          expect(warning).not_to include("payload leak")
+        end
+      end
+    end
+
+    context "with metadata masking enabled" do
+      it "does not mask non-metadata propagated attributes" do
+        Langfuse.configuration.mask = lambda do |data:|
+          data.transform_values { |_| "[MASKED]" }
+        end
+
+        described_class.propagate_attributes(
+          user_id: "user_123",
+          session_id: "session_abc",
+          version: "v1.2.3",
+          tags: ["tag1"],
+          metadata: { secret: "raw" }
+        ) do
+          span = Langfuse.observe("test")
+          attrs = span.otel_span.attributes
+
+          expect(attrs["user.id"]).to eq("user_123")
+          expect(attrs["session.id"]).to eq("session_abc")
+          expect(attrs["langfuse.version"]).to eq("v1.2.3")
+          expect(attrs["langfuse.trace.tags"]).to eq(["tag1"])
+          expect(attrs["langfuse.trace.metadata.secret"]).to eq("[MASKED]")
+
+          span.end
         end
       end
     end
@@ -407,6 +500,20 @@ RSpec.describe Langfuse::Propagation do
         expect(attrs["langfuse.trace.metadata.region"]).to eq("us-east")
       end
 
+      it "extracts structured metadata from the root baggage key" do
+        context = OpenTelemetry::Context.current
+        context = OpenTelemetry::Baggage.set_value(
+          "langfuse_metadata",
+          '{"env":"production","nested":{"region":"us-east"}}',
+          context: context
+        )
+
+        attrs = described_class.get_propagated_attributes_from_context(context)
+
+        expect(attrs["langfuse.trace.metadata.env"]).to eq("production")
+        expect(attrs["langfuse.trace.metadata.nested.region"]).to eq("us-east")
+      end
+
       it "ignores non-Langfuse baggage keys" do
         context = OpenTelemetry::Context.current
         context = OpenTelemetry::Baggage.set_value("other_key", "other_value", context: context)
@@ -455,6 +562,8 @@ RSpec.describe Langfuse::Propagation do
     end
 
     it "maps metadata baggage keys" do
+      expect(described_class.send(:_get_span_key_from_baggage_key, "langfuse_metadata"))
+        .to eq("langfuse.trace.metadata")
       expect(described_class.send(:_get_span_key_from_baggage_key,
                                   "langfuse_metadata_env")).to eq("langfuse.trace.metadata.env")
       expect(described_class.send(:_get_span_key_from_baggage_key,

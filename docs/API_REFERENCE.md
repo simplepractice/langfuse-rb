@@ -53,6 +53,7 @@ Block receives a configuration object with these properties:
 | `job_queue`                    | Symbol  | No       | `:default`                     | ⚠️ Experimental (not implemented) |
 | `environment`                  | String  | No       | `nil`                          | Default trace environment          |
 | `release`                      | String  | No       | `nil`                          | Default release identifier         |
+| `mask`                         | Callable| No       | `nil`                          | Redacts `input`, `output`, `metadata` before serialization |
 
 **Example:**
 
@@ -458,7 +459,7 @@ end
 #### `event`
 
 ```ruby
-event(name:, input: nil, output: nil, metadata: nil, level: "default") # => self
+event(name:, input: nil, level: "default") # => self
 ```
 
 Add a point-in-time event to the observation.
@@ -469,7 +470,6 @@ Add a point-in-time event to the observation.
 obs.event(
   name: "checkpoint",
   input: { step: 2 },
-  metadata: { timestamp: Time.now.iso8601 },
   level: "DEFAULT"
 )
 ```
@@ -963,7 +963,7 @@ propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
 | ------------ | -------------------- | -------- | ------------------------------------------ |
 | `user_id`    | String               | No       | User identifier (≤200 chars)               |
 | `session_id` | String               | No       | Session identifier (≤200 chars)            |
-| `metadata`   | Hash<String, String> | No       | Metadata hash                              |
+| `metadata`   | Hash                 | No       | Structured metadata hash                   |
 | `version`    | String               | No       | Version (≤200 chars)                       |
 | `tags`       | Array<String>        | No       | Tags array (each ≤200 chars)               |
 | `as_baggage` | Boolean              | No       | Propagate across services via OTel baggage |
@@ -982,6 +982,10 @@ Langfuse.propagate_attributes(
   Langfuse.observe("operation") { ... }
 end
 ```
+
+If `config.mask` is configured, propagated metadata is masked before it is written to
+the active span, stored in context, or serialized into baggage. Mask failures replace
+the full metadata field with `"<fully masked due to failed mask function>"`.
 
 ## Types
 

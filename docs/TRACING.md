@@ -133,6 +133,11 @@ Langfuse.propagate_attributes(
 end
 ```
 
+If `config.mask` is configured, `input`, `output`, and `metadata` are masked as
+structured Ruby data before serialization. That includes trace metadata passed through
+`Langfuse.propagate_attributes`, which is masked once before it is stored in span
+attributes, OpenTelemetry context, and baggage.
+
 ## Quick Examples
 
 ### Basic Observation with Generation

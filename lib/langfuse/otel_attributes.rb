@@ -58,9 +58,6 @@ module Langfuse
     VERSION = "langfuse.version"
     RELEASE = "langfuse.release"
     ENVIRONMENT = "langfuse.environment"
-    MASK_FAILURE_PLACEHOLDER = "<fully masked due to failed mask function>"
-    MASKABLE_KEYS = [[:input, "input"], [:output, "output"], [:metadata, "metadata"]].freeze
-
     # Validation limits
     MAX_TAG_LENGTH = 200
 
@@ -206,7 +203,7 @@ module Langfuse
     #   flatten_metadata({ user: { id: 123 } }, "langfuse.trace.metadata")
     #   # => { "langfuse.trace.metadata.user.id" => "123" }
     #
-    def self.flatten_metadata(metadata, prefix)
+    def self.flatten_metadata(metadata, prefix, active = {}.compare_by_identity)
       return {} if metadata.nil?
 
       # Handle non-hash metadata (arrays, primitives, etc.)
@@ -214,6 +211,10 @@ module Langfuse
         serialized = serialize(metadata, preserve_strings: true)
         return serialized ? { prefix => serialized } : {}
       end
+      return {} if active.key?(metadata)
+
+      active = active.dup.compare_by_identity
+      active[metadata] = true
 
       # Recursively flatten hash metadata
       result = {}
@@ -221,7 +222,7 @@ module Langfuse
         next if value.nil?
 
         new_key = "#{prefix}.#{key}"
-        result.merge!(flatten_hash_value(value, new_key))
+        result.merge!(flatten_hash_value(value, new_key, active))
       end
 
       result
@@ -233,10 +234,10 @@ module Langfuse
     # @param key [String] Attribute key prefix
     # @return [Hash] Flattened attributes hash
     # @api private
-    def self.flatten_hash_value(value, key)
+    def self.flatten_hash_value(value, key, active = {})
       if value.is_a?(Hash)
         # Recursively flatten nested hashes
-        flatten_metadata(value, key)
+        flatten_metadata(value, key, active)
       elsif value.is_a?(Array)
         # Serialize arrays to JSON
         serialized = serialize(value, preserve_strings: true)
@@ -308,60 +309,13 @@ module Langfuse
       end
     end
 
-    def self.log_mask_failure(error)
-      logger = Langfuse.configuration.logger
-      logger.warn("Langfuse: mask function failed (#{error.class}); using placeholder")
-    rescue StandardError
-      nil
-    end
-
-    def self.mask_fields(attrs)
-      mask = Langfuse.configuration.mask
-      return attrs unless mask
-
-      attrs.dup.tap do |masked|
-        MASKABLE_KEYS.each do |sym_key, str_key|
-          masked[sym_key] = safe_mask(mask, masked[sym_key]) if masked.key?(sym_key)
-          masked[str_key] = safe_mask(mask, masked[str_key]) if masked.key?(str_key)
-        end
-      end
-    end
-
-    def self.safe_mask(mask, data)
-      return data if data.nil?
-
-      mask.call(data: duplicate_mask_input(data))
-    rescue StandardError => e
-      log_mask_failure(e)
-      MASK_FAILURE_PLACEHOLDER
-    end
-
-    def self.duplicate_mask_input(data)
-      case data
-      when Hash
-        data.each_with_object({}) do |(key, value), duplicate|
-          duplicate[duplicate_mask_value(key)] = duplicate_mask_input(value)
-        end
-      when Array
-        data.map { |value| duplicate_mask_input(value) }
-      else
-        duplicate_mask_value(data)
-      end
-    end
-
-    def self.duplicate_mask_value(value)
-      value.dup
-    rescue StandardError
-      value
-    end
-
     def self.prepare_attrs(attrs)
-      masked = mask_fields(attrs.to_h)
-      [masked, ->(key) { get_hash_value(masked, key) }]
+      hash = attrs.to_h
+      hash = PayloadMasker.mask_fields(hash) if Langfuse.configuration.mask
+      [hash, ->(key) { get_hash_value(hash, key) }]
     end
 
-    private_class_method :prepare_attrs, :mask_fields, :safe_mask, :log_mask_failure,
-                         :duplicate_mask_input, :duplicate_mask_value
+    private_class_method :prepare_attrs
   end
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/ModuleLength
 end

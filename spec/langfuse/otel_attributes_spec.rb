@@ -511,7 +511,7 @@ RSpec.describe Langfuse::OtelAttributes do
         "metadata" => { "source" => "api-string" }
       }
 
-      masked = described_class.send(:mask_fields, attrs)
+      masked = Langfuse::PayloadMasker.mask_fields(attrs)
 
       expect(masked[:input]).to eq({ query: "[MASKED]" })
       expect(masked["input"]).to eq({ "query" => "[MASKED]" })
@@ -591,6 +591,28 @@ RSpec.describe Langfuse::OtelAttributes do
         { "secret" => "[MASKED]", "nested" => [{ "value" => "[MASKED]" }] }
       )
       expect(payload).to eq(original)
+    end
+
+    it "does not raise on cyclic payloads when masking is enabled" do
+      cyclic_hash = {}
+      cyclic_hash[:self] = cyclic_hash
+      cyclic_array = []
+      cyclic_array << cyclic_array
+      Langfuse.configuration.mask = ->(data:) { data }
+
+      result = nil
+
+      expect do
+        result = described_class.create_trace_attributes(
+          input: cyclic_hash,
+          output: cyclic_array,
+          metadata: cyclic_hash
+        )
+      end.not_to raise_error
+
+      expect(result["langfuse.trace.input"]).to be_nil
+      expect(result["langfuse.trace.output"]).to be_nil
+      expect(result.keys.grep(/\Alangfuse\.trace\.metadata/)).to be_empty
     end
 
     it "does not include payload data in mask failure logs" do

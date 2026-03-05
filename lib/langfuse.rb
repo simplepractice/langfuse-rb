@@ -40,6 +40,7 @@ module Langfuse
 end
 
 require_relative "langfuse/config"
+require_relative "langfuse/payload_masker"
 require_relative "langfuse/prompt_cache"
 require_relative "langfuse/rails_cache_adapter"
 require_relative "langfuse/cache_warmer"
@@ -140,7 +141,9 @@ module Langfuse
     #
     # @param user_id [String, nil] User identifier (≤200 characters)
     # @param session_id [String, nil] Session identifier (≤200 characters)
-    # @param metadata [Hash<String, String>, nil] Additional metadata (all values ≤200 characters)
+    # @param metadata [Hash, nil] Structured trace metadata. When `config.mask` is set,
+    #   this hash is masked once before it is written to the active span, stored in
+    #   OpenTelemetry context, and optionally serialized into baggage.
     # @param version [String, nil] Version identifier (≤200 characters)
     # @param tags [Array<String>, nil] List of tags (each ≤200 characters)
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
