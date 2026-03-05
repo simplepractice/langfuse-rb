@@ -134,11 +134,13 @@ When enabled, serves stale cached data immediately while refreshing in the backg
 - `false` (default): Cache expires at TTL, next request waits for API (~100ms)
 - `true`: After TTL, serves stale data instantly (~1ms) + refreshes in background
 
+**Important:** SWR only activates when `cache_stale_ttl` is a positive value. Set it explicitly (typically equal to `cache_ttl`).
+
 **Compatibility:**
 
 - ✅ Works with `:memory` backend
 - ✅ Works with `:rails` backend
-- Set `cache_stale_ttl` to control how long stale data is served (e.g., same as `cache_ttl`)
+- Set `cache_stale_ttl` to a positive value to activate SWR (often the same as `cache_ttl`)
 
 See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for detailed usage.
 
@@ -162,7 +164,7 @@ config.cache_stale_ttl = :indefinite  # Never expire (normalized to 1000 years i
 
 **Recommended values:**
 
-- Same as `cache_ttl` (default when SWR enabled): Balanced freshness/latency
+- Same as `cache_ttl`: Balanced freshness/latency
 - `2x cache_ttl`: More tolerance for API slowdowns
 - `:indefinite`: Maximum performance, eventual consistency, high availability
 
@@ -188,25 +190,25 @@ config.cache_refresh_threads = 10  # More threads for high-traffic apps
 
 **Memory impact:** ~1-2MB per thread pool (negligible)
 
-Only used when SWR is enabled (`cache_stale_while_revalidate = true`).
+Only used when SWR is enabled (`cache_stale_ttl > 0`).
 
 #### `batch_size`
 
 - **Type:** Integer
 - **Default:** `50`
-- **Description:** Number of scores to batch before sending to API
+- **Description:** Number of scores to batch before sending to API. Also used for OpenTelemetry trace export batching.
 
 ```ruby
 config.batch_size = 100  # Larger batches for high-volume scoring
 ```
 
-Used by scoring API. See [SCORING.md](SCORING.md).
+Used by scoring API and OpenTelemetry tracing export. See [SCORING.md](SCORING.md).
 
 #### `flush_interval`
 
 - **Type:** Integer (seconds)
 - **Default:** `10`
-- **Description:** Maximum time to wait before flushing batched scores
+- **Description:** Maximum time to wait before flushing batched scores. Also controls OpenTelemetry trace export schedule when tracing is async.
 
 ```ruby
 config.flush_interval = 5  # Flush more frequently
@@ -231,14 +233,14 @@ config.logger = Logger.new(IO::NULL)
 
 - **Type:** Boolean
 - **Default:** `true`
-- **Status:** Not yet implemented (placeholder)
-- **Description:** Future: enable async background processing for traces
+- **Status:** Implemented for OpenTelemetry batching; ActiveJob integration is not implemented
+- **Description:** Controls OpenTelemetry export behavior. When `true`, spans are exported in the background on a schedule. When `false`, spans are queued and exported on explicit flush with a long schedule delay.
 
 ```ruby
-config.tracing_async = true  # Placeholder - no effect currently
+config.tracing_async = true
 ```
 
-**Current Behavior:** All trace operations are synchronous with OpenTelemetry export. This option is reserved for future async job processing.
+**Current Behavior:** Uses OpenTelemetry `BatchSpanProcessor` in both modes. Async mode uses `flush_interval` for scheduled export; sync mode uses a long schedule delay and relies on explicit `force_flush`.
 
 #### `job_queue` ⚠️ Experimental
 
@@ -253,6 +255,26 @@ config.job_queue = :langfuse  # Placeholder - no effect currently
 
 **Current Behavior:** No ActiveJob integration yet. Reserved for future implementation.
 
+#### `environment`
+
+- **Type:** String
+- **Default:** `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]` if set)
+- **Description:** Default tracing environment applied to new traces/observations
+
+```ruby
+config.environment = "production"
+```
+
+#### `release`
+
+- **Type:** String
+- **Default:** `nil` (or `ENV["LANGFUSE_RELEASE"]` / CI commit env if set)
+- **Description:** Default release identifier applied to new traces/observations
+
+```ruby
+config.release = "2024.1"
+```
+
 ## Environment Variables
 
 The SDK automatically reads these environment variables as defaults when no explicit value is configured:
@@ -260,6 +282,8 @@ The SDK automatically reads these environment variables as defaults when no expl
 - `LANGFUSE_PUBLIC_KEY` — public API key
 - `LANGFUSE_SECRET_KEY` — secret API key
 - `LANGFUSE_BASE_URL` — API endpoint (defaults to `https://cloud.langfuse.com`)
+- `LANGFUSE_TRACING_ENVIRONMENT` — default trace environment
+- `LANGFUSE_RELEASE` — default release identifier (falls back to common CI commit envs if present)
 
 Explicit configuration always takes precedence:
 

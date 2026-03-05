@@ -287,7 +287,7 @@ module Langfuse
       # @param input [Object, nil] Input data
       # @param output [Object, nil] Output data
       # @param metadata [Hash, nil] Additional metadata
-      # @param tags [Array<String>, nil] Tags array
+      # @param tags [Array<String>, nil] Tags array (each tag must be ≤200 characters; oversized tags are dropped)
       # @param public [Boolean, nil] Public visibility flag
       # @param environment [String, nil] Environment identifier
       # rubocop:disable Metrics/ParameterLists

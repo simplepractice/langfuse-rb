@@ -176,7 +176,7 @@ RSpec.describe Langfuse::OtelAttributes do
         "langfuse.release" => "v1.0.0",
         "langfuse.trace.input" => '{"query":"test"}',
         "langfuse.trace.output" => '{"result":"success"}',
-        "langfuse.trace.tags" => '["checkout","payment"]',
+        "langfuse.trace.tags" => %w[checkout payment],
         "langfuse.trace.public" => false,
         "langfuse.environment" => "production"
       )
@@ -226,6 +226,68 @@ RSpec.describe Langfuse::OtelAttributes do
       # Test with nil input
       result_nil = described_class.create_trace_attributes(nil)
       expect(result_nil).to eq({})
+    end
+
+    it "omits tags key when tags are nil" do
+      attrs = Langfuse::Types::TraceAttributes.new(tags: nil)
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result).not_to have_key("langfuse.trace.tags")
+    end
+
+    it "omits tags key when tags are empty" do
+      attrs = Langfuse::Types::TraceAttributes.new(tags: [])
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result).not_to have_key("langfuse.trace.tags")
+    end
+
+    it "filters non-string elements from tags" do
+      attrs = { tags: ["valid", 123, nil, "also_valid"] }
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result["langfuse.trace.tags"]).to eq(%w[valid also_valid])
+    end
+
+    it "drops tags exceeding MAX_TAG_LENGTH" do
+      allow(Langfuse.configuration.logger).to receive(:warn)
+      oversized = "x" * (described_class::MAX_TAG_LENGTH + 1)
+      attrs = { tags: [oversized] }
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result).not_to have_key("langfuse.trace.tags")
+    end
+
+    it "accepts tags exactly MAX_TAG_LENGTH characters long" do
+      tag = "x" * described_class::MAX_TAG_LENGTH
+      attrs = { tags: [tag] }
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result["langfuse.trace.tags"]).to eq([tag])
+    end
+
+    it "keeps valid tags and drops oversized ones" do
+      allow(Langfuse.configuration.logger).to receive(:warn)
+      oversized = "x" * (described_class::MAX_TAG_LENGTH + 1)
+      attrs = { tags: ["valid", oversized, "also_valid"] }
+      result = described_class.create_trace_attributes(attrs)
+
+      expect(result["langfuse.trace.tags"]).to eq(%w[valid also_valid])
+    end
+
+    it "logs a warning when dropping an oversized tag" do
+      logger = instance_double(Logger)
+      allow(Langfuse.configuration).to receive(:logger).and_return(logger)
+      allow(logger).to receive(:warn)
+
+      limit = described_class::MAX_TAG_LENGTH
+      oversized = "x" * (limit + 50)
+      attrs = { tags: [oversized] }
+      described_class.create_trace_attributes(attrs)
+
+      expect(logger).to have_received(:warn).with(
+        "Langfuse: Tag exceeds #{limit} characters (#{limit + 50} chars). Dropping."
+      )
     end
   end
 

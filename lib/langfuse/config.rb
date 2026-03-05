@@ -46,10 +46,10 @@ module Langfuse
     # @return [Integer] Lock timeout in seconds for distributed cache stampede protection
     attr_accessor :cache_lock_timeout
 
-    # @return [Boolean] Enable stale-while-revalidate caching (when true, sets cache_stale_ttl to cache_ttl if not customized)
+    # @return [Boolean] Enable stale-while-revalidate caching (requires cache_stale_ttl > 0 to activate)
     attr_accessor :cache_stale_while_revalidate
 
-    # @return [Integer, Symbol] Stale TTL in seconds (grace period for serving stale data, default: 0 when SWR disabled, cache_ttl when SWR enabled)
+    # @return [Integer, Symbol] Stale TTL in seconds (grace period for serving stale data, default: 0)
     #   Accepts :indefinite which is automatically normalized to 1000 years (31,536,000,000 seconds) for practical "never expire" behavior.
     attr_accessor :cache_stale_ttl
 

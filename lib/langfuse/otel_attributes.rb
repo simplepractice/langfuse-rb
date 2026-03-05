@@ -61,6 +61,9 @@ module Langfuse
     MASK_FAILURE_PLACEHOLDER = "<fully masked due to failed mask function>"
     MASKABLE_KEYS = [[:input, "input"], [:output, "output"], [:metadata, "metadata"]].freeze
 
+    # Validation limits
+    MAX_TAG_LENGTH = 200
+
     # Creates OpenTelemetry attributes from Langfuse trace attributes
     #
     # Converts user-friendly trace attributes into the internal OpenTelemetry
@@ -90,7 +93,7 @@ module Langfuse
         RELEASE => get_value.call(:release),
         TRACE_INPUT => serialize(get_value.call(:input)),
         TRACE_OUTPUT => serialize(get_value.call(:output)),
-        TRACE_TAGS => serialize(get_value.call(:tags)),
+        TRACE_TAGS => normalize_tags(get_value.call(:tags)),
         ENVIRONMENT => get_value.call(:environment),
         TRACE_PUBLIC => get_value.call(:public),
         **flatten_metadata(get_value.call(:metadata), TRACE_METADATA)
@@ -166,6 +169,27 @@ module Langfuse
       rescue StandardError
         nil
       end
+    end
+
+    # Filters tags to String-only elements within 200-char limit, returns nil if empty or nil
+    #
+    # @param tags [Array, nil] Raw tags array (each tag must be ≤200 characters; oversized tags are dropped with a warning)
+    # @return [Array<String>, nil] Filtered tags or nil
+    # @api private
+    def self.normalize_tags(tags)
+      return nil if tags.nil?
+
+      logger = Langfuse.configuration.logger
+      filtered = tags.select do |t|
+        next false unless t.is_a?(String)
+
+        if t.length > MAX_TAG_LENGTH
+          logger.warn("Langfuse: Tag exceeds #{MAX_TAG_LENGTH} characters (#{t.length} chars). Dropping.")
+          next false
+        end
+        true
+      end
+      filtered.empty? ? nil : filtered
     end
 
     # Flattens and serializes metadata into OpenTelemetry attribute format
