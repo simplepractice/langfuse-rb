@@ -410,7 +410,7 @@ update_trace(attributes) # => self
 update_trace(**keyword_args) # => self
 ```
 
-Update trace-level attributes.
+Update trace-level attributes. Tags must be strings of ≤200 characters; oversized tags are dropped with a warning.
 
 **Example:**
 
@@ -418,7 +418,7 @@ Update trace-level attributes.
 obs.update_trace(
   user_id: "user_123",
   session_id: "session_456",
-  tags: ["api", "v1"]
+  tags: ["api", "v1"] # each tag must be ≤200 chars
 )
 ```
 
@@ -962,7 +962,7 @@ propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
 | `session_id` | String               | No       | Session identifier (≤200 chars)            |
 | `metadata`   | Hash<String, String> | No       | Metadata hash                              |
 | `version`    | String               | No       | Version (≤200 chars)                       |
-| `tags`       | Array<String>        | No       | Tags array                                 |
+| `tags`       | Array<String>        | No       | Tags array (each ≤200 chars)               |
 | `as_baggage` | Boolean              | No       | Propagate across services via OTel baggage |
 
 **Example:**

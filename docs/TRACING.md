@@ -118,7 +118,7 @@ end
 
 ### Trace-Level Attributes
 
-Trace-level attributes (user_id, session_id, metadata, tags) are set using `Langfuse.propagate_attributes()`. This ensures all observations within the context inherit these attributes.
+Trace-level attributes (user_id, session_id, metadata, tags) are set using `Langfuse.propagate_attributes()`. This ensures all observations within the context inherit these attributes. Individual tags must be strings of ≤200 characters; oversized tags are dropped with a warning.
 
 ```ruby
 Langfuse.propagate_attributes(
