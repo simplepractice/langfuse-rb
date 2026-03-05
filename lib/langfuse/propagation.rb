@@ -420,6 +420,8 @@ module Langfuse
       context
     end
 
+    # Masks before type-checking so the mask function receives the raw value.
+    # @api private
     def self._validate_metadata_value(value)
       masked_value = PayloadMasker.mask(value)
       return nil if masked_value.nil?
@@ -435,6 +437,9 @@ module Langfuse
       _normalize_metadata_value(masked_value)
     end
 
+    # Recursive normalizer with identity-based cycle detection to safely handle
+    # self-referencing structures (hashes/arrays that contain themselves).
+    # @api private
     def self._normalize_metadata_value(value, active = {}.compare_by_identity)
       case value
       when Hash
@@ -446,6 +451,7 @@ module Langfuse
       end
     end
 
+    # @api private
     def self._normalize_metadata_hash(value, active)
       return {} if active.key?(value)
 
@@ -457,6 +463,7 @@ module Langfuse
       end
     end
 
+    # @api private
     def self._normalize_metadata_array(value, active)
       return [] if active.key?(value)
 
@@ -478,6 +485,9 @@ module Langfuse
       {}
     end
 
+    # Metadata is separated from other baggage values because it requires
+    # flattening into dot-notation OTel attributes, while other values map 1:1.
+    # @api private
     def self._extract_langfuse_baggage_values(baggage)
       metadata = nil
       attributes = {}

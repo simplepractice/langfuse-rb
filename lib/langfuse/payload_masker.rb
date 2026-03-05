@@ -8,6 +8,10 @@ module Langfuse
     MASK_FAILURE_PLACEHOLDER = "<fully masked due to failed mask function>"
     MASKABLE_KEYS = [[:input, "input"], [:output, "output"], [:metadata, "metadata"]].freeze
 
+    # Duplicates +attrs+ and masks the :input, :output, and :metadata keys in-place.
+    #
+    # @param attrs [Hash] attribute hash (symbol or string keys accepted)
+    # @return [Hash] shallow copy with maskable values replaced by mask output
     def self.mask_fields(attrs)
       attrs.dup.tap do |masked|
         MASKABLE_KEYS.each do |sym_key, str_key|
@@ -17,6 +21,14 @@ module Langfuse
       end
     end
 
+    # Applies the configured mask callable to a single value.
+    #
+    # Returns +data+ unchanged when no mask is configured. On mask failure the
+    # error is logged and {MASK_FAILURE_PLACEHOLDER} is returned so callers
+    # never see an exception from the user-supplied function.
+    #
+    # @param data [Object, nil] raw payload value
+    # @return [Object, nil] masked value, original value, or placeholder on failure
     def self.mask(data)
       mask = Langfuse.configuration.mask
       return data unless mask
