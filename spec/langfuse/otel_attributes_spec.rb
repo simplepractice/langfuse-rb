@@ -576,6 +576,23 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(logger).to have_received(:warn).with(/mask function failed/).at_least(:once)
     end
 
+    it "does not mutate caller-owned payloads when mask mutates in place" do
+      payload = { secret: "token", nested: [{ value: "keep" }] }
+      original = Marshal.load(Marshal.dump(payload))
+      Langfuse.configuration.mask = lambda do |data:|
+        data[:secret] = "[MASKED]"
+        data[:nested].first[:value] = "[MASKED]"
+        data
+      end
+
+      result = described_class.create_trace_attributes(input: payload)
+
+      expect(JSON.parse(result["langfuse.trace.input"])).to eq(
+        { "secret" => "[MASKED]", "nested" => [{ "value" => "[MASKED]" }] }
+      )
+      expect(payload).to eq(original)
+    end
+
     it "does not include payload data in mask failure logs" do
       warnings = []
       allow(logger).to receive(:warn) { |message| warnings << message }

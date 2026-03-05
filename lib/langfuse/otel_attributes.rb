@@ -330,10 +330,29 @@ module Langfuse
     def self.safe_mask(mask, data)
       return data if data.nil?
 
-      mask.call(data: data)
+      mask.call(data: duplicate_mask_input(data))
     rescue StandardError => e
       log_mask_failure(e)
       MASK_FAILURE_PLACEHOLDER
+    end
+
+    def self.duplicate_mask_input(data)
+      case data
+      when Hash
+        data.each_with_object({}) do |(key, value), duplicate|
+          duplicate[duplicate_mask_value(key)] = duplicate_mask_input(value)
+        end
+      when Array
+        data.map { |value| duplicate_mask_input(value) }
+      else
+        duplicate_mask_value(data)
+      end
+    end
+
+    def self.duplicate_mask_value(value)
+      value.dup
+    rescue StandardError
+      value
     end
 
     def self.prepare_attrs(attrs)
@@ -341,7 +360,8 @@ module Langfuse
       [masked, ->(key) { get_hash_value(masked, key) }]
     end
 
-    private_class_method :prepare_attrs, :mask_fields, :safe_mask, :log_mask_failure
+    private_class_method :prepare_attrs, :mask_fields, :safe_mask, :log_mask_failure,
+                         :duplicate_mask_input, :duplicate_mask_value
   end
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/ModuleLength
 end
