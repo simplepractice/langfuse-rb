@@ -152,7 +152,7 @@ module Langfuse
     # @return [Hash<String, String, Array<String>>] Hash of span key => value
     #
     # @api private
-    # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
     def self.get_propagated_attributes_from_context(context)
       propagated_attributes = _extract_baggage_attributes(context)
 
@@ -166,10 +166,15 @@ module Langfuse
         span_key = _get_propagated_span_key(key)
 
         if key == "metadata" && value.is_a?(Hash)
-          # Handle metadata - flatten into individual attributes
-          value.each do |k, v|
-            metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
-            propagated_attributes[metadata_key] = v.to_s
+          # Mask before flattening — context stores raw for correct nested merging
+          masked = Masking.apply(value, mask: Langfuse.configuration.mask)
+          if masked.is_a?(Hash)
+            masked.each do |k, v|
+              metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
+              propagated_attributes[metadata_key] = v.to_s
+            end
+          else
+            propagated_attributes[OtelAttributes::TRACE_METADATA] = masked.to_s
           end
         elsif key == "tags" && value.is_a?(Array)
           propagated_attributes[span_key] = value unless value.empty?
@@ -177,7 +182,7 @@ module Langfuse
           propagated_attributes[span_key] = value.to_s
         end
       end
-      # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+      # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 
       propagated_attributes
     end

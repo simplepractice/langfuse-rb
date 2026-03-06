@@ -560,6 +560,22 @@ RSpec.describe Langfuse::Propagation do
       end
     end
 
+    it "masks metadata on child spans created within propagation context" do
+      Langfuse.configuration.mask = lambda { |data:|
+        data.transform_values { "[MASKED]" }
+      }
+
+      described_class.propagate_attributes(metadata: { secret: "value" }) do
+        Langfuse.observe("parent") do |parent|
+          parent.start_observation("child") do |child|
+            attrs = child.otel_span.attributes
+            # Child gets propagated metadata via SpanProcessor — must be masked
+            expect(attrs["langfuse.trace.metadata.secret"]).to eq("[MASKED]")
+          end
+        end
+      end
+    end
+
     it "passes metadata through when mask is nil" do
       Langfuse.configuration.mask = nil
 
