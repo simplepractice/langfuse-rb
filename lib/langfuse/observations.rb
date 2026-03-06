@@ -344,7 +344,7 @@ module Langfuse
       update_observation_attributes(usage_details: value)
     end
 
-    # @param value [Hash] Cost details hash (e.g., total_cost and provider-specific fields)
+    # @param value [Hash] Cost details hash (prefer :input, :output, :total for aggregate Langfuse cost metrics)
     # @return [void]
     def cost_details=(value)
       update_observation_attributes(cost_details: value)

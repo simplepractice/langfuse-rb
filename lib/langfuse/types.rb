@@ -173,7 +173,7 @@ module Langfuse
       # @return [Hash, nil] Token usage and other model-specific usage metrics
       attr_accessor :usage_details
 
-      # @return [Hash, nil] Cost breakdown for the generation (total_cost, etc.)
+      # @return [Hash, nil] Cost breakdown for the generation (prefer :input, :output, :total)
       attr_accessor :cost_details
 
       # @return [Hash, nil] Information about the prompt used from Langfuse prompt management
@@ -186,7 +186,7 @@ module Langfuse
       # @param model [String, nil] Model name
       # @param model_parameters [Hash, nil] Model parameters
       # @param usage_details [Hash, nil] Usage metrics
-      # @param cost_details [Hash, nil] Cost breakdown
+      # @param cost_details [Hash, nil] Cost breakdown (prefer :input, :output, :total)
       # @param prompt [Hash, nil] Prompt information with :name, :version, :is_fallback keys
       # @param kwargs [Hash] Additional keyword arguments passed to SpanAttributes
       # rubocop:disable Metrics/ParameterLists
