@@ -293,6 +293,35 @@ module Langfuse
     end
   end
 
+  # Shared setters for observation types that interact with a model (Generation, Embedding).
+  # @api private
+  module ModelSetters
+    # @param value [Hash] Usage hash with token counts
+    # @return [void]
+    # @deprecated Use #usage_details= instead.
+    def usage=(value)
+      self.usage_details = value
+    end
+
+    # @param value [Hash] Usage details hash (preserves key shape as provided)
+    # @return [void]
+    def usage_details=(value)
+      update_observation_attributes(usage_details: value)
+    end
+
+    # @param value [String] Model name (e.g., "gpt-4", "claude-3-opus")
+    # @return [void]
+    def model=(value)
+      update_observation_attributes(model: value)
+    end
+
+    # @param value [Hash] Model parameters (temperature, max_tokens, etc.)
+    # @return [void]
+    def model_parameters=(value)
+      update_observation_attributes(model_parameters: value)
+    end
+  end
+
   # Observation for LLM calls. Provides methods to set output, usage, and other LLM-specific metadata.
   #
   # @example Block-based API
@@ -317,6 +346,8 @@ module Langfuse
   #   gen.end
   #
   class Generation < BaseObservation
+    include ModelSetters
+
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::GenerationAttributes, nil] Optional initial attributes
@@ -331,35 +362,10 @@ module Langfuse
       self
     end
 
-    # @param value [Hash] Usage hash with token counts (:prompt_tokens, :completion_tokens, :total_tokens)
-    # @return [void]
-    # @deprecated Use #usage_details= instead.
-    def usage=(value)
-      self.usage_details = value
-    end
-
-    # @param value [Hash] Usage details hash (preserves key shape as provided)
-    # @return [void]
-    def usage_details=(value)
-      update_observation_attributes(usage_details: value)
-    end
-
     # @param value [Hash] Cost details hash (prefer :input, :output, :total for aggregate Langfuse cost metrics)
     # @return [void]
     def cost_details=(value)
       update_observation_attributes(cost_details: value)
-    end
-
-    # @param value [String] Model name (e.g., "gpt-4", "claude-3-opus")
-    # @return [void]
-    def model=(value)
-      update_observation_attributes(model: value)
-    end
-
-    # @param value [Hash] Model parameters (temperature, max_tokens, etc.)
-    # @return [void]
-    def model_parameters=(value)
-      update_observation_attributes(model_parameters: value)
     end
   end
 
@@ -639,6 +645,8 @@ module Langfuse
   #   embedding.end
   #
   class Embedding < BaseObservation
+    include ModelSetters
+
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::EmbeddingAttributes, nil] Optional initial attributes
@@ -651,31 +659,6 @@ module Langfuse
     def update(attrs)
       update_observation_attributes(attrs)
       self
-    end
-
-    # @param value [Hash] Usage hash with token counts (:prompt_tokens, :total_tokens)
-    # @return [void]
-    # @deprecated Use #usage_details= instead.
-    def usage=(value)
-      self.usage_details = value
-    end
-
-    # @param value [Hash] Usage details hash (preserves key shape as provided)
-    # @return [void]
-    def usage_details=(value)
-      update_observation_attributes(usage_details: value)
-    end
-
-    # @param value [String] Model name (e.g., "text-embedding-ada-002")
-    # @return [void]
-    def model=(value)
-      update_observation_attributes(model: value)
-    end
-
-    # @param value [Hash] Model parameters (temperature, max_tokens, etc.)
-    # @return [void]
-    def model_parameters=(value)
-      update_observation_attributes(model_parameters: value)
     end
   end
 end
