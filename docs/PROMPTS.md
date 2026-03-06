@@ -183,7 +183,7 @@ prompt = client.get_prompt("greeting", label: "production")  # => version 3
 
 ### Best Practices
 
-1. **Default to latest:** Omit `version`/`label` in development to always get the newest version
+1. **Default to production:** Omitting `version`/`label` fetches the `production`-labeled prompt (matching JS/Python SDK behavior)
 2. **Use labels in production:** Pin to `production` label for stability
 3. **Version for rollback:** Keep version numbers for emergency rollbacks
 
