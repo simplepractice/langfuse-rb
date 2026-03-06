@@ -111,13 +111,14 @@ module Langfuse
     end
 
     # Updates trace-level attributes (user_id, session_id, tags, etc.) for the entire trace.
+    # Tags exceeding 200 characters are silently dropped with a warning log.
     #
     # @param attrs [Hash, Types::TraceAttributes] Trace attributes to set
     # @return [self]
     def update_trace(attrs)
       return self unless @otel_span.recording?
 
-      otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h)
+      otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h, mask: Langfuse.configuration.mask)
       otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
       self
     end
@@ -196,9 +197,10 @@ module Langfuse
     # @param level [String] Log level (debug, default, warning, error)
     # @return [void]
     def event(name:, input: nil, level: "default")
+      masked_input = Masking.apply(input, mask: Langfuse.configuration.mask)
       attributes = {
-        "langfuse.observation.input" => input&.to_json,
-        "langfuse.observation.level" => level
+        OtelAttributes::OBSERVATION_INPUT => masked_input&.to_json,
+        OtelAttributes::OBSERVATION_LEVEL => level
       }.compact
 
       @otel_span.add_event(name, attributes: attributes)
@@ -242,7 +244,7 @@ module Langfuse
       attrs_hash = attrs.to_h.merge(kwargs)
 
       # Use @type instance variable set during initialization
-      otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash)
+      otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash, mask: Langfuse.configuration.mask)
       otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
     end
 

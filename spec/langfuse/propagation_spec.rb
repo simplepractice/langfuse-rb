@@ -93,10 +93,7 @@ RSpec.describe Langfuse::Propagation do
         Langfuse.observe("test-operation") do |span|
           described_class.propagate_attributes(tags: %w[production api-v2]) do
             attrs = span.otel_span.attributes
-            tags_value = attrs["langfuse.trace.tags"]
-            expect(tags_value).to be_a(String) # JSON serialized
-            tags = JSON.parse(tags_value)
-            expect(tags).to contain_exactly("production", "api-v2")
+            expect(attrs["langfuse.trace.tags"]).to contain_exactly("production", "api-v2")
           end
         end
       end
@@ -106,8 +103,7 @@ RSpec.describe Langfuse::Propagation do
           described_class.propagate_attributes(tags: %w[inner shared]) do
             span = Langfuse.observe("test")
             attrs = span.otel_span.attributes
-            tags_value = attrs["langfuse.trace.tags"]
-            tags = JSON.parse(tags_value)
+            tags = attrs["langfuse.trace.tags"]
             # Should contain all tags, with duplicates removed
             expect(tags).to include("outer", "inner", "shared")
             expect(tags.count("shared")).to eq(1)
@@ -238,8 +234,7 @@ RSpec.describe Langfuse::Propagation do
             expect(attrs["user.id"]).to eq("user_123")
             expect(attrs["session.id"]).to eq("session_abc")
             expect(attrs["langfuse.version"]).to eq("v1.2.3")
-            tags = JSON.parse(attrs["langfuse.trace.tags"])
-            expect(tags).to include("production")
+            expect(attrs["langfuse.trace.tags"]).to include("production")
             expect(attrs["langfuse.trace.metadata.environment"]).to eq("prod")
           end
         end
@@ -338,10 +333,7 @@ RSpec.describe Langfuse::Propagation do
           described_class.propagate_attributes(tags: ["valid", 123, "also_valid"]) do
             attrs = span.otel_span.attributes
             tags_value = attrs["langfuse.trace.tags"]
-            if tags_value
-              tags = JSON.parse(tags_value)
-              expect(tags).to contain_exactly("valid", "also_valid")
-            end
+            expect(tags_value).to contain_exactly("valid", "also_valid") if tags_value
           end
         end
       end
@@ -467,6 +459,38 @@ RSpec.describe Langfuse::Propagation do
                                   "langfuse_metadata_env")).to eq("langfuse.trace.metadata.env")
       expect(described_class.send(:_get_span_key_from_baggage_key,
                                   "langfuse_metadata_region")).to eq("langfuse.trace.metadata.region")
+    end
+  end
+
+  describe "metadata masking in propagation" do
+    it "does not mask user_id, session_id, version, or tags" do
+      Langfuse.configuration.mask = ->(data:) { data && "[MASKED]" }
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(
+          user_id: "user_123",
+          session_id: "sess_456",
+          version: "1.0.0",
+          tags: ["tag1"]
+        ) do
+          attrs = span.otel_span.attributes
+          expect(attrs["user.id"]).to eq("user_123")
+          expect(attrs["session.id"]).to eq("sess_456")
+          expect(attrs["langfuse.version"]).to eq("1.0.0")
+          expect(attrs["langfuse.trace.tags"]).to eq(["tag1"])
+        end
+      end
+    end
+
+    it "passes metadata through raw (masking deferred to export)" do
+      Langfuse.configuration.mask = nil
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(metadata: { env: "production" }) do
+          attrs = span.otel_span.attributes
+          expect(attrs["langfuse.trace.metadata.env"]).to eq("production")
+        end
+      end
     end
   end
 end

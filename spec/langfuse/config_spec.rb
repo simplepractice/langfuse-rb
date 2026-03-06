@@ -430,6 +430,63 @@ RSpec.describe Langfuse::Config do
       config.release = "release-abc"
       expect(config.release).to eq("release-abc")
     end
+
+    it "allows setting mask to a callable" do
+      mask = ->(data:) { data }
+      config.mask = mask
+      expect(config.mask).to eq(mask)
+    end
+
+    it "allows setting mask to nil" do
+      config.mask = nil
+      expect(config.mask).to be_nil
+    end
+  end
+
+  describe "mask validation" do
+    let(:config) do
+      described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+      end
+    end
+
+    it "defaults mask to nil" do
+      expect(config.mask).to be_nil
+    end
+
+    it "passes validation when mask is nil" do
+      config.mask = nil
+      expect { config.validate! }.not_to raise_error
+    end
+
+    it "passes validation when mask responds to #call" do
+      config.mask = ->(data:) { data }
+      expect { config.validate! }.not_to raise_error
+    end
+
+    it "passes validation with a method object" do
+      obj = Object.new
+      def obj.call(data:) = data
+      config.mask = obj
+      expect { config.validate! }.not_to raise_error
+    end
+
+    it "fails validation when mask does not respond to #call" do
+      config.mask = "not_callable"
+      expect { config.validate! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask must respond to #call"
+      )
+    end
+
+    it "fails validation when mask is a non-callable object" do
+      config.mask = 42
+      expect { config.validate! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask must respond to #call"
+      )
+    end
   end
 
   describe "stale-while-revalidate integration" do

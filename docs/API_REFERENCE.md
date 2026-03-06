@@ -43,14 +43,17 @@ Block receives a configuration object with these properties:
 | `cache_max_size`               | Integer | No       | `1000`                         | Max cached prompts                |
 | `cache_backend`                | Symbol  | No       | `:memory`                      | `:memory` or `:rails`             |
 | `cache_lock_timeout`           | Integer | No       | `10`                           | Lock timeout (seconds)            |
-| `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Enable stale-while-revalidate     |
-| `cache_stale_ttl`              | Integer | No       | `0`                            | Stale TTL (seconds)               |
+| `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Enable SWR (requires stale TTL)   |
+| `cache_stale_ttl`              | Integer | No       | `0`                            | Stale TTL (seconds, >0 enables)   |
 | `cache_refresh_threads`        | Integer | No       | `5`                            | Background refresh threads        |
-| `batch_size`                   | Integer | No       | `50`                           | Score batch size                  |
-| `flush_interval`               | Integer | No       | `10`                           | Score flush interval (seconds)    |
+| `batch_size`                   | Integer | No       | `50`                           | Score + trace export batch size   |
+| `flush_interval`               | Integer | No       | `10`                           | Score + trace export interval (s) |
 | `logger`                       | Logger  | No       | Auto-detected                  | Logger instance                   |
-| `tracing_async`                | Boolean | No       | `true`                         | ⚠️ Experimental (not implemented) |
+| `tracing_async`                | Boolean | No       | `true`                         | ⚠️ Experimental (OTel export mode) |
 | `job_queue`                    | Symbol  | No       | `:default`                     | ⚠️ Experimental (not implemented) |
+| `environment`                  | String  | No       | `nil`                          | Default trace environment          |
+| `release`                      | String  | No       | `nil`                          | Default release identifier         |
+| `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
 
 **Example:**
 
@@ -61,6 +64,7 @@ Langfuse.configure do |config|
   config.cache_ttl = 300
   config.cache_backend = :rails
   config.cache_stale_while_revalidate = true  # Serve stale data while refreshing
+  config.cache_stale_ttl = 300
 end
 ```
 
@@ -410,7 +414,7 @@ update_trace(attributes) # => self
 update_trace(**keyword_args) # => self
 ```
 
-Update trace-level attributes.
+Update trace-level attributes. Tags must be strings of ≤200 characters; oversized tags are dropped with a warning.
 
 **Example:**
 
@@ -418,7 +422,7 @@ Update trace-level attributes.
 obs.update_trace(
   user_id: "user_123",
   session_id: "session_456",
-  tags: ["api", "v1"]
+  tags: ["api", "v1"] # each tag must be ≤200 chars
 )
 ```
 
@@ -965,7 +969,7 @@ propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
 | `session_id` | String               | No       | Session identifier (≤200 chars)            |
 | `metadata`   | Hash<String, String> | No       | Metadata hash                              |
 | `version`    | String               | No       | Version (≤200 chars)                       |
-| `tags`       | Array<String>        | No       | Tags array                                 |
+| `tags`       | Array<String>        | No       | Tags array (each ≤200 chars)               |
 | `as_baggage` | Boolean              | No       | Propagate across services via OTel baggage |
 
 **Example:**
