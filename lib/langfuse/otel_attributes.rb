@@ -81,15 +81,12 @@ module Langfuse
     #   )
     #   otel_attrs = Langfuse::OtelAttributes.create_trace_attributes(attrs)
     #
-    # rubocop:disable Metrics/AbcSize
     def self.create_trace_attributes(attrs, mask: nil)
       # Convert to hash if it's a TraceAttributes object
       attrs = attrs.to_h
       get_value = ->(key) { get_hash_value(attrs, key) }
 
-      input = Masking.apply(get_value.call(:input), mask: mask)
-      output = Masking.apply(get_value.call(:output), mask: mask)
-      metadata = Masking.apply(get_value.call(:metadata), mask: mask)
+      input, output, metadata = mask_payload_fields(get_value, mask: mask)
 
       attributes = {
         TRACE_NAME => get_value.call(:name),
@@ -108,7 +105,6 @@ module Langfuse
       # Remove nil values
       attributes.compact
     end
-    # rubocop:enable Metrics/AbcSize
 
     # Creates OpenTelemetry attributes from Langfuse observation attributes
     #
@@ -242,6 +238,20 @@ module Langfuse
       end
     end
 
+    # Applies masking to the three payload fields (input, output, metadata)
+    #
+    # @param get_value [Proc] Lambda to get values from attributes hash
+    # @param mask [#call, nil] Mask callable
+    # @return [Array(Object, Object, Object)] Masked [input, output, metadata]
+    # @api private
+    def self.mask_payload_fields(get_value, mask:)
+      [
+        Masking.apply(get_value.call(:input), mask: mask),
+        Masking.apply(get_value.call(:output), mask: mask),
+        Masking.apply(get_value.call(:metadata), mask: mask)
+      ]
+    end
+
     # Gets a value from a hash supporting both symbol and string keys
     # Handles false values correctly (doesn't treat false as nil)
     #
@@ -263,11 +273,8 @@ module Langfuse
     # @param mask [#call, nil] Mask callable applied to input, output, and metadata
     # @return [Hash] Base observation attributes
     # @api private
-    # rubocop:disable Metrics/AbcSize
     def self.build_observation_base_attributes(type, get_value, mask: nil)
-      input = Masking.apply(get_value.call(:input), mask: mask)
-      output = Masking.apply(get_value.call(:output), mask: mask)
-      metadata = Masking.apply(get_value.call(:metadata), mask: mask)
+      input, output, metadata = mask_payload_fields(get_value, mask: mask)
 
       {
         OBSERVATION_TYPE => type,
@@ -285,7 +292,6 @@ module Langfuse
         **flatten_metadata(metadata, OBSERVATION_METADATA)
       }
     end
-    # rubocop:enable Metrics/AbcSize
 
     # Adds prompt attributes if prompt is present and not a fallback
     #

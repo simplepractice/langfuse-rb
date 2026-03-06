@@ -66,8 +66,7 @@ module Langfuse
       return {} unless config
 
       OtelAttributes.create_trace_attributes(
-        { environment: config.environment, release: config.release },
-        mask: config.mask
+        { environment: config.environment, release: config.release }
       )
     end
 

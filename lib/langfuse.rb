@@ -356,8 +356,8 @@ module Langfuse
         otel_attrs.each { |key, value| otel_span.set_attribute(key, value) }
       end
 
-      # Wrap in appropriate class
-      observation = wrap_otel_span(otel_span, type_str, otel_tracer, attributes: attrs)
+      # Wrap in appropriate class (attributes already set on span above — pass nil to avoid double-masking)
+      observation = wrap_otel_span(otel_span, type_str, otel_tracer)
 
       # Events auto-end immediately when created
       observation.end if type_str == OBSERVATION_TYPES[:event]
