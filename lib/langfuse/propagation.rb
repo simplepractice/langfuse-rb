@@ -166,8 +166,9 @@ module Langfuse
         span_key = _get_propagated_span_key(key)
 
         if key == "metadata" && value.is_a?(Hash)
-          # Mask before flattening — context stores raw for correct nested merging
-          masked = Masking.apply(value, mask: Langfuse.configuration.mask)
+          # Mask before flattening — context stores raw for correct nested merging.
+          # Dup so mutating mask callables don't corrupt the raw context value.
+          masked = Masking.apply(value.dup, mask: Langfuse.configuration.mask)
           if masked.is_a?(Hash)
             masked.each do |k, v|
               metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
@@ -243,9 +244,10 @@ module Langfuse
       # Store raw (unmasked) in context so nested calls merge correctly
       context = context.set_value(context_key, merged)
 
-      # Mask metadata only for span/baggage output (not context storage)
+      # Mask metadata only for span/baggage output (not context storage).
+      # Dup before masking so user callables that mutate in-place don't corrupt the raw context value.
       output = if key == "metadata" && merged.is_a?(Hash)
-                 Masking.apply(merged, mask: Langfuse.configuration.mask)
+                 Masking.apply(merged.dup, mask: Langfuse.configuration.mask)
                else
                  merged
                end

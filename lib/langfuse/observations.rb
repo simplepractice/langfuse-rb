@@ -199,8 +199,8 @@ module Langfuse
     def event(name:, input: nil, level: "default")
       masked_input = Masking.apply(input, mask: Langfuse.configuration.mask)
       attributes = {
-        "langfuse.observation.input" => masked_input&.to_json,
-        "langfuse.observation.level" => level
+        OtelAttributes::OBSERVATION_INPUT => masked_input&.to_json,
+        OtelAttributes::OBSERVATION_LEVEL => level
       }.compact
 
       @otel_span.add_event(name, attributes: attributes)
