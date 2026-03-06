@@ -197,8 +197,9 @@ module Langfuse
     # @param level [String] Log level (debug, default, warning, error)
     # @return [void]
     def event(name:, input: nil, level: "default")
+      masked_input = Masking.apply(input, mask: Langfuse.configuration.mask)
       attributes = {
-        "langfuse.observation.input" => input&.to_json,
+        "langfuse.observation.input" => masked_input&.to_json,
         "langfuse.observation.level" => level
       }.compact
 
