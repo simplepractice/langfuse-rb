@@ -226,33 +226,37 @@ module Langfuse
       span_key = _get_propagated_span_key(key)
       baggage_key = _get_propagated_baggage_key(key)
 
-      # Merge metadata/tags with existing context values; mask merged metadata
-      value = if key == "metadata" && value.is_a?(Hash)
-                Masking.apply(
-                  _merge_metadata(context, context_key, value),
-                  mask: Langfuse.configuration.mask
-                )
-              elsif key == "tags" && value.is_a?(Array)
-                _merge_tags(context, context_key, value)
-              else
-                value
-              end
+      # Merge metadata/tags with existing context values
+      merged = if key == "metadata" && value.is_a?(Hash)
+                 _merge_metadata(context, context_key, value)
+               elsif key == "tags" && value.is_a?(Array)
+                 _merge_tags(context, context_key, value)
+               else
+                 value
+               end
 
-      # Set in context
-      context = context.set_value(context_key, value)
+      # Store raw (unmasked) in context so nested calls merge correctly
+      context = context.set_value(context_key, merged)
+
+      # Mask metadata only for span/baggage output (not context storage)
+      output = if key == "metadata" && merged.is_a?(Hash)
+                 Masking.apply(merged, mask: Langfuse.configuration.mask)
+               else
+                 merged
+               end
 
       # Set on current span (if recording)
       if span&.recording?
-        if key == "metadata" && value.is_a?(Hash)
+        if key == "metadata" && output.is_a?(Hash)
           # Handle metadata - flatten into individual attributes
-          value.each do |k, v|
+          output.each do |k, v|
             metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
             span.set_attribute(metadata_key, v.to_s)
           end
-        elsif key == "tags" && value.is_a?(Array)
-          span.set_attribute(span_key, value) unless value.empty?
+        elsif key == "tags" && output.is_a?(Array)
+          span.set_attribute(span_key, output) unless output.empty?
         else
-          span.set_attribute(span_key, value.to_s)
+          span.set_attribute(span_key, output.to_s)
         end
       end
 
@@ -269,7 +273,7 @@ module Langfuse
         context = _set_baggage_attribute(
           context: context,
           key: key,
-          value: value,
+          value: output,
           baggage_key: baggage_key
         )
       end

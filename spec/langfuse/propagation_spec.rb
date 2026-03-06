@@ -527,6 +527,39 @@ RSpec.describe Langfuse::Propagation do
       end
     end
 
+    it "does not double-mask metadata in nested contexts with non-idempotent mask" do
+      Langfuse.configuration.mask = lambda { |data:|
+        data.transform_values { |v| "MASKED:#{v}" }
+      }
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(metadata: { first: "secret1" }) do
+          described_class.propagate_attributes(metadata: { second: "secret2" }) do
+            attrs = span.otel_span.attributes
+            # first should be masked once, not double-masked as "MASKED:MASKED:secret1"
+            expect(attrs["langfuse.trace.metadata.first"]).to eq("MASKED:secret1")
+            expect(attrs["langfuse.trace.metadata.second"]).to eq("MASKED:secret2")
+          end
+        end
+      end
+    end
+
+    it "does not crash when mask raises in nested propagation" do
+      Langfuse.configuration.mask = ->(data:) { raise "boom: #{data.class}" }
+
+      Langfuse.observe("test-operation") do |span|
+        expect do
+          described_class.propagate_attributes(metadata: { first: "secret1" }) do
+            described_class.propagate_attributes(metadata: { second: "secret2" }) do
+              # Should not crash — raw metadata stored in context, FALLBACK only on span
+              attrs = span.otel_span.attributes
+              expect(attrs["langfuse.trace.metadata"]).to eq(Langfuse::Masking::FALLBACK.to_s)
+            end
+          end
+        end.not_to raise_error
+      end
+    end
+
     it "passes metadata through when mask is nil" do
       Langfuse.configuration.mask = nil
 
