@@ -335,7 +335,6 @@ module Langfuse
     # @return [void]
     # @deprecated Use #usage_details= instead.
     def usage=(value)
-      warn_usage_deprecation
       self.usage_details = value
     end
 
@@ -361,22 +360,6 @@ module Langfuse
     # @return [void]
     def model_parameters=(value)
       update_observation_attributes(model_parameters: value)
-    end
-
-    private
-
-    def warn_usage_deprecation
-      return if @usage_deprecation_logged
-
-      @usage_deprecation_logged = true
-      message = "Langfuse::Generation#usage= is deprecated; use #usage_details= instead."
-      logger = Langfuse.configuration.logger
-
-      if logger
-        logger.warn(message)
-      else
-        warn(message)
-      end
     end
   end
 
@@ -674,7 +657,6 @@ module Langfuse
     # @return [void]
     # @deprecated Use #usage_details= instead.
     def usage=(value)
-      warn_usage_deprecation
       self.usage_details = value
     end
 
@@ -694,22 +676,6 @@ module Langfuse
     # @return [void]
     def model_parameters=(value)
       update_observation_attributes(model_parameters: value)
-    end
-
-    private
-
-    def warn_usage_deprecation
-      return if @usage_deprecation_logged
-
-      @usage_deprecation_logged = true
-      message = "Langfuse::Embedding#usage= is deprecated; use #usage_details= instead."
-      logger = Langfuse.configuration.logger
-
-      if logger
-        logger.warn(message)
-      else
-        warn(message)
-      end
     end
   end
 end

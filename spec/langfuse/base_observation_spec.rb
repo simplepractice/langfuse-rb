@@ -490,9 +490,7 @@ RSpec.describe Langfuse::BaseObservation do
       expect(cost_attr["total_cost"]).to eq(0.002)
     end
 
-    it "keeps usage assignment as a deprecated alias to usage_details" do
-      allow(Langfuse.configuration.logger).to receive(:warn)
-
+    it "keeps usage assignment as an alias to usage_details" do
       generation.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
       span_data = generation.otel_span.to_span_data
       usage_attr_value = span_data.attributes["langfuse.observation.usage_details"]
@@ -502,20 +500,6 @@ RSpec.describe Langfuse::BaseObservation do
       expect(usage_attr["completion_tokens"]).to eq(50)
       expect(usage_attr["total_tokens"]).to eq(150)
       expect(span_data.attributes).not_to have_key("langfuse.observation.usage")
-      expect(Langfuse.configuration.logger).to have_received(:warn).with(
-        "Langfuse::Generation#usage= is deprecated; use #usage_details= instead."
-      )
-    end
-
-    it "logs usage deprecation warning only once per instance" do
-      allow(Langfuse.configuration.logger).to receive(:warn)
-
-      generation.usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
-      generation.usage = { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 }
-
-      expect(Langfuse.configuration.logger).to have_received(:warn).once.with(
-        "Langfuse::Generation#usage= is deprecated; use #usage_details= instead."
-      )
     end
 
     it "sets model via assignment" do
@@ -730,9 +714,7 @@ RSpec.describe Langfuse::BaseObservation do
       expect(usage_attr["total_tokens"]).to eq(20)
     end
 
-    it "keeps usage assignment as a deprecated alias to usage_details" do
-      allow(Langfuse.configuration.logger).to receive(:warn)
-
+    it "keeps usage assignment as an alias to usage_details" do
       embedding.usage = { prompt_tokens: 20, total_tokens: 20 }
       span_data = embedding.otel_span.to_span_data
       usage_attr_value = span_data.attributes["langfuse.observation.usage_details"]
@@ -740,20 +722,6 @@ RSpec.describe Langfuse::BaseObservation do
       usage_attr = JSON.parse(usage_attr_value)
       expect(usage_attr["prompt_tokens"]).to eq(20)
       expect(usage_attr["total_tokens"]).to eq(20)
-      expect(Langfuse.configuration.logger).to have_received(:warn).with(
-        "Langfuse::Embedding#usage= is deprecated; use #usage_details= instead."
-      )
-    end
-
-    it "logs usage deprecation warning only once per instance" do
-      allow(Langfuse.configuration.logger).to receive(:warn)
-
-      embedding.usage = { prompt_tokens: 10, total_tokens: 10 }
-      embedding.usage = { prompt_tokens: 20, total_tokens: 20 }
-
-      expect(Langfuse.configuration.logger).to have_received(:warn).once.with(
-        "Langfuse::Embedding#usage= is deprecated; use #usage_details= instead."
-      )
     end
   end
 end
