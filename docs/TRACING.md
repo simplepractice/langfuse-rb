@@ -11,6 +11,7 @@ For basic setup and quick start examples, see [GETTING_STARTED.md](GETTING_START
 - [Complete Examples](#complete-examples)
 - [Best Practices](#best-practices)
 - [Advanced Usage](#advanced-usage)
+- [Masking](#masking)
 
 ## Core Concepts
 
@@ -620,6 +621,85 @@ Langfuse.observe("agent-workflow", as_type: :agent) do |agent|
   
   agent.update(output: { result: "Sunny, 72°F" })
 end
+```
+
+## Masking
+
+Mask sensitive data in `input`, `output`, and `metadata` fields before they are sent to Langfuse. Configure a mask callable on `Langfuse.configuration.mask` — it applies to all traces, observations, events, and propagated metadata.
+
+### Setup
+
+```ruby
+Langfuse.configure do |config|
+  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
+  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
+  config.mask = lambda { |data:|
+    if data.is_a?(Hash)
+      data.transform_values { |v| v.is_a?(String) ? "[REDACTED]" : v }
+    else
+      "[REDACTED]"
+    end
+  }
+end
+```
+
+### Contract
+
+The mask callable must:
+
+- Accept a `data:` keyword argument (the raw field value — Hash, String, Array, etc.)
+- Return the masked version (must be JSON-serializable)
+
+```ruby
+# Lambda
+config.mask = ->(data:) { data.is_a?(Hash) ? data.except(:api_key, :token) : data }
+
+# Method object
+config.mask = method(:my_masking_function)
+
+# Any object responding to #call
+config.mask = MyMaskingService.new
+```
+
+### What Gets Masked
+
+Masking applies to three fields at every callsite:
+
+| Field      | Trace | Observation | Event | Propagated |
+|------------|-------|-------------|-------|------------|
+| `input`    | ✅    | ✅          | ✅    | —          |
+| `output`   | ✅    | ✅          | —     | —          |
+| `metadata` | ✅    | ✅          | —     | ✅         |
+
+Fields like `model`, `name`, `tags`, `environment`, and `usage_details` are **not** masked.
+
+### Fail-Closed Behavior
+
+If the mask callable raises an exception, the entire field is replaced with:
+
+```
+<fully masked due to failed mask function>
+```
+
+A warning is logged. No sensitive data leaks — the SDK is fail-closed by design.
+
+### Example: PII Redaction
+
+```ruby
+PII_KEYS = %w[email phone ssn api_key token password secret].freeze
+
+config.mask = lambda { |data:|
+  case data
+  when Hash
+    data.each_with_object({}) do |(k, v), masked|
+      masked[k] = PII_KEYS.any? { |pii| k.to_s.downcase.include?(pii) } ? "[PII]" : v
+    end
+  when String
+    data.gsub(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/i, "[EMAIL]")
+  else
+    data
+  end
+}
 ```
 
 ## OpenTelemetry Integration

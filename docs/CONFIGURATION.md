@@ -275,6 +275,25 @@ config.environment = "production"
 config.release = "2024.1"
 ```
 
+#### `mask`
+
+- **Type:** `#call` (Proc, Lambda, or any object responding to `call`) or `nil`
+- **Default:** `nil` (masking disabled)
+- **Description:** Mask callable applied to `input`, `output`, and `metadata` fields before they are sent to Langfuse. Receives a `data:` keyword argument containing the raw field value. Must return the masked version. If the callable raises, the field is replaced with a fail-closed fallback string.
+
+```ruby
+# Redact all values in hashes, replace scalars
+config.mask = lambda { |data:|
+  if data.is_a?(Hash)
+    data.transform_values { "[REDACTED]" }
+  else
+    "[REDACTED]"
+  end
+}
+```
+
+See [TRACING.md](TRACING.md#masking) for usage patterns and behavior details.
+
 ## Environment Variables
 
 The SDK automatically reads these environment variables as defaults when no explicit value is configured:
@@ -441,6 +460,7 @@ Validation rules:
 - `secret_key` must be present
 - `cache_backend` must be `:memory` or `:rails`
 - If `:rails`, Rails must be defined
+- `mask` must respond to `#call` (if set)
 
 ## Accessing Current Configuration
 
