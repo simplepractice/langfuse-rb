@@ -152,7 +152,7 @@ module Langfuse
     # @return [Hash<String, String, Array<String>>] Hash of span key => value
     #
     # @api private
-    # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+    # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def self.get_propagated_attributes_from_context(context)
       propagated_attributes = _extract_baggage_attributes(context)
 
@@ -166,16 +166,9 @@ module Langfuse
         span_key = _get_propagated_span_key(key)
 
         if key == "metadata" && value.is_a?(Hash)
-          # Mask before flattening — context stores raw for correct nested merging.
-          # Dup so mutating mask callables don't corrupt the raw context value.
-          masked = Masking.apply(value.dup, mask: Langfuse.configuration.mask)
-          if masked.is_a?(Hash)
-            masked.each do |k, v|
-              metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
-              propagated_attributes[metadata_key] = v.to_s
-            end
-          else
-            propagated_attributes[OtelAttributes::TRACE_METADATA] = masked.to_s
+          value.each do |k, v|
+            metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
+            propagated_attributes[metadata_key] = v.to_s
           end
         elsif key == "tags" && value.is_a?(Array)
           propagated_attributes[span_key] = value unless value.empty?
@@ -183,7 +176,7 @@ module Langfuse
           propagated_attributes[span_key] = value.to_s
         end
       end
-      # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+      # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
       propagated_attributes
     end
@@ -241,34 +234,23 @@ module Langfuse
                  value
                end
 
-      # Store raw (unmasked) in context so nested calls merge correctly
       context = context.set_value(context_key, merged)
-
-      # Mask metadata only for span/baggage output (not context storage).
-      # Dup before masking so user callables that mutate in-place don't corrupt the raw context value.
-      output = if key == "metadata" && merged.is_a?(Hash)
-                 Masking.apply(merged.dup, mask: Langfuse.configuration.mask)
-               else
-                 merged
-               end
 
       # Set on current span (if recording)
       if span&.recording?
-        if key == "metadata" && output.is_a?(Hash)
-          # Handle metadata - flatten into individual attributes
-          output.each do |k, v|
+        if key == "metadata" && merged.is_a?(Hash)
+          merged.each do |k, v|
             metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
             span.set_attribute(metadata_key, v.to_s)
           end
-        elsif key == "tags" && output.is_a?(Array)
-          span.set_attribute(span_key, output) unless output.empty?
+        elsif key == "tags" && merged.is_a?(Array)
+          span.set_attribute(span_key, merged) unless merged.empty?
         else
-          span.set_attribute(span_key, output.to_s)
+          span.set_attribute(span_key, merged.to_s)
         end
       end
 
       # Set in baggage (if requested and available)
-      # Note: Baggage support requires opentelemetry-baggage gem
       if as_baggage
         unless baggage_available?
           Langfuse.configuration.logger.warn(
@@ -280,7 +262,7 @@ module Langfuse
         context = _set_baggage_attribute(
           context: context,
           key: key,
-          value: output,
+          value: merged,
           baggage_key: baggage_key
         )
       end
