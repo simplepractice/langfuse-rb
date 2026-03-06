@@ -45,6 +45,7 @@ require_relative "langfuse/rails_cache_adapter"
 require_relative "langfuse/cache_warmer"
 require_relative "langfuse/api_client"
 require_relative "langfuse/otel_setup"
+require_relative "langfuse/masking"
 require_relative "langfuse/otel_attributes"
 require_relative "langfuse/propagation"
 require_relative "langfuse/span_processor"
@@ -351,12 +352,12 @@ module Langfuse
       # Serialize attributes
       # Only set attributes if span is still recording (should always be true here, but guard for safety)
       if otel_span.recording?
-        otel_attrs = OtelAttributes.create_observation_attributes(type_str, attrs.to_h)
+        otel_attrs = OtelAttributes.create_observation_attributes(type_str, attrs.to_h, mask: configuration.mask)
         otel_attrs.each { |key, value| otel_span.set_attribute(key, value) }
       end
 
-      # Wrap in appropriate class
-      observation = wrap_otel_span(otel_span, type_str, otel_tracer, attributes: attrs)
+      # Wrap in appropriate class (attributes already set on span above — pass nil to avoid double-masking)
+      observation = wrap_otel_span(otel_span, type_str, otel_tracer)
 
       # Events auto-end immediately when created
       observation.end if type_str == OBSERVATION_TYPES[:event]

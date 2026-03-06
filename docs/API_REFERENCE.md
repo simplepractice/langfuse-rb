@@ -53,6 +53,7 @@ Block receives a configuration object with these properties:
 | `job_queue`                    | Symbol  | No       | `:default`                     | ⚠️ Experimental (not implemented) |
 | `environment`                  | String  | No       | `nil`                          | Default trace environment          |
 | `release`                      | String  | No       | `nil`                          | Default release identifier         |
+| `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
 
 **Example:**
 

@@ -291,6 +291,66 @@ RSpec.describe Langfuse::OtelAttributes do
     end
   end
 
+  describe "masking in .create_trace_attributes" do
+    let(:redact_mask) { ->(data:) { data && "[MASKED]" } }
+
+    it "masks trace input, output, and metadata before serialization" do
+      attrs = { input: "secret_input", output: "secret_output", metadata: { key: "secret" } }
+      result = described_class.create_trace_attributes(attrs, mask: redact_mask)
+
+      expect(result["langfuse.trace.input"]).to eq('"[MASKED]"')
+      expect(result["langfuse.trace.output"]).to eq('"[MASKED]"')
+      # metadata masked to string "[MASKED]" => flatten_metadata treats as non-hash
+      expect(result["langfuse.trace.metadata"]).to eq("[MASKED]")
+    end
+
+    it "does not mask non-maskable trace fields" do
+      attrs = { name: "test", user_id: "user-1", session_id: "sess-1", tags: ["tag1"] }
+      result = described_class.create_trace_attributes(attrs, mask: redact_mask)
+
+      expect(result["langfuse.trace.name"]).to eq("test")
+      expect(result["user.id"]).to eq("user-1")
+      expect(result["session.id"]).to eq("sess-1")
+      expect(result["langfuse.trace.tags"]).to eq(["tag1"])
+    end
+
+    it "uses fallback when mask raises" do
+      boom_mask = ->(data:) { raise "boom: #{data.class}" }
+      attrs = { input: "secret", output: "secret", metadata: { k: "v" } }
+      result = described_class.create_trace_attributes(attrs, mask: boom_mask)
+
+      fallback = Langfuse::Masking::FALLBACK
+      expect(result["langfuse.trace.input"]).to eq(fallback.to_json)
+      expect(result["langfuse.trace.output"]).to eq(fallback.to_json)
+      expect(result["langfuse.trace.metadata"]).to eq(fallback)
+    end
+
+    it "masks metadata as full nested object before flattening" do
+      deep_metadata = { user: { email: "secret@example.com", name: "John" } }
+      # Mask receives the full nested hash, redacts email
+      selective_mask = lambda { |data:|
+        if data.is_a?(Hash) && data[:user]
+          { user: data[:user].merge(email: "[REDACTED]") }
+        else
+          data
+        end
+      }
+      attrs = { metadata: deep_metadata }
+      result = described_class.create_trace_attributes(attrs, mask: selective_mask)
+
+      expect(result["langfuse.trace.metadata.user.email"]).to eq("[REDACTED]")
+      expect(result["langfuse.trace.metadata.user.name"]).to eq("John")
+    end
+
+    it "passes through when mask is nil" do
+      attrs = { input: "raw_input", output: "raw_output" }
+      result = described_class.create_trace_attributes(attrs, mask: nil)
+
+      expect(result["langfuse.trace.input"]).to eq('"raw_input"')
+      expect(result["langfuse.trace.output"]).to eq('"raw_output"')
+    end
+  end
+
   describe ".create_observation_attributes" do
     it "converts SpanAttributes object or hash to OTel format" do # rubocop:disable RSpec/ExampleLength
       # Test with SpanAttributes object
@@ -449,6 +509,63 @@ RSpec.describe Langfuse::OtelAttributes do
         result = described_class.create_observation_attributes(type, attrs)
         expect(result["langfuse.observation.type"]).to eq(type)
       end
+    end
+  end
+
+  describe "masking in .create_observation_attributes" do
+    let(:redact_mask) { ->(data:) { data && "[MASKED]" } }
+
+    it "masks observation input, output, and metadata before serialization" do
+      attrs = { input: "secret", output: "secret", metadata: { key: "secret" } }
+      result = described_class.create_observation_attributes("span", attrs, mask: redact_mask)
+
+      expect(result["langfuse.observation.input"]).to eq('"[MASKED]"')
+      expect(result["langfuse.observation.output"]).to eq('"[MASKED]"')
+      expect(result["langfuse.observation.metadata"]).to eq("[MASKED]")
+    end
+
+    it "does not mask non-maskable observation fields" do
+      attrs = { model: "gpt-4", level: "DEFAULT", version: "1.0" }
+      result = described_class.create_observation_attributes("generation", attrs, mask: redact_mask)
+
+      expect(result["langfuse.observation.model.name"]).to eq("gpt-4")
+      expect(result["langfuse.observation.level"]).to eq("DEFAULT")
+      expect(result["langfuse.version"]).to eq("1.0")
+    end
+
+    it "uses fallback when mask raises" do
+      boom_mask = ->(data:) { raise "boom: #{data.class}" }
+      attrs = { input: "secret", output: "secret", metadata: { k: "v" } }
+      result = described_class.create_observation_attributes("span", attrs, mask: boom_mask)
+
+      fallback = Langfuse::Masking::FALLBACK
+      expect(result["langfuse.observation.input"]).to eq(fallback.to_json)
+      expect(result["langfuse.observation.output"]).to eq(fallback.to_json)
+      expect(result["langfuse.observation.metadata"]).to eq(fallback)
+    end
+
+    it "masks metadata as full nested object before flattening" do
+      deep_metadata = { db: { query: "SELECT * FROM users", host: "db.example.com" } }
+      selective_mask = lambda { |data:|
+        if data.is_a?(Hash) && data[:db]
+          { db: data[:db].merge(query: "[REDACTED]") }
+        else
+          data
+        end
+      }
+      attrs = { metadata: deep_metadata }
+      result = described_class.create_observation_attributes("span", attrs, mask: selective_mask)
+
+      expect(result["langfuse.observation.metadata.db.query"]).to eq("[REDACTED]")
+      expect(result["langfuse.observation.metadata.db.host"]).to eq("db.example.com")
+    end
+
+    it "passes through when mask is nil" do
+      attrs = { input: "raw", output: "raw" }
+      result = described_class.create_observation_attributes("span", attrs, mask: nil)
+
+      expect(result["langfuse.observation.input"]).to eq('"raw"')
+      expect(result["langfuse.observation.output"]).to eq('"raw"')
     end
   end
 end

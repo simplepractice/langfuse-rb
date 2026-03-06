@@ -356,6 +356,40 @@ RSpec.describe Langfuse::BaseObservation do
       expect(events.length).to eq(1)
       expect(events.first.attributes).not_to have_key("langfuse.observation.input")
     end
+
+    context "with masking configured" do
+      let(:mask) { ->(data:) { data.transform_values { "[MASKED]" } } }
+
+      before { Langfuse.configuration.mask = mask }
+      after { Langfuse.configuration.mask = nil }
+
+      it "masks event input" do
+        observation.event(name: "test", input: { secret: "key" })
+        events = otel_span.to_span_data.events
+        parsed = JSON.parse(events.first.attributes["langfuse.observation.input"])
+
+        expect(parsed).to eq({ "secret" => "[MASKED]" })
+      end
+
+      it "uses fallback when mask raises" do
+        Langfuse.configuration.mask = lambda { |data:|
+          raise "boom: #{data.class}"
+        }
+
+        observation.event(name: "test", input: { secret: "key" })
+        events = otel_span.to_span_data.events
+        input_val = JSON.parse(events.first.attributes["langfuse.observation.input"])
+
+        expect(input_val).to eq(Langfuse::Masking::FALLBACK)
+      end
+
+      it "passes through nil input unchanged" do
+        observation.event(name: "test", input: nil)
+        events = otel_span.to_span_data.events
+
+        expect(events.first.attributes).not_to have_key("langfuse.observation.input")
+      end
+    end
   end
 
   describe "#current_span" do

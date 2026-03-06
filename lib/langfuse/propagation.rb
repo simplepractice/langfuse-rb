@@ -166,7 +166,6 @@ module Langfuse
         span_key = _get_propagated_span_key(key)
 
         if key == "metadata" && value.is_a?(Hash)
-          # Handle metadata - flatten into individual attributes
           value.each do |k, v|
             metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
             propagated_attributes[metadata_key] = v.to_s
@@ -227,34 +226,31 @@ module Langfuse
       baggage_key = _get_propagated_baggage_key(key)
 
       # Merge metadata/tags with existing context values
-      value = if key == "metadata" && value.is_a?(Hash)
-                _merge_metadata(context, context_key, value)
-              elsif key == "tags" && value.is_a?(Array)
-                _merge_tags(context, context_key, value)
-              else
-                value
-              end
+      merged = if key == "metadata" && value.is_a?(Hash)
+                 _merge_metadata(context, context_key, value)
+               elsif key == "tags" && value.is_a?(Array)
+                 _merge_tags(context, context_key, value)
+               else
+                 value
+               end
 
-      # Set in context
-      context = context.set_value(context_key, value)
+      context = context.set_value(context_key, merged)
 
       # Set on current span (if recording)
       if span&.recording?
-        if key == "metadata" && value.is_a?(Hash)
-          # Handle metadata - flatten into individual attributes
-          value.each do |k, v|
+        if key == "metadata" && merged.is_a?(Hash)
+          merged.each do |k, v|
             metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
             span.set_attribute(metadata_key, v.to_s)
           end
-        elsif key == "tags" && value.is_a?(Array)
-          span.set_attribute(span_key, value) unless value.empty?
+        elsif key == "tags" && merged.is_a?(Array)
+          span.set_attribute(span_key, merged) unless merged.empty?
         else
-          span.set_attribute(span_key, value.to_s)
+          span.set_attribute(span_key, merged.to_s)
         end
       end
 
       # Set in baggage (if requested and available)
-      # Note: Baggage support requires opentelemetry-baggage gem
       if as_baggage
         unless baggage_available?
           Langfuse.configuration.logger.warn(
@@ -266,7 +262,7 @@ module Langfuse
         context = _set_baggage_attribute(
           context: context,
           key: key,
-          value: value,
+          value: merged,
           baggage_key: baggage_key
         )
       end

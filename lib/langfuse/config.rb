@@ -74,6 +74,10 @@ module Langfuse
     # @return [String, nil] Default release identifier applied to new traces/observations
     attr_accessor :release
 
+    # @return [#call, nil] Mask callable applied to input, output, and metadata before serialization.
+    #   Receives `data:` keyword argument. nil disables masking.
+    attr_accessor :mask
+
     # @return [String] Default Langfuse API base URL
     DEFAULT_BASE_URL = "https://cloud.langfuse.com"
 
@@ -132,6 +136,7 @@ module Langfuse
     # @yield [config] Optional block for configuration
     # @yieldparam config [Config] The config instance
     # @return [Config] a new Config instance
+    # rubocop:disable Metrics/AbcSize
     def initialize
       @public_key = ENV.fetch("LANGFUSE_PUBLIC_KEY", nil)
       @secret_key = ENV.fetch("LANGFUSE_SECRET_KEY", nil)
@@ -150,10 +155,12 @@ module Langfuse
       @job_queue = DEFAULT_JOB_QUEUE
       @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
       @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
+      @mask = nil
       @logger = default_logger
 
       yield(self) if block_given?
     end
+    # rubocop:enable Metrics/AbcSize
 
     # Validate the configuration
     #
@@ -176,6 +183,8 @@ module Langfuse
       validate_swr_config!
 
       validate_cache_backend!
+
+      validate_mask!
     end
     # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
@@ -244,6 +253,12 @@ module Langfuse
       return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
 
       raise ConfigurationError, "cache_refresh_threads must be positive"
+    end
+
+    def validate_mask!
+      return if mask.nil? || mask.respond_to?(:call)
+
+      raise ConfigurationError, "mask must respond to #call"
     end
 
     def detect_release_from_ci_env

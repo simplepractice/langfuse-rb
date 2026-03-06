@@ -461,4 +461,36 @@ RSpec.describe Langfuse::Propagation do
                                   "langfuse_metadata_region")).to eq("langfuse.trace.metadata.region")
     end
   end
+
+  describe "metadata masking in propagation" do
+    it "does not mask user_id, session_id, version, or tags" do
+      Langfuse.configuration.mask = ->(data:) { data && "[MASKED]" }
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(
+          user_id: "user_123",
+          session_id: "sess_456",
+          version: "1.0.0",
+          tags: ["tag1"]
+        ) do
+          attrs = span.otel_span.attributes
+          expect(attrs["user.id"]).to eq("user_123")
+          expect(attrs["session.id"]).to eq("sess_456")
+          expect(attrs["langfuse.version"]).to eq("1.0.0")
+          expect(attrs["langfuse.trace.tags"]).to eq(["tag1"])
+        end
+      end
+    end
+
+    it "passes metadata through raw (masking deferred to export)" do
+      Langfuse.configuration.mask = nil
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(metadata: { env: "production" }) do
+          attrs = span.otel_span.attributes
+          expect(attrs["langfuse.trace.metadata.env"]).to eq("production")
+        end
+      end
+    end
+  end
 end
