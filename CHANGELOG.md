@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Prompt cache key generation now defaults unlabeled/unversioned prompt fetches to production, matching JS/Python client semantics.
+## [0.6.0] - 2026-03-06
+
+### Added
+- Tracing payload masking via `Config#mask` (#68)
+- Cost details and usage details support on generations (#61)
+- Client-level `environment` and `release` configuration (#52)
+- Configurable parameters when creating scores (#48)
+
+### Fixed
+- Prompt cache key defaults unlabeled/unversioned fetches to production, matching JS/Python semantics (#63)
+- Tags sent as native arrays instead of JSON strings on OTel span attributes (#66)
+- Enforce 200-character tag length limit on traces (#67)
+- Score API parity between `Langfuse.create_score` and `Client#create_score` (#49)
+- Corrected misleading YARD docstrings for SWR cache config
 
 ## [0.5.0] - 2026-02-09
 
@@ -65,7 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from legacy ingestion API to OTLP endpoint
 - Removed `tracing_enabled` configuration flag (#2)
 
-[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.2.0...v0.3.0
