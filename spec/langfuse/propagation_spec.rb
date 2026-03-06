@@ -461,4 +461,81 @@ RSpec.describe Langfuse::Propagation do
                                   "langfuse_metadata_region")).to eq("langfuse.trace.metadata.region")
     end
   end
+
+  describe "metadata masking in propagation" do
+    it "masks merged metadata when mask is configured" do
+      Langfuse.configuration.mask = lambda { |data:|
+        data.transform_values { "[MASKED]" }
+      }
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(metadata: { env: "production", region: "us-east" }) do
+          attrs = span.otel_span.attributes
+          expect(attrs["langfuse.trace.metadata.env"]).to eq("[MASKED]")
+          expect(attrs["langfuse.trace.metadata.region"]).to eq("[MASKED]")
+        end
+      end
+    end
+
+    it "uses fallback when mask raises on metadata" do
+      Langfuse.configuration.mask = ->(data:) { raise "boom: #{data.class}" }
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(metadata: { env: "production" }) do
+          attrs = span.otel_span.attributes
+          # Fallback is a string, so it's set on the base metadata key
+          expect(attrs["langfuse.trace.metadata"]).to eq(
+            Langfuse::Masking::FALLBACK.to_s
+          )
+        end
+      end
+    end
+
+    it "does not mask user_id, session_id, version, or tags" do
+      Langfuse.configuration.mask = ->(data:) { data && "[MASKED]" }
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(
+          user_id: "user_123",
+          session_id: "sess_456",
+          version: "1.0.0",
+          tags: ["tag1"]
+        ) do
+          attrs = span.otel_span.attributes
+          expect(attrs["user.id"]).to eq("user_123")
+          expect(attrs["session.id"]).to eq("sess_456")
+          expect(attrs["langfuse.version"]).to eq("1.0.0")
+          expect(attrs["langfuse.trace.tags"]).to eq(["tag1"])
+        end
+      end
+    end
+
+    it "masks previously propagated metadata in nested contexts" do
+      Langfuse.configuration.mask = lambda { |data:|
+        data.transform_values { "[MASKED]" }
+      }
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(metadata: { first: "secret1" }) do
+          described_class.propagate_attributes(metadata: { second: "secret2" }) do
+            attrs = span.otel_span.attributes
+            # Both first and second should be masked after merge+mask
+            expect(attrs["langfuse.trace.metadata.first"]).to eq("[MASKED]")
+            expect(attrs["langfuse.trace.metadata.second"]).to eq("[MASKED]")
+          end
+        end
+      end
+    end
+
+    it "passes metadata through when mask is nil" do
+      Langfuse.configuration.mask = nil
+
+      Langfuse.observe("test-operation") do |span|
+        described_class.propagate_attributes(metadata: { env: "production" }) do
+          attrs = span.otel_span.attributes
+          expect(attrs["langfuse.trace.metadata.env"]).to eq("production")
+        end
+      end
+    end
+  end
 end

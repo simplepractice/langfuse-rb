@@ -226,9 +226,12 @@ module Langfuse
       span_key = _get_propagated_span_key(key)
       baggage_key = _get_propagated_baggage_key(key)
 
-      # Merge metadata/tags with existing context values
+      # Merge metadata/tags with existing context values; mask merged metadata
       value = if key == "metadata" && value.is_a?(Hash)
-                _merge_metadata(context, context_key, value)
+                Masking.apply(
+                  _merge_metadata(context, context_key, value),
+                  mask: Langfuse.configuration.mask
+                )
               elsif key == "tags" && value.is_a?(Array)
                 _merge_tags(context, context_key, value)
               else

@@ -68,6 +68,7 @@ module Langfuse
     # attribute format required by the span processor.
     #
     # @param attrs [Types::TraceAttributes, Hash] Trace attributes object or hash
+    # @param mask [#call, nil] Mask callable applied to input, output, and metadata
     # @return [Hash] OpenTelemetry attributes hash with non-nil values
     #
     # @example
@@ -80,10 +81,15 @@ module Langfuse
     #   )
     #   otel_attrs = Langfuse::OtelAttributes.create_trace_attributes(attrs)
     #
-    def self.create_trace_attributes(attrs)
+    # rubocop:disable Metrics/AbcSize
+    def self.create_trace_attributes(attrs, mask: nil)
       # Convert to hash if it's a TraceAttributes object
       attrs = attrs.to_h
       get_value = ->(key) { get_hash_value(attrs, key) }
+
+      input = Masking.apply(get_value.call(:input), mask: mask)
+      output = Masking.apply(get_value.call(:output), mask: mask)
+      metadata = Masking.apply(get_value.call(:metadata), mask: mask)
 
       attributes = {
         TRACE_NAME => get_value.call(:name),
@@ -91,17 +97,18 @@ module Langfuse
         TRACE_SESSION_ID => get_value.call(:session_id),
         VERSION => get_value.call(:version),
         RELEASE => get_value.call(:release),
-        TRACE_INPUT => serialize(get_value.call(:input)),
-        TRACE_OUTPUT => serialize(get_value.call(:output)),
+        TRACE_INPUT => serialize(input),
+        TRACE_OUTPUT => serialize(output),
         TRACE_TAGS => normalize_tags(get_value.call(:tags)),
         ENVIRONMENT => get_value.call(:environment),
         TRACE_PUBLIC => get_value.call(:public),
-        **flatten_metadata(get_value.call(:metadata), TRACE_METADATA)
+        **flatten_metadata(metadata, TRACE_METADATA)
       }
 
       # Remove nil values
       attributes.compact
     end
+    # rubocop:enable Metrics/AbcSize
 
     # Creates OpenTelemetry attributes from Langfuse observation attributes
     #
@@ -110,6 +117,7 @@ module Langfuse
     #
     # @param type [String] Observation type (e.g., "generation", "span", "event")
     # @param attrs [Types::SpanAttributes, Types::GenerationAttributes, Hash] Observation attributes
+    # @param mask [#call, nil] Mask callable applied to input, output, and metadata
     # @return [Hash] OpenTelemetry attributes hash with non-nil values
     #
     # @example
@@ -120,11 +128,11 @@ module Langfuse
     #   )
     #   otel_attrs = Langfuse::OtelAttributes.create_observation_attributes("generation", attrs)
     #
-    def self.create_observation_attributes(type, attrs)
+    def self.create_observation_attributes(type, attrs, mask: nil)
       attrs = attrs.to_h
       get_value = ->(key) { get_hash_value(attrs, key) }
 
-      otel_attributes = build_observation_base_attributes(type, get_value)
+      otel_attributes = build_observation_base_attributes(type, get_value, mask: mask)
       add_prompt_attributes(otel_attributes, get_value.call(:prompt))
 
       # Remove nil values
@@ -252,25 +260,32 @@ module Langfuse
     #
     # @param type [String] Observation type
     # @param get_value [Proc] Lambda to get values from attributes hash
+    # @param mask [#call, nil] Mask callable applied to input, output, and metadata
     # @return [Hash] Base observation attributes
     # @api private
-    def self.build_observation_base_attributes(type, get_value)
+    # rubocop:disable Metrics/AbcSize
+    def self.build_observation_base_attributes(type, get_value, mask: nil)
+      input = Masking.apply(get_value.call(:input), mask: mask)
+      output = Masking.apply(get_value.call(:output), mask: mask)
+      metadata = Masking.apply(get_value.call(:metadata), mask: mask)
+
       {
         OBSERVATION_TYPE => type,
         OBSERVATION_LEVEL => get_value.call(:level),
         OBSERVATION_STATUS_MESSAGE => get_value.call(:status_message),
         VERSION => get_value.call(:version),
-        OBSERVATION_INPUT => serialize(get_value.call(:input)),
-        OBSERVATION_OUTPUT => serialize(get_value.call(:output)),
+        OBSERVATION_INPUT => serialize(input),
+        OBSERVATION_OUTPUT => serialize(output),
         OBSERVATION_MODEL => get_value.call(:model),
         OBSERVATION_USAGE_DETAILS => serialize(get_value.call(:usage_details)),
         OBSERVATION_COST_DETAILS => serialize(get_value.call(:cost_details)),
         OBSERVATION_COMPLETION_START_TIME => serialize(get_value.call(:completion_start_time)),
         OBSERVATION_MODEL_PARAMETERS => serialize(get_value.call(:model_parameters)),
         ENVIRONMENT => get_value.call(:environment),
-        **flatten_metadata(get_value.call(:metadata), OBSERVATION_METADATA)
+        **flatten_metadata(metadata, OBSERVATION_METADATA)
       }
     end
+    # rubocop:enable Metrics/AbcSize
 
     # Adds prompt attributes if prompt is present and not a fallback
     #

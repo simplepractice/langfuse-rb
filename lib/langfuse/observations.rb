@@ -118,7 +118,7 @@ module Langfuse
     def update_trace(attrs)
       return self unless @otel_span.recording?
 
-      otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h)
+      otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h, mask: Langfuse.configuration.mask)
       otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
       self
     end
@@ -243,7 +243,7 @@ module Langfuse
       attrs_hash = attrs.to_h.merge(kwargs)
 
       # Use @type instance variable set during initialization
-      otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash)
+      otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash, mask: Langfuse.configuration.mask)
       otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
     end
 

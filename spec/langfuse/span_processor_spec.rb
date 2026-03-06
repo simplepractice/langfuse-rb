@@ -9,7 +9,7 @@ RSpec.describe Langfuse::SpanProcessor do
 
   describe "#on_start" do
     it "sets configured environment and release defaults on new spans" do
-      config = instance_double(Langfuse::Config, environment: "production", release: "release-123")
+      config = instance_double(Langfuse::Config, environment: "production", release: "release-123", mask: nil)
       custom_processor = described_class.new(config: config)
       span = tracer.start_span("test-span")
       parent_context = OpenTelemetry::Context.current
@@ -24,7 +24,7 @@ RSpec.describe Langfuse::SpanProcessor do
     end
 
     it "does not set environment/release defaults when they are nil" do
-      config = instance_double(Langfuse::Config, environment: nil, release: nil)
+      config = instance_double(Langfuse::Config, environment: nil, release: nil, mask: nil)
       custom_processor = described_class.new(config: config)
       span = tracer.start_span("test-span")
       parent_context = OpenTelemetry::Context.current
