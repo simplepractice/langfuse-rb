@@ -370,10 +370,12 @@ module Langfuse
     # @param name [String] Descriptive name for the observation
     # @param attrs [Hash] Observation attributes (optional positional or keyword)
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
+    # @param trace_id [String, nil] Trace ID for connecting to an existing trace (32 lowercase hex char string)
     # @param kwargs [Hash] Additional keyword arguments merged into observation attributes (e.g., input:, output:, metadata:)
     # @yield [observation] Optional block that receives the observation object
     # @yieldparam observation [BaseObservation] The observation object
     # @return [BaseObservation, Object] The observation (or block return value if block given)
+    # @raise [ArgumentError] if an invalid trace ID is provided
     #
     # @example Block-based API (auto-ends)
     #   Langfuse.observe("operation") do |obs|
@@ -385,10 +387,17 @@ module Langfuse
     #   obs = Langfuse.observe("operation", input: { data: "test" })
     #   obs.update(output: { result: "success" })
     #   obs.end
-    def observe(name, attrs = {}, as_type: :span, **kwargs, &block)
+    def observe(name, attrs = {}, as_type: :span, trace_id: nil, **kwargs, &block)
       # Merge positional attrs and keyword kwargs
       merged_attrs = attrs.to_h.merge(kwargs)
-      observation = start_observation(name, merged_attrs, as_type: as_type)
+      unless trace_id.nil?
+        unless valid_trace_id?(trace_id)
+          raise ArgumentError, "#{trace_id} is not a valid 32 lowercase hex char Langfuse trace ID"
+        end
+
+        parent_span_context = create_span_context_with_trace_id(trace_id)
+      end
+      observation = start_observation(name, merged_attrs, as_type: as_type, parent_span_context: parent_span_context)
 
       if block
         # Block-based API: auto-ends when block completes
@@ -485,6 +494,33 @@ module Langfuse
     def wrap_otel_span(otel_span, type_str, otel_tracer, attributes: nil)
       observation_class = OBSERVATION_TYPE_REGISTRY[type_str] || Span
       observation_class.new(otel_span, otel_tracer, attributes: attributes)
+    end
+
+    # Validates that a trace ID is valid
+    #
+    # @param trace_id [String] The trace ID to validate
+    # @return [Boolean] true if valid, false otherwise
+    #
+    # @example
+    #   valid_trace_id?("my-trace-id")                      # => false
+    #   valid_trace_id?("1234567890abcdef1234567890abcdef") # => true
+    def valid_trace_id?(trace_id)
+      !!(trace_id =~ /^[0-9a-f]{32}$/)
+    end
+
+    # Creates a span context with an explicit trace ID
+    #
+    # @param trace_id_as_hex_str [String] A valid trace ID
+    # @return [OpenTelemetry::Trace::SpanContext] The new span context
+    def create_span_context_with_trace_id(trace_id_as_hex_str)
+      trace_id_as_byte_str = [trace_id_as_hex_str].pack("H*")
+      # NOTE: trace_flags must be SAMPLED or the trace will not appear in Langfuse.
+      # The Python SDK does the same: https://github.com/langfuse/langfuse-python/blob/v4.0.0/langfuse/_client/client.py#L1568
+      trace_flags = OpenTelemetry::Trace::TraceFlags::SAMPLED
+      OpenTelemetry::Trace::SpanContext.new(
+        trace_id: trace_id_as_byte_str,
+        trace_flags: trace_flags
+      )
     end
   end
   # rubocop:enable Metrics/ClassLength

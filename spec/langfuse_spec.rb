@@ -416,5 +416,18 @@ RSpec.describe Langfuse do
         end.to raise_error(ArgumentError, /Invalid observation type/)
       end
     end
+
+    context "with trace ID" do
+      it "raises ArgumentError for invalid trace ID" do
+        expect do
+          described_class.observe("test", trace_id: "test-trace-id")
+        end.to raise_error(ArgumentError, /not a valid/)
+      end
+
+      it "creates observation with given trace ID" do
+        result = described_class.observe("test", trace_id: "1234567890abcdef1234567890abcdef", &:trace_id)
+        expect(result).to eq("1234567890abcdef1234567890abcdef")
+      end
+    end
   end
 end
