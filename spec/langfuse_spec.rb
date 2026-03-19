@@ -372,6 +372,20 @@ RSpec.describe Langfuse do
       # We can't directly check if the observation was ended, but the block should have executed
     end
 
+    it "auto-ends observation even if block raises error" do
+      observation = instance_double(Langfuse::BaseObservation)
+      expect(observation).to receive(:otel_span)
+      expect(observation).to receive(:end)
+
+      allow(described_class).to receive(:start_observation).and_return(observation)
+
+      expect do
+        described_class.observe("test") do |_obs|
+          raise "error"
+        end
+      end.to raise_error("error")
+    end
+
     it "auto-ends events even without block" do
       observation = described_class.observe("test-event", {}, as_type: :event)
       expect(observation).to be_a(Langfuse::Event)

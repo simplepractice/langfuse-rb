@@ -387,6 +387,7 @@ module Langfuse
     #   obs = Langfuse.observe("operation", input: { data: "test" })
     #   obs.update(output: { result: "success" })
     #   obs.end
+    # rubocop:disable Metrics/MethodLength
     def observe(name, attrs = {}, as_type: :span, trace_id: nil, **kwargs, &block)
       # Merge positional attrs and keyword kwargs
       merged_attrs = attrs.to_h.merge(kwargs)
@@ -403,13 +404,16 @@ module Langfuse
         # Block-based API: auto-ends when block completes
         # Set context and execute block
         current_context = OpenTelemetry::Context.current
-        result = OpenTelemetry::Context.with_current(
-          OpenTelemetry::Trace.context_with_span(observation.otel_span, parent_context: current_context)
-        ) do
-          block.call(observation)
+        begin
+          result = OpenTelemetry::Context.with_current(
+            OpenTelemetry::Trace.context_with_span(observation.otel_span, parent_context: current_context)
+          ) do
+            block.call(observation)
+          end
+        ensure
+          # Only end if not already ended (events auto-end in start_observation)
+          observation.end unless as_type.to_s == OBSERVATION_TYPES[:event]
         end
-        # Only end if not already ended (events auto-end in start_observation)
-        observation.end unless as_type.to_s == OBSERVATION_TYPES[:event]
         result
       else
         # Stateful API - return observation
@@ -417,6 +421,7 @@ module Langfuse
         observation
       end
     end
+    # rubocop:enable Metrics/MethodLength
 
     # Registry mapping observation type strings to their wrapper classes
     OBSERVATION_TYPE_REGISTRY = {
