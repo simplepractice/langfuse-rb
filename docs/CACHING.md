@@ -19,14 +19,14 @@ For configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
 
 The Langfuse Ruby SDK provides two caching backends to optimize prompt fetching:
 
-1. **In-Memory Cache** (default) - Thread-safe, local cache with TTL and LRU eviction
+1. **In-Memory Cache** (default) - Thread-safe, local cache with TTL and bounded expiration-ordered eviction
 2. **Rails.cache Backend** - Distributed caching with Redis/Memcached
 
 Both backends support TTL-based expiration and automatic stampede protection (Rails.cache only).
 
 ## In-Memory Cache (Default)
 
-The default caching backend stores prompts in memory with automatic TTL expiration and LRU eviction.
+The default caching backend stores prompts in memory with automatic TTL expiration and bounded eviction when the cache reaches max size.
 
 ### Configuration
 
@@ -42,7 +42,7 @@ end
 
 - **Thread-safe**: Uses Monitor-based synchronization
 - **TTL-based expiration**: Automatically expires after configured TTL
-- **LRU eviction**: Removes least recently used prompts when max_size is reached
+- **Bounded eviction**: When max_size is reached, removes the entry with earliest expiration (`stale_until`)
 - **Zero dependencies**: No external services required
 - **Fast**: ~1ms cache hits
 
@@ -536,8 +536,8 @@ See [CONFIGURATION.md](CONFIGURATION.md) for all cache-related configuration opt
 
 **In-Memory Cache:**
 
-- TTL expiration + LRU eviction
-- Evicts least recently used when max_size reached
+- TTL expiration + bounded eviction
+- Evicts the entry with the earliest expiration (`stale_until`) when max_size is reached
 
 **Rails.cache:**
 
