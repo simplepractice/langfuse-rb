@@ -121,20 +121,20 @@ See [CACHING.md](CACHING.md#stampede-protection) for details.
 
 - **Type:** Boolean
 - **Default:** `false`
-- **Description:** Enable stale-while-revalidate caching pattern
+- **Description:** Advisory SWR intent flag (effective SWR behavior is controlled by `cache_stale_ttl`)
 
 ```ruby
-config.cache_stale_while_revalidate = true  # Enable SWR
+config.cache_stale_while_revalidate = true  # Optional intent flag
 ```
 
-When enabled, serves stale cached data immediately while refreshing in the background. This dramatically reduces P99 latency by avoiding synchronous API waits after cache expiration.
+This flag does not independently turn SWR on/off in runtime cache behavior. SWR is active when `cache_stale_ttl > 0`.
 
 **Behavior:**
 
-- `false` (default): Cache expires at TTL, next request waits for API (~100ms)
-- `true`: After TTL, serves stale data instantly (~1ms) + refreshes in background
+- `cache_stale_ttl <= 0` (default): Cache expires at TTL, next request waits for API (~100ms)
+- `cache_stale_ttl > 0`: After TTL, serves stale data instantly (~1ms) + refreshes in background
 
-**Important:** SWR only activates when `cache_stale_ttl` is a positive value. Set it explicitly (typically equal to `cache_ttl`).
+**Important:** Set `cache_stale_ttl` to a positive value (typically equal to `cache_ttl`) to activate SWR.
 
 **Compatibility:**
 
@@ -435,7 +435,7 @@ Langfuse.configure do |config|
   config.public_key = 'pk-lf-test'
   config.secret_key = 'sk-lf-test'
   config.cache_backend = :memory  # Isolated per-process cache
-  config.cache_stale_while_revalidate = false  # Disable SWR for predictable tests
+  config.cache_stale_ttl = 0      # Disable SWR for predictable tests
 end
 ```
 

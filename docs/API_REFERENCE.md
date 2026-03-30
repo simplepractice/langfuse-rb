@@ -43,8 +43,8 @@ Block receives a configuration object with these properties:
 | `cache_max_size`               | Integer | No       | `1000`                         | Max cached prompts                |
 | `cache_backend`                | Symbol  | No       | `:memory`                      | `:memory` or `:rails`             |
 | `cache_lock_timeout`           | Integer | No       | `10`                           | Lock timeout (seconds)            |
-| `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Enable SWR (requires stale TTL)   |
-| `cache_stale_ttl`              | Integer | No       | `0`                            | Stale TTL (seconds, >0 enables)   |
+| `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Advisory SWR flag (effective activation depends on `cache_stale_ttl`) |
+| `cache_stale_ttl`              | Integer, Symbol (`:indefinite`) | No | `0` | Stale TTL (seconds, `>0` enables SWR) |
 | `cache_refresh_threads`        | Integer | No       | `5`                            | Background refresh threads        |
 | `batch_size`                   | Integer | No       | `50`                           | Score + trace export batch size   |
 | `flush_interval`               | Integer | No       | `10`                           | Score + trace export interval (s) |
@@ -149,7 +149,7 @@ get_prompt(name, version: nil, label: nil, fallback: nil, type: nil)
 | `name`     | String  | Yes         | Prompt name                                          |
 | `version`  | Integer | No          | Specific version (mutually exclusive with `label`)   |
 | `label`    | String  | No          | Version label (e.g., "production")                   |
-| `fallback` | String  | No          | Fallback template if not found                       |
+| `fallback` | String, Array<Hash> | No | Fallback prompt if not found (`String` for text, `Array<Hash>` for chat) |
 | `type`     | Symbol  | Conditional | `:text` or `:chat` (required if `fallback` provided) |
 
 **Returns:** `TextPromptClient` or `ChatPromptClient`
@@ -244,6 +244,83 @@ prompts = client.list_prompts
 prompts.each do |p|
   puts "#{p['name']} v#{p['version']}"
 end
+```
+
+### `Client#create_prompt`
+
+Create a new prompt or a new version of an existing prompt.
+
+**Signature:**
+
+```ruby
+create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_message: nil)
+```
+
+**Parameters:**
+
+| Parameter        | Type               | Required | Description |
+| ---------------- | ------------------ | -------- | ----------- |
+| `name`           | String             | Yes      | Prompt name |
+| `prompt`         | String, Array<Hash> | Yes     | Prompt body (`String` for text, `Array<Hash>` for chat) |
+| `type`           | Symbol             | Yes      | `:text` or `:chat` |
+| `config`         | Hash               | No       | Prompt config metadata (model params, etc.) |
+| `labels`         | Array<String>      | No       | Version labels |
+| `tags`           | Array<String>      | No       | Prompt tags |
+| `commit_message` | String             | No       | Optional commit message |
+
+**Returns:** `TextPromptClient` or `ChatPromptClient`
+
+**Raises:**
+
+- `ArgumentError` for invalid type/content
+- `UnauthorizedError` if authentication fails
+- `ApiError` for other API errors
+
+**Example:**
+
+```ruby
+prompt = client.create_prompt(
+  name: "greeting",
+  prompt: "Hello {{name}}!",
+  type: :text,
+  labels: ["production"]
+)
+```
+
+### `Client#update_prompt`
+
+Update labels on an existing prompt version.
+
+**Signature:**
+
+```ruby
+update_prompt(name:, version:, labels:)
+```
+
+**Parameters:**
+
+| Parameter | Type          | Required | Description |
+| --------- | ------------- | -------- | ----------- |
+| `name`    | String        | Yes      | Prompt name |
+| `version` | Integer       | Yes      | Version to update |
+| `labels`  | Array<String> | Yes      | Replacement label set |
+
+**Returns:** `TextPromptClient` or `ChatPromptClient`
+
+**Raises:**
+
+- `NotFoundError` if the prompt version does not exist
+- `UnauthorizedError` if authentication fails
+- `ApiError` for other API errors
+
+**Example:**
+
+```ruby
+client.update_prompt(
+  name: "greeting",
+  version: 3,
+  labels: ["production"]
+)
 ```
 
 ### Cache Warming
