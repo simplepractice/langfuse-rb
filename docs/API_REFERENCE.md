@@ -149,7 +149,7 @@ get_prompt(name, version: nil, label: nil, fallback: nil, type: nil)
 | `name`     | String  | Yes         | Prompt name                                          |
 | `version`  | Integer | No          | Specific version (mutually exclusive with `label`)   |
 | `label`    | String  | No          | Version label (e.g., "production")                   |
-| `fallback` | String  | No          | Fallback template if not found                       |
+| `fallback` | String, Array<Hash> | No | Fallback prompt if not found (String for text, Array<Hash> for chat) |
 | `type`     | Symbol  | Conditional | `:text` or `:chat` (required if `fallback` provided) |
 
 **Returns:** `TextPromptClient` or `ChatPromptClient`
@@ -163,7 +163,7 @@ get_prompt(name, version: nil, label: nil, fallback: nil, type: nil)
 **Examples:**
 
 ```ruby
-# Latest version
+# API default selection
 prompt = client.get_prompt("greeting")
 
 # Specific version

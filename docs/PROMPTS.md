@@ -183,13 +183,13 @@ prompt = client.get_prompt("greeting", label: "production")  # => version 3
 
 ### Best Practices
 
-1. **Default to production:** Omitting `version`/`label` fetches the `production`-labeled prompt (matching JS/Python SDK behavior)
-2. **Use labels in production:** Pin to `production` label for stability
+1. **Be explicit in production:** Use `label: "production"` for deterministic prompt selection
+2. **Treat implicit selection as API-defined:** If you omit `version` and `label`, selection behavior is determined by the Langfuse API
 3. **Version for rollback:** Keep version numbers for emergency rollbacks
 
 ```ruby
 # Development
-prompt = client.get_prompt("greeting")  # Latest version
+prompt = client.get_prompt("greeting")  # Uses Langfuse API default selection
 
 # Production
 prompt = client.get_prompt("greeting", label: "production")  # Stable

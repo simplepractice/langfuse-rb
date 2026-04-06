@@ -564,7 +564,7 @@ config.cache_stale_while_revalidate = !Rails.env.development?
 
 # Production: enabled for best performance
 if Rails.env.production?
-  config.cache_stale_ttl = config.cache_ttl  # Auto-set, but can customize
+  config.cache_stale_ttl = config.cache_ttl  # Set explicitly (common default)
 end
 ```
 
