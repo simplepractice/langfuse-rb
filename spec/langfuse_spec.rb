@@ -218,6 +218,25 @@ RSpec.describe Langfuse do
     end
   end
 
+  describe ".create_trace_id" do
+    it "delegates to TraceId.create with no seed" do
+      trace_id = described_class.create_trace_id
+      expect(trace_id).to match(/\A[0-9a-f]{32}\z/)
+    end
+
+    it "delegates to TraceId.create with a seed" do
+      expect(described_class.create_trace_id(seed: "abc")).to eq(Langfuse::TraceId.create(seed: "abc"))
+    end
+  end
+
+  describe ".create_observation_id" do
+    it "delegates to TraceId.create_observation_id" do
+      expect(described_class.create_observation_id(seed: "xyz")).to eq(
+        Langfuse::TraceId.create_observation_id(seed: "xyz")
+      )
+    end
+  end
+
   describe ".start_observation" do
     it "creates a root span observation" do
       observation = described_class.start_observation("test-span", { input: { data: "test" } })
@@ -352,6 +371,40 @@ RSpec.describe Langfuse do
         end.not_to raise_error
       end
     end
+
+    context "with a custom trace_id" do
+      it "attaches the root observation to the provided trace ID" do
+        trace_id = described_class.create_trace_id(seed: "root-seed")
+        observation = described_class.start_observation("root", {}, trace_id: trace_id)
+
+        expect(observation.trace_id).to eq(trace_id)
+      end
+
+      it "shares the trace ID with child observations created from the root" do
+        trace_id = described_class.create_trace_id(seed: "shared-seed")
+        root = described_class.start_observation("root", {}, trace_id: trace_id)
+        child = root.start_observation("child")
+
+        expect(child.trace_id).to eq(trace_id)
+      end
+
+      it "raises when both trace_id and parent_span_context are provided" do
+        parent = described_class.start_observation("parent", {})
+        expect do
+          described_class.start_observation(
+            "child", {},
+            trace_id: described_class.create_trace_id(seed: "x"),
+            parent_span_context: parent.otel_span.context
+          )
+        end.to raise_error(ArgumentError, /Cannot specify both trace_id and parent_span_context/)
+      end
+
+      it "raises ArgumentError for an invalid trace_id" do
+        expect do
+          described_class.start_observation("bad", {}, trace_id: "not-a-trace-id")
+        end.to raise_error(ArgumentError, /Invalid trace_id/)
+      end
+    end
   end
 
   describe ".observe" do
@@ -414,6 +467,49 @@ RSpec.describe Langfuse do
         expect do
           described_class.observe("test", {}, as_type: nil)
         end.to raise_error(ArgumentError, /Invalid observation type/)
+      end
+    end
+
+    context "with a custom trace_id" do
+      it "creates an observation attached to the custom trace ID" do
+        trace_id = described_class.create_trace_id(seed: "observe-seed")
+        captured = nil
+        described_class.observe("root", trace_id: trace_id) { |obs| captured = obs.trace_id }
+
+        expect(captured).to eq(trace_id)
+      end
+
+      it "propagates the trace ID to children started inside the block" do
+        trace_id = described_class.create_trace_id(seed: "propagate-seed")
+        child_trace_id = nil
+
+        described_class.observe("root", trace_id: trace_id) do |root|
+          root.start_observation("child") { |child| child_trace_id = child.trace_id }
+        end
+
+        expect(child_trace_id).to eq(trace_id)
+      end
+
+      it "raises ArgumentError for an invalid trace_id" do
+        expect do
+          described_class.observe("root", trace_id: "invalid") { |_| }
+        end.to raise_error(ArgumentError, /Invalid trace_id/)
+      end
+    end
+
+    context "when the block raises" do
+      it "ends the observation and re-raises the exception" do
+        observation_ref = nil
+
+        expect do
+          described_class.observe("boom") do |obs|
+            observation_ref = obs
+            raise "kaboom"
+          end
+        end.to raise_error(RuntimeError, "kaboom")
+
+        # Ensure block ran — span is no longer recording
+        expect(observation_ref.otel_span.recording?).to be(false)
       end
     end
   end

@@ -50,6 +50,7 @@ require_relative "langfuse/otel_attributes"
 require_relative "langfuse/propagation"
 require_relative "langfuse/span_processor"
 require_relative "langfuse/observations"
+require_relative "langfuse/trace_id"
 require_relative "langfuse/score_client"
 require_relative "langfuse/text_prompt_client"
 require_relative "langfuse/chat_prompt_client"
@@ -296,6 +297,30 @@ module Langfuse
       client.flush_scores if @client
     end
 
+    # Generate a trace ID (deterministic when seeded, random otherwise).
+    #
+    # Use this to correlate Langfuse traces with external identifiers. The
+    # same seed always produces the same trace ID across the Ruby, Python,
+    # and JS SDKs (SHA-256 of the seed, first 16 bytes, as 32 hex chars).
+    #
+    # @param seed [String, nil] Optional deterministic seed
+    # @return [String] 32-character lowercase hex trace ID
+    #
+    # @example
+    #   trace_id = Langfuse.create_trace_id(seed: "order-12345")
+    #   Langfuse.observe("process", trace_id: trace_id) { |span| ... }
+    def create_trace_id(seed: nil)
+      TraceId.create(seed: seed)
+    end
+
+    # Generate an observation (span) ID (deterministic when seeded).
+    #
+    # @param seed [String, nil] Optional deterministic seed
+    # @return [String] 16-character lowercase hex observation ID
+    def create_observation_id(seed: nil)
+      TraceId.create_observation_id(seed: seed)
+    end
+
     # Reset global configuration and client (useful for testing)
     #
     # @return [void]
@@ -332,8 +357,14 @@ module Langfuse
     #   child = Langfuse.start_observation("llm-call", { model: "gpt-4" },
     #                                       as_type: :generation,
     #                                       parent_span_context: parent.otel_span.context)
-    def start_observation(name, attrs = {}, as_type: :span, parent_span_context: nil, start_time: nil,
-                          skip_validation: false)
+    #
+    # @example Attach to a deterministic trace ID
+    #   trace_id = Langfuse.create_trace_id(seed: "order-123")
+    #   root = Langfuse.start_observation("process-order", trace_id: trace_id)
+    # rubocop:disable Metrics/AbcSize, Metrics/ParameterLists
+    def start_observation(name, attrs = {}, as_type: :span, trace_id: nil, parent_span_context: nil,
+                          start_time: nil, skip_validation: false)
+      parent_span_context = resolve_trace_context(trace_id, parent_span_context)
       type_str = as_type.to_s
 
       unless skip_validation || valid_observation_type?(as_type)
@@ -364,6 +395,7 @@ module Langfuse
 
       observation
     end
+    # rubocop:enable Metrics/AbcSize, Metrics/ParameterLists
 
     # User-facing convenience method for creating root observations
     #
@@ -385,28 +417,29 @@ module Langfuse
     #   obs = Langfuse.observe("operation", input: { data: "test" })
     #   obs.update(output: { result: "success" })
     #   obs.end
-    def observe(name, attrs = {}, as_type: :span, **kwargs, &block)
+    def observe(name, attrs = {}, as_type: :span, trace_id: nil, **kwargs, &block)
       # Merge positional attrs and keyword kwargs
       merged_attrs = attrs.to_h.merge(kwargs)
-      observation = start_observation(name, merged_attrs, as_type: as_type)
+      observation = start_observation(name, merged_attrs, as_type: as_type, trace_id: trace_id)
+      return observation unless block
 
-      if block
-        # Block-based API: auto-ends when block completes
-        # Set context and execute block
-        current_context = OpenTelemetry::Context.current
-        result = OpenTelemetry::Context.with_current(
-          OpenTelemetry::Trace.context_with_span(observation.otel_span, parent_context: current_context)
-        ) do
-          block.call(observation)
-        end
-        # Only end if not already ended (events auto-end in start_observation)
-        observation.end unless as_type.to_s == OBSERVATION_TYPES[:event]
-        result
-      else
-        # Stateful API - return observation
-        # Events already auto-ended in start_observation
-        observation
+      execute_observe_block(observation, as_type, &block)
+    end
+
+    # Runs an observe block with the observation set as the current OTel span,
+    # guaranteeing the span ends via ensure — even if the block raises.
+    # Events are excluded because they auto-end in {start_observation}.
+    #
+    # @api private
+    def execute_observe_block(observation, as_type, &block)
+      current_context = OpenTelemetry::Context.current
+      OpenTelemetry::Context.with_current(
+        OpenTelemetry::Trace.context_with_span(observation.otel_span, parent_context: current_context)
+      ) do
+        block.call(observation)
       end
+    ensure
+      observation.end unless as_type.to_s == OBSERVATION_TYPES[:event]
     end
 
     # Registry mapping observation type strings to their wrapper classes
@@ -424,6 +457,18 @@ module Langfuse
     }.freeze
 
     private
+
+    # Resolves a user-supplied `trace_id` / `parent_span_context` pair into a
+    # single parent context. Raises if both are supplied — they are mutually
+    # exclusive ways of specifying the parent trace.
+    #
+    # @api private
+    def resolve_trace_context(trace_id, parent_span_context)
+      return parent_span_context unless trace_id
+      raise ArgumentError, "Cannot specify both trace_id and parent_span_context" if parent_span_context
+
+      TraceId.to_span_context(trace_id)
+    end
 
     # Validates that an observation type is valid
     #

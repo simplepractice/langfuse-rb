@@ -192,6 +192,19 @@ RSpec.describe Langfuse::BaseObservation do
           expect(span_data.attributes["langfuse.observation.level"]).to eq("ERROR")
         end
       end
+
+      it "ends the child and re-raises when the block raises" do
+        child_ref = nil
+
+        expect do
+          observation.start_observation("boom") do |child|
+            child_ref = child
+            raise "kaboom"
+          end
+        end.to raise_error(RuntimeError, "kaboom")
+
+        expect(child_ref.otel_span.recording?).to be(false)
+      end
     end
 
     context "without block (stateful API)" do

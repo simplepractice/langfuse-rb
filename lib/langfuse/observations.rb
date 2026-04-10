@@ -142,24 +142,25 @@ module Langfuse
         parent_span_context: @otel_span.context,
         skip_validation: true
       )
+      return child unless block
 
-      if block
-        # Block-based API: auto-ends when block completes
-        # Set context and execute block
-        current_context = OpenTelemetry::Context.current
-        result = OpenTelemetry::Context.with_current(
-          OpenTelemetry::Trace.context_with_span(child.otel_span, parent_context: current_context)
-        ) do
-          block.call(child)
-        end
-        # Only end if not already ended (events auto-end in start_observation)
-        child.end unless as_type.to_s == OBSERVATION_TYPES[:event]
-        result
-      else
-        # Stateful API - return observation
-        # Events already auto-ended in start_observation
-        child
+      execute_child_block(child, as_type, &block)
+    end
+
+    # Runs a child block with the child span set as the current OTel span and
+    # guarantees the child ends via ensure — even if the block raises.
+    # Events are excluded because they auto-end at creation.
+    #
+    # @api private
+    def execute_child_block(child, as_type, &block)
+      current_context = OpenTelemetry::Context.current
+      OpenTelemetry::Context.with_current(
+        OpenTelemetry::Trace.context_with_span(child.otel_span, parent_context: current_context)
+      ) do
+        block.call(child)
       end
+    ensure
+      child.end unless as_type.to_s == OBSERVATION_TYPES[:event]
     end
 
     # Sets observation-level input attributes.
