@@ -133,8 +133,7 @@ module Langfuse
     # @yield [observation] Optional block that receives the observation object
     # @return [BaseObservation, Object] The child observation (or block return value if block given)
     def start_observation(name, attrs = {}, as_type: :span, &block)
-      # Call module-level factory with parent context
-      # Skip validation to allow unknown types to fall back to Span
+      # Skip validation so unknown types fall back to Span in the factory.
       child = Langfuse.start_observation(
         name,
         attrs,
@@ -144,23 +143,7 @@ module Langfuse
       )
       return child unless block
 
-      execute_child_block(child, as_type, &block)
-    end
-
-    # Runs a child block with the child span set as the current OTel span and
-    # guarantees the child ends via ensure — even if the block raises.
-    # Events are excluded because they auto-end at creation.
-    #
-    # @api private
-    def execute_child_block(child, as_type, &block)
-      current_context = OpenTelemetry::Context.current
-      OpenTelemetry::Context.with_current(
-        OpenTelemetry::Trace.context_with_span(child.otel_span, parent_context: current_context)
-      ) do
-        block.call(child)
-      end
-    ensure
-      child.end unless as_type.to_s == OBSERVATION_TYPES[:event]
+      Langfuse.run_in_observation_context(child, as_type, &block)
     end
 
     # Sets observation-level input attributes.

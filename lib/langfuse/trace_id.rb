@@ -62,13 +62,13 @@ module Langfuse
         id.is_a?(String) && OBSERVATION_ID_PATTERN.match?(id)
       end
 
-      # Build a sampled OpenTelemetry SpanContext from a hex trace ID.
+      # Build a sampled OpenTelemetry SpanContext carrying the given hex trace ID.
       #
-      # The returned SpanContext can be passed as `parent_span_context:` to
-      # {Langfuse.start_observation} to force a new root span onto the given
-      # trace ID. A random span ID is generated for the parent so OTel has a
-      # concrete parent span to attach to; downstream child spans attach to
-      # the real root span created by `start_observation`.
+      # Passed as `parent_span_context:` to {Langfuse.start_observation}, this
+      # forces the next span onto the provided trace. A SpanContext also needs
+      # a span_id, so a random one is generated; it is never persisted — only
+      # the trace_id is consumed by the child span that gets created. This
+      # mirrors the Python SDK's `create_trace_id` / SpanContext wiring.
       #
       # @param trace_id [String] 32-character lowercase hex trace ID
       # @return [OpenTelemetry::Trace::SpanContext] sampled span context

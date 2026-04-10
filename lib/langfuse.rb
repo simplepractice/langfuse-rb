@@ -361,16 +361,12 @@ module Langfuse
     # @example Attach to a deterministic trace ID
     #   trace_id = Langfuse.create_trace_id(seed: "order-123")
     #   root = Langfuse.start_observation("process-order", trace_id: trace_id)
-    # rubocop:disable Metrics/AbcSize, Metrics/ParameterLists
+    # rubocop:disable Metrics/ParameterLists
     def start_observation(name, attrs = {}, as_type: :span, trace_id: nil, parent_span_context: nil,
                           start_time: nil, skip_validation: false)
       parent_span_context = resolve_trace_context(trace_id, parent_span_context)
       type_str = as_type.to_s
-
-      unless skip_validation || valid_observation_type?(as_type)
-        valid_types = OBSERVATION_TYPES.values.sort.join(", ")
-        raise ArgumentError, "Invalid observation type: #{type_str}. Valid types: #{valid_types}"
-      end
+      validate_observation_type!(as_type, type_str) unless skip_validation
 
       otel_tracer = otel_tracer()
       otel_span = create_otel_span(
@@ -379,23 +375,14 @@ module Langfuse
         parent_span_context: parent_span_context,
         otel_tracer: otel_tracer
       )
+      apply_observation_attributes(otel_span, type_str, attrs)
 
-      # Serialize attributes
-      # Only set attributes if span is still recording (should always be true here, but guard for safety)
-      if otel_span.recording?
-        otel_attrs = OtelAttributes.create_observation_attributes(type_str, attrs.to_h, mask: configuration.mask)
-        otel_attrs.each { |key, value| otel_span.set_attribute(key, value) }
-      end
-
-      # Wrap in appropriate class (attributes already set on span above — pass nil to avoid double-masking)
       observation = wrap_otel_span(otel_span, type_str, otel_tracer)
-
       # Events auto-end immediately when created
       observation.end if type_str == OBSERVATION_TYPES[:event]
-
       observation
     end
-    # rubocop:enable Metrics/AbcSize, Metrics/ParameterLists
+    # rubocop:enable Metrics/ParameterLists
 
     # User-facing convenience method for creating root observations
     #
@@ -418,20 +405,19 @@ module Langfuse
     #   obs.update(output: { result: "success" })
     #   obs.end
     def observe(name, attrs = {}, as_type: :span, trace_id: nil, **kwargs, &block)
-      # Merge positional attrs and keyword kwargs
       merged_attrs = attrs.to_h.merge(kwargs)
       observation = start_observation(name, merged_attrs, as_type: as_type, trace_id: trace_id)
       return observation unless block
 
-      execute_observe_block(observation, as_type, &block)
+      run_in_observation_context(observation, as_type, &block)
     end
 
-    # Runs an observe block with the observation set as the current OTel span,
-    # guaranteeing the span ends via ensure — even if the block raises.
-    # Events are excluded because they auto-end in {start_observation}.
+    # Runs `block` with `observation` as the current OTel span and ends the
+    # span in `ensure` so block exceptions don't leak unfinished spans.
+    # Events are skipped because they auto-end at creation.
     #
     # @api private
-    def execute_observe_block(observation, as_type, &block)
+    def run_in_observation_context(observation, as_type, &block)
       current_context = OpenTelemetry::Context.current
       OpenTelemetry::Context.with_current(
         OpenTelemetry::Trace.context_with_span(observation.otel_span, parent_context: current_context)
@@ -458,16 +444,29 @@ module Langfuse
 
     private
 
-    # Resolves a user-supplied `trace_id` / `parent_span_context` pair into a
-    # single parent context. Raises if both are supplied — they are mutually
-    # exclusive ways of specifying the parent trace.
-    #
     # @api private
     def resolve_trace_context(trace_id, parent_span_context)
       return parent_span_context unless trace_id
       raise ArgumentError, "Cannot specify both trace_id and parent_span_context" if parent_span_context
 
       TraceId.to_span_context(trace_id)
+    end
+
+    # @api private
+    def validate_observation_type!(as_type, type_str)
+      return if valid_observation_type?(as_type)
+
+      valid_types = OBSERVATION_TYPES.values.sort.join(", ")
+      raise ArgumentError, "Invalid observation type: #{type_str}. Valid types: #{valid_types}"
+    end
+
+    # @api private
+    def apply_observation_attributes(otel_span, type_str, attrs)
+      # Guard against ended spans — should always be recording here, but safe.
+      return unless otel_span.recording?
+
+      otel_attrs = OtelAttributes.create_observation_attributes(type_str, attrs.to_h, mask: configuration.mask)
+      otel_attrs.each { |key, value| otel_span.set_attribute(key, value) }
     end
 
     # Validates that an observation type is valid
