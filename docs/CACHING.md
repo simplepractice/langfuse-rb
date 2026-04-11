@@ -22,7 +22,7 @@ The Langfuse Ruby SDK provides two caching backends to optimize prompt fetching:
 1. **In-Memory Cache** (default) - Thread-safe, local cache with TTL and bounded expiration-ordered eviction
 2. **Rails.cache Backend** - Distributed caching with Redis/Memcached
 
-Both backends support TTL-based expiration and automatic stampede protection (Rails.cache only).
+Both backends support TTL-based expiration and stale-while-revalidate (SWR). Distributed stampede protection via locking is specific to the Rails.cache backend; the in-memory backend mitigates stampedes within a single process using Monitor-based single-flight locks.
 
 ## In-Memory Cache (Default)
 
