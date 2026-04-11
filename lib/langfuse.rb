@@ -344,11 +344,14 @@ module Langfuse
     # @param name [String] Descriptive name for the observation
     # @param attrs [Hash, Types::SpanAttributes, Types::GenerationAttributes, nil] Observation attributes
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
+    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID to attach the observation to.
+    #   Mutually exclusive with `parent_span_context`. Use {Langfuse.create_trace_id} to generate one.
     # @param parent_span_context [OpenTelemetry::Trace::SpanContext, nil] Parent span context for child observations
     # @param start_time [Time, Integer, nil] Optional start time (Time object or Unix timestamp in nanoseconds)
     # @param skip_validation [Boolean] Skip validation (for internal use). Defaults to false.
     # @return [BaseObservation] The observation wrapper (Span, Generation, or Event)
-    # @raise [ArgumentError] if an invalid observation type is provided
+    # @raise [ArgumentError] if an invalid observation type is provided, an invalid `trace_id` is given,
+    #   or both `trace_id` and `parent_span_context` are provided
     #
     # @example Create root span
     #   span = Langfuse.start_observation("root-operation", { input: {...} })
@@ -389,10 +392,13 @@ module Langfuse
     # @param name [String] Descriptive name for the observation
     # @param attrs [Hash] Observation attributes (optional positional or keyword)
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
+    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID to attach the observation to.
+    #   Use {Langfuse.create_trace_id} to generate one. Forwarded to {.start_observation}.
     # @param kwargs [Hash] Additional keyword arguments merged into observation attributes (e.g., input:, output:, metadata:)
     # @yield [observation] Optional block that receives the observation object
     # @yieldparam observation [BaseObservation] The observation object
     # @return [BaseObservation, Object] The observation (or block return value if block given)
+    # @raise [ArgumentError] if an invalid `trace_id` is provided
     #
     # @example Block-based API (auto-ends)
     #   Langfuse.observe("operation") do |obs|
@@ -412,22 +418,6 @@ module Langfuse
       run_in_observation_context(observation, as_type, &block)
     end
 
-    # Runs `block` with `observation` as the current OTel span and ends the
-    # span in `ensure` so block exceptions don't leak unfinished spans.
-    # Events are skipped because they auto-end at creation.
-    #
-    # @api private
-    def run_in_observation_context(observation, as_type, &block)
-      current_context = OpenTelemetry::Context.current
-      OpenTelemetry::Context.with_current(
-        OpenTelemetry::Trace.context_with_span(observation.otel_span, parent_context: current_context)
-      ) do
-        block.call(observation)
-      end
-    ensure
-      observation.end unless as_type.to_s == OBSERVATION_TYPES[:event]
-    end
-
     # Registry mapping observation type strings to their wrapper classes
     OBSERVATION_TYPE_REGISTRY = {
       OBSERVATION_TYPES[:generation] => Generation,
@@ -443,6 +433,25 @@ module Langfuse
     }.freeze
 
     private
+
+    # Runs `block` with `observation` as the current OTel span and ends the
+    # span in `ensure` so block exceptions don't leak unfinished spans.
+    # Events are skipped because they auto-end at creation.
+    #
+    # Internal helper shared by {.observe} and {BaseObservation#start_observation};
+    # the latter reaches it via `Langfuse.__send__` since it lives behind `private`.
+    #
+    # @api private
+    def run_in_observation_context(observation, as_type, &block)
+      current_context = OpenTelemetry::Context.current
+      OpenTelemetry::Context.with_current(
+        OpenTelemetry::Trace.context_with_span(observation.otel_span, parent_context: current_context)
+      ) do
+        block.call(observation)
+      end
+    ensure
+      observation.end unless as_type.to_s == OBSERVATION_TYPES[:event]
+    end
 
     # @api private
     def resolve_trace_context(trace_id, parent_span_context)

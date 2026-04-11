@@ -83,6 +83,12 @@ RSpec.describe Langfuse::TraceId do
       # \A/\z anchors must reject multiline input that ^/$ would wrongly accept
       expect(described_class.valid?("#{'a' * 32}\nextra")).to be(false)
     end
+
+    it "returns false for the all-zero W3C invalid trace ID" do
+      # W3C trace-context: "0" * 32 is reserved as the invalid trace ID
+      # and OpenTelemetry treats it as an invalid SpanContext.
+      expect(described_class.valid?("0" * 32)).to be(false)
+    end
   end
 
   describe ".valid_observation_id?" do
@@ -96,6 +102,11 @@ RSpec.describe Langfuse::TraceId do
 
     it "returns false for nil" do
       expect(described_class.valid_observation_id?(nil)).to be(false)
+    end
+
+    it "returns false for the all-zero W3C invalid span ID" do
+      # W3C trace-context: "0" * 16 is reserved as the invalid span ID.
+      expect(described_class.valid_observation_id?("0" * 16)).to be(false)
     end
   end
 

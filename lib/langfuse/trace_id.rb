@@ -21,6 +21,8 @@ module Langfuse
   module TraceId
     TRACE_ID_PATTERN = /\A[0-9a-f]{32}\z/
     OBSERVATION_ID_PATTERN = /\A[0-9a-f]{16}\z/
+    INVALID_TRACE_ID = ("0" * 32)
+    INVALID_OBSERVATION_ID = ("0" * 16)
 
     class << self
       # Generate a W3C trace ID (32 lowercase hex chars).
@@ -52,14 +54,23 @@ module Langfuse
 
       # @param trace_id [Object] Value to validate
       # @return [Boolean] true when the value is a 32-char lowercase hex string
+      #   that is not the all-zero W3C "invalid" trace ID
       def valid?(trace_id)
-        trace_id.is_a?(String) && TRACE_ID_PATTERN.match?(trace_id)
+        return false unless trace_id.is_a?(String) && TRACE_ID_PATTERN.match?(trace_id)
+
+        # W3C trace-context: the all-zero trace ID is reserved as "invalid"
+        # and OpenTelemetry treats it as an invalid SpanContext.
+        trace_id != INVALID_TRACE_ID
       end
 
       # @param id [Object] Value to validate
       # @return [Boolean] true when the value is a 16-char lowercase hex string
+      #   that is not the all-zero W3C "invalid" span ID
       def valid_observation_id?(id)
-        id.is_a?(String) && OBSERVATION_ID_PATTERN.match?(id)
+        return false unless id.is_a?(String) && OBSERVATION_ID_PATTERN.match?(id)
+
+        # W3C trace-context: the all-zero span ID is reserved as "invalid".
+        id != INVALID_OBSERVATION_ID
       end
 
       # Build a sampled OpenTelemetry SpanContext carrying the given hex trace ID.

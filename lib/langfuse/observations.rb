@@ -143,7 +143,9 @@ module Langfuse
       )
       return child unless block
 
-      Langfuse.run_in_observation_context(child, as_type, &block)
+      # `run_in_observation_context` is intentionally private on Langfuse to
+      # keep it out of the public API; reach it via __send__ from here.
+      Langfuse.__send__(:run_in_observation_context, child, as_type, &block)
     end
 
     # Sets observation-level input attributes.
