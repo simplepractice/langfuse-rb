@@ -85,7 +85,7 @@ module Langfuse
     # @example Warm with a different default label
     #   results = warmer.warm_all(default_label: "staging")
     #
-    # @example Warm without any label (latest versions)
+    # @example Warm without any label (API-determined selection)
     #   results = warmer.warm_all(default_label: nil)
     #
     # @example With specific versions for some prompts

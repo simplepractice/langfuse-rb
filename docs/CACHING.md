@@ -179,8 +179,8 @@ Total latency: ~1ms
 Langfuse.configure do |config|
   config.cache_backend = :memory  # Works with both :memory and :rails
   config.cache_ttl = 300  # Fresh for 5 minutes
-  config.cache_stale_while_revalidate = true  # Enable SWR
-  config.cache_stale_ttl = 300  # Serve stale for up to 5 minutes
+  config.cache_stale_while_revalidate = true  # Advisory intent flag
+  config.cache_stale_ttl = 300  # `> 0` activates SWR; serve stale for up to 5 minutes
 end
 ```
 
@@ -419,7 +419,7 @@ puts "Cached #{results[:success].size} prompts"
 # Warm with different label
 results = warmer.warm_all(default_label: "staging")
 
-# Warm latest versions (no label)
+# Warm without a label (API-determined selection)
 results = warmer.warm_all(default_label: nil)
 ```
 
@@ -564,7 +564,7 @@ config.cache_stale_while_revalidate = !Rails.env.development?
 
 # Production: enabled for best performance
 if Rails.env.production?
-  config.cache_stale_ttl = config.cache_ttl  # Auto-set, but can customize
+  config.cache_stale_ttl = config.cache_ttl  # Set explicitly (common default)
 end
 ```
 
