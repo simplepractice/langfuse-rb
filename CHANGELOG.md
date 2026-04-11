@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenTelemetry-based tracing with OTLP export
 - Distributed caching with Rails.cache backend and stampede protection
 - Prompt management (text and chat) with Mustache templating
-- In-memory caching with TTL and LRU eviction
+- In-memory caching with TTL and bounded expiration-ordered eviction
 - Fallback prompt support
 - Global configuration pattern with `Langfuse.configure`
 
