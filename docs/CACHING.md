@@ -19,14 +19,14 @@ For configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
 
 The Langfuse Ruby SDK provides two caching backends to optimize prompt fetching:
 
-1. **In-Memory Cache** (default) - Thread-safe, local cache with TTL and LRU eviction
+1. **In-Memory Cache** (default) - Thread-safe, local cache with TTL and bounded expiration-ordered eviction
 2. **Rails.cache Backend** - Distributed caching with Redis/Memcached
 
-Both backends support TTL-based expiration and automatic stampede protection (Rails.cache only).
+Both backends support TTL-based expiration and stale-while-revalidate (SWR). Distributed stampede protection via locking is specific to the Rails.cache backend; the in-memory backend mitigates stampedes within a single process using Monitor-based single-flight locks.
 
 ## In-Memory Cache (Default)
 
-The default caching backend stores prompts in memory with automatic TTL expiration and LRU eviction.
+The default caching backend stores prompts in memory with automatic TTL expiration and bounded eviction when the cache reaches max size.
 
 ### Configuration
 
@@ -42,7 +42,7 @@ end
 
 - **Thread-safe**: Uses Monitor-based synchronization
 - **TTL-based expiration**: Automatically expires after configured TTL
-- **LRU eviction**: Removes least recently used prompts when max_size is reached
+- **Bounded eviction**: When max_size is reached, removes the entry with earliest expiration (`stale_until`)
 - **Zero dependencies**: No external services required
 - **Fast**: ~1ms cache hits
 
@@ -179,8 +179,8 @@ Total latency: ~1ms
 Langfuse.configure do |config|
   config.cache_backend = :memory  # Works with both :memory and :rails
   config.cache_ttl = 300  # Fresh for 5 minutes
-  config.cache_stale_while_revalidate = true  # Enable SWR
-  config.cache_stale_ttl = 300  # Serve stale for up to 5 minutes
+  config.cache_stale_while_revalidate = true  # Advisory intent flag
+  config.cache_stale_ttl = 300  # `> 0` activates SWR; serve stale for up to 5 minutes
 end
 ```
 
@@ -419,7 +419,7 @@ puts "Cached #{results[:success].size} prompts"
 # Warm with different label
 results = warmer.warm_all(default_label: "staging")
 
-# Warm latest versions (no label)
+# Warm without a label (API-determined selection)
 results = warmer.warm_all(default_label: nil)
 ```
 
@@ -536,8 +536,8 @@ See [CONFIGURATION.md](CONFIGURATION.md) for all cache-related configuration opt
 
 **In-Memory Cache:**
 
-- TTL expiration + LRU eviction
-- Evicts least recently used when max_size reached
+- TTL expiration + bounded eviction
+- Evicts the entry with the earliest expiration (`stale_until`) when max_size is reached
 
 **Rails.cache:**
 
@@ -564,7 +564,7 @@ config.cache_stale_while_revalidate = !Rails.env.development?
 
 # Production: enabled for best performance
 if Rails.env.production?
-  config.cache_stale_ttl = config.cache_ttl  # Auto-set, but can customize
+  config.cache_stale_ttl = config.cache_ttl  # Set explicitly (common default)
 end
 ```
 

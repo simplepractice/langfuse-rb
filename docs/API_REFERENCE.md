@@ -43,8 +43,8 @@ Block receives a configuration object with these properties:
 | `cache_max_size`               | Integer | No       | `1000`                         | Max cached prompts                |
 | `cache_backend`                | Symbol  | No       | `:memory`                      | `:memory` or `:rails`             |
 | `cache_lock_timeout`           | Integer | No       | `10`                           | Lock timeout (seconds)            |
-| `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Enable SWR (requires stale TTL)   |
-| `cache_stale_ttl`              | Integer | No       | `0`                            | Stale TTL (seconds, >0 enables)   |
+| `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Advisory SWR intent flag (effective activation depends on `cache_stale_ttl`) |
+| `cache_stale_ttl`              | Integer or `:indefinite` | No | `0`                  | Stale TTL (seconds, `>0` enables SWR) |
 | `cache_refresh_threads`        | Integer | No       | `5`                            | Background refresh threads        |
 | `batch_size`                   | Integer | No       | `50`                           | Score + trace export batch size   |
 | `flush_interval`               | Integer | No       | `10`                           | Score + trace export interval (s) |
@@ -149,7 +149,7 @@ get_prompt(name, version: nil, label: nil, fallback: nil, type: nil)
 | `name`     | String  | Yes         | Prompt name                                          |
 | `version`  | Integer | No          | Specific version (mutually exclusive with `label`)   |
 | `label`    | String  | No          | Version label (e.g., "production")                   |
-| `fallback` | String  | No          | Fallback template if not found                       |
+| `fallback` | String or Array<Hash> | No | Fallback prompt if not found (`String` for text, `Array<Hash>` for chat) |
 | `type`     | Symbol  | Conditional | `:text` or `:chat` (required if `fallback` provided) |
 
 **Returns:** `TextPromptClient` or `ChatPromptClient`
@@ -163,7 +163,7 @@ get_prompt(name, version: nil, label: nil, fallback: nil, type: nil)
 **Examples:**
 
 ```ruby
-# Latest version
+# API default selection (no version/label sent)
 prompt = client.get_prompt("greeting")
 
 # Specific version
@@ -216,6 +216,89 @@ messages = client.compile_prompt("chat-assistant",
   variables: { topic: "Ruby" }
 )
 # => [{ role: :system, content: "..." }, { role: :user, content: "..." }]
+```
+
+### `Client#create_prompt`
+
+Create a new prompt (or a new version if the name already exists).
+
+**Signature:**
+
+```ruby
+create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_message: nil)
+```
+
+**Parameters:**
+
+| Parameter        | Type               | Required | Description                                                              |
+| ---------------- | ------------------ | -------- | ------------------------------------------------------------------------ |
+| `name`           | String             | Yes      | Prompt name                                                              |
+| `prompt`         | String or Array<Hash> | Yes   | Prompt content (String for text, array of role/content hashes for chat) |
+| `type`           | Symbol             | Yes      | Prompt type (`:text` or `:chat`)                                         |
+| `config`         | Hash               | No       | Prompt config metadata (for example model parameters)                    |
+| `labels`         | Array<String>      | No       | Labels to assign (for example `["production"]`)                          |
+| `tags`           | Array<String>      | No       | Tags for categorization                                                  |
+| `commit_message` | String             | No       | Optional commit message                                                  |
+
+**Returns:** `TextPromptClient` or `ChatPromptClient`
+
+**Raises:**
+
+- `ArgumentError` for missing/invalid prompt type or content
+- `UnauthorizedError` if credentials invalid
+- `ApiError` on network/server errors
+
+**Example:**
+
+```ruby
+prompt = client.create_prompt(
+  name: "support-assistant",
+  prompt: [
+    { role: "system", content: "You are a helpful assistant for {{product}}" },
+    { role: "user", content: "{{question}}" }
+  ],
+  type: :chat,
+  labels: ["staging"],
+  tags: ["support"],
+  config: { model: "gpt-4o-mini" }
+)
+```
+
+### `Client#update_prompt`
+
+Update labels for an existing prompt version.
+
+**Signature:**
+
+```ruby
+update_prompt(name:, version:, labels:)
+```
+
+**Parameters:**
+
+| Parameter | Type          | Required | Description                               |
+| --------- | ------------- | -------- | ----------------------------------------- |
+| `name`    | String        | Yes      | Prompt name                               |
+| `version` | Integer       | Yes      | Prompt version to update                  |
+| `labels`  | Array<String> | Yes      | Replacement labels for that prompt version |
+
+**Returns:** `TextPromptClient` or `ChatPromptClient`
+
+**Raises:**
+
+- `ArgumentError` if `labels` is not an array
+- `NotFoundError` if prompt/version not found
+- `UnauthorizedError` if credentials invalid
+- `ApiError` on network/server errors
+
+**Example:**
+
+```ruby
+prompt = client.update_prompt(
+  name: "support-assistant",
+  version: 3,
+  labels: ["production"]
+)
 ```
 
 ### `Client#list_prompts`

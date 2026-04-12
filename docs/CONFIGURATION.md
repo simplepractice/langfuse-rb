@@ -121,26 +121,25 @@ See [CACHING.md](CACHING.md#stampede-protection) for details.
 
 - **Type:** Boolean
 - **Default:** `false`
-- **Description:** Enable stale-while-revalidate caching pattern
+- **Description:** Advisory SWR intent flag (effective SWR behavior is controlled by `cache_stale_ttl`)
 
 ```ruby
-config.cache_stale_while_revalidate = true  # Enable SWR
+config.cache_stale_while_revalidate = true  # Optional intent flag
 ```
 
-When enabled, serves stale cached data immediately while refreshing in the background. This dramatically reduces P99 latency by avoiding synchronous API waits after cache expiration.
+This flag does not independently turn SWR on or off. SWR activates when `cache_stale_ttl > 0`; the flag exists only as an advisory indicator of intent.
 
-**Behavior:**
+**Behavior (driven by `cache_stale_ttl`):**
 
-- `false` (default): Cache expires at TTL, next request waits for API (~100ms)
-- `true`: After TTL, serves stale data instantly (~1ms) + refreshes in background
+- `cache_stale_ttl <= 0` (default): Cache expires at TTL, next request waits for API (~100ms)
+- `cache_stale_ttl > 0`: After TTL, serves stale data instantly (~1ms) + refreshes in background
 
-**Important:** SWR only activates when `cache_stale_ttl` is a positive value. Set it explicitly (typically equal to `cache_ttl`).
+**Important:** To activate SWR, set `cache_stale_ttl` to a positive value (typically equal to `cache_ttl`).
 
 **Compatibility:**
 
 - ✅ Works with `:memory` backend
 - ✅ Works with `:rails` backend
-- Set `cache_stale_ttl` to a positive value to activate SWR (often the same as `cache_ttl`)
 
 See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for detailed usage.
 
@@ -414,7 +413,8 @@ Langfuse.configure do |config|
   config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
   config.cache_ttl = 300  # Longer TTL for stability
   config.cache_backend = :rails  # Shared cache
-  config.cache_stale_while_revalidate = true  # Enable SWR for best latency
+  config.cache_stale_while_revalidate = true  # Advisory intent flag (SWR activates via cache_stale_ttl > 0)
+  config.cache_stale_ttl = 300  # Activates SWR
   config.timeout = 10  # Handle network variability
   config.logger = Rails.logger
 end
@@ -435,7 +435,7 @@ Langfuse.configure do |config|
   config.public_key = 'pk-lf-test'
   config.secret_key = 'sk-lf-test'
   config.cache_backend = :memory  # Isolated per-process cache
-  config.cache_stale_while_revalidate = false  # Disable SWR for predictable tests
+  config.cache_stale_ttl = 0      # Disable SWR for predictable tests
 end
 ```
 

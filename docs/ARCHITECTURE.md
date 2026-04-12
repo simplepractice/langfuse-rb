@@ -95,7 +95,14 @@ end
 HTTP layer with Faraday:
 
 ```ruby
-api_client = Langfuse::ApiClient.new(config, cache)
+api_client = Langfuse::ApiClient.new(
+  public_key: config.public_key,
+  secret_key: config.secret_key,
+  base_url: config.base_url,
+  timeout: config.timeout,
+  logger: config.logger,
+  cache: cache
+)
 prompt_data = api_client.get_prompt("name")
 ```
 
@@ -146,7 +153,7 @@ cached = cache.get(key)
 **Features:**
 - Thread-safe with Monitor
 - TTL expiration
-- LRU eviction
+- Bounded expiration-ordered eviction
 
 #### RailsCacheAdapter (Distributed)
 
