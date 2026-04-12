@@ -303,22 +303,16 @@ module Langfuse
     # same seed always produces the same trace ID across the Ruby, Python,
     # and JS SDKs (SHA-256 of the seed, first 16 bytes, as 32 hex chars).
     #
+    # @note Avoid PII or secrets as seeds. See {TraceId.create} for details.
     # @param seed [String, nil] Optional deterministic seed
     # @return [String] 32-character lowercase hex trace ID
+    # @raise [ArgumentError] if seed is not nil and not a String
     #
     # @example
     #   trace_id = Langfuse.create_trace_id(seed: "order-12345")
     #   Langfuse.observe("process", trace_id: trace_id) { |span| ... }
     def create_trace_id(seed: nil)
       TraceId.create(seed: seed)
-    end
-
-    # Generate an observation (span) ID (deterministic when seeded).
-    #
-    # @param seed [String, nil] Optional deterministic seed
-    # @return [String] 16-character lowercase hex observation ID
-    def create_observation_id(seed: nil)
-      TraceId.create_observation_id(seed: seed)
     end
 
     # Reset global configuration and client (useful for testing)
@@ -415,7 +409,7 @@ module Langfuse
       observation = start_observation(name, merged_attrs, as_type: as_type, trace_id: trace_id)
       return observation unless block
 
-      run_in_observation_context(observation, as_type, &block)
+      observation.send(:run_in_context, &block)
     end
 
     # Registry mapping observation type strings to their wrapper classes
@@ -434,31 +428,12 @@ module Langfuse
 
     private
 
-    # Runs `block` with `observation` as the current OTel span and ends the
-    # span in `ensure` so block exceptions don't leak unfinished spans.
-    # Events are skipped because they auto-end at creation.
-    #
-    # Internal helper shared by {.observe} and {BaseObservation#start_observation};
-    # the latter reaches it via `Langfuse.__send__` since it lives behind `private`.
-    #
-    # @api private
-    def run_in_observation_context(observation, as_type, &block)
-      current_context = OpenTelemetry::Context.current
-      OpenTelemetry::Context.with_current(
-        OpenTelemetry::Trace.context_with_span(observation.otel_span, parent_context: current_context)
-      ) do
-        block.call(observation)
-      end
-    ensure
-      observation.end unless as_type.to_s == OBSERVATION_TYPES[:event]
-    end
-
     # @api private
     def resolve_trace_context(trace_id, parent_span_context)
       return parent_span_context unless trace_id
       raise ArgumentError, "Cannot specify both trace_id and parent_span_context" if parent_span_context
 
-      TraceId.to_span_context(trace_id)
+      TraceId.send(:to_span_context, trace_id)
     end
 
     # @api private

@@ -143,9 +143,7 @@ module Langfuse
       )
       return child unless block
 
-      # `run_in_observation_context` is intentionally private on Langfuse to
-      # keep it out of the public API; reach it via __send__ from here.
-      Langfuse.__send__(:run_in_observation_context, child, as_type, &block)
+      child.send(:run_in_context, &block)
     end
 
     # Sets observation-level input attributes.
@@ -246,6 +244,27 @@ module Langfuse
       else
         prompt
       end
+    end
+
+    private
+
+    # Runs the block with this observation as the active OTel span,
+    # then ends the span in ensure (events excluded — they auto-end).
+    # @api private
+    def run_in_context
+      parent_ctx = OpenTelemetry::Context.current
+      span_ctx = OpenTelemetry::Trace.context_with_span(@otel_span, parent_context: parent_ctx)
+      OpenTelemetry::Context.with_current(span_ctx) { yield self }
+    ensure
+      safe_end
+    end
+
+    # Ends the span, swallowing errors so ensure never masks a block exception.
+    # @api private
+    def safe_end
+      self.end unless @type == OBSERVATION_TYPES[:event]
+    rescue StandardError
+      nil
     end
   end
 

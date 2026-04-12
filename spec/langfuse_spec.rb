@@ -229,14 +229,6 @@ RSpec.describe Langfuse do
     end
   end
 
-  describe ".create_observation_id" do
-    it "delegates to TraceId.create_observation_id" do
-      expect(described_class.create_observation_id(seed: "xyz")).to eq(
-        Langfuse::TraceId.create_observation_id(seed: "xyz")
-      )
-    end
-  end
-
   describe ".start_observation" do
     it "creates a root span observation" do
       observation = described_class.start_observation("test-span", { input: { data: "test" } })
@@ -404,6 +396,12 @@ RSpec.describe Langfuse do
           described_class.start_observation("bad", {}, trace_id: "not-a-trace-id")
         end.to raise_error(ArgumentError, /Invalid trace_id/)
       end
+
+      it "rejects the all-zero W3C invalid trace ID" do
+        expect do
+          described_class.start_observation("bad", {}, trace_id: "0" * 32)
+        end.to raise_error(ArgumentError, /Invalid trace_id/)
+      end
     end
   end
 
@@ -495,6 +493,12 @@ RSpec.describe Langfuse do
           described_class.observe("root", trace_id: "invalid") { |_| }
         end.to raise_error(ArgumentError, /Invalid trace_id/)
       end
+
+      it "rejects the all-zero W3C invalid trace ID" do
+        expect do
+          described_class.observe("root", trace_id: "0" * 32) { |_| }
+        end.to raise_error(ArgumentError, /Invalid trace_id/)
+      end
     end
 
     context "when the block raises" do
@@ -510,6 +514,34 @@ RSpec.describe Langfuse do
 
         # Ensure block ran — span is no longer recording
         expect(observation_ref.otel_span.recording?).to be(false)
+      end
+
+      it "ends the observation even with a custom trace_id" do
+        trace_id = described_class.create_trace_id(seed: "ensure-test")
+        observation_ref = nil
+
+        expect do
+          described_class.observe("boom", trace_id: trace_id) do |obs|
+            observation_ref = obs
+            raise "kaboom"
+          end
+        end.to raise_error(RuntimeError, "kaboom")
+
+        expect(observation_ref.trace_id).to eq(trace_id)
+        expect(observation_ref.otel_span.recording?).to be(false)
+      end
+
+      it "does not mask the block exception when observation.end raises" do
+        observation_ref = nil
+
+        expect do
+          described_class.observe("outer") do |obs|
+            observation_ref = obs
+            # Stub finish to raise after the block captures the ref
+            allow(obs.otel_span).to receive(:finish).and_raise(RuntimeError, "end-boom")
+            raise ArgumentError, "original"
+          end
+        end.to raise_error(ArgumentError, "original")
       end
     end
   end

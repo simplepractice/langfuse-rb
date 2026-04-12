@@ -20,9 +20,9 @@ module Langfuse
   #   trace_id = Langfuse::TraceId.create
   module TraceId
     TRACE_ID_PATTERN = /\A[0-9a-f]{32}\z/
-    OBSERVATION_ID_PATTERN = /\A[0-9a-f]{16}\z/
     INVALID_TRACE_ID = ("0" * 32)
-    INVALID_OBSERVATION_ID = ("0" * 16)
+
+    private_constant :TRACE_ID_PATTERN, :INVALID_TRACE_ID
 
     class << self
       # Generate a W3C trace ID (32 lowercase hex chars).
@@ -31,59 +31,46 @@ module Langfuse
       # With a seed, takes the first 16 bytes of SHA-256(seed) so the same
       # input always produces the same trace ID.
       #
-      # @param seed [String, nil] Optional seed for deterministic generation
+      # @note Avoid passing PII, secrets, or credentials as seeds — the raw seed
+      #   value appears in application code and may leak through logs/backtraces.
+      #   Use stable external identifiers (database PKs, UUIDs, request IDs).
+      # @param seed [String, nil] Optional seed for deterministic generation.
+      #   Must be a String if provided; non-String values raise ArgumentError
+      #   for cross-SDK parity (Python/JS both reject non-strings).
       # @return [String] 32-character lowercase hex trace ID
+      # @raise [ArgumentError] if seed is not nil and not a String
       def create(seed: nil)
         return OpenTelemetry::Trace.generate_trace_id.unpack1("H*") if seed.nil?
 
-        Digest::SHA256.digest(seed.to_s)[0, 16].unpack1("H*")
+        Digest::SHA256.digest(validate_seed!(seed))[0, 16].unpack1("H*")
       end
 
-      # Generate a W3C span ID (16 lowercase hex chars).
-      #
-      # With no seed, delegates to OpenTelemetry's random span ID generator.
-      # With a seed, takes the first 8 bytes of SHA-256(seed).
-      #
-      # @param seed [String, nil] Optional seed for deterministic generation
-      # @return [String] 16-character lowercase hex observation ID
-      def create_observation_id(seed: nil)
-        return OpenTelemetry::Trace.generate_span_id.unpack1("H*") if seed.nil?
+      private
 
-        Digest::SHA256.digest(seed.to_s)[0, 8].unpack1("H*")
+      # @api private
+      def validate_seed!(seed)
+        raise ArgumentError, "seed must be a String, got #{seed.class}" unless seed.is_a?(String)
+
+        # ASCII-8BIT strings (binary) often already hold valid UTF-8 bytes
+        # but can't be transcoded — re-tag them instead.
+        return seed.dup.force_encoding("UTF-8") if seed.encoding == Encoding::ASCII_8BIT
+
+        seed.encode("UTF-8")
       end
 
-      # @param trace_id [Object] Value to validate
-      # @return [Boolean] true when the value is a 32-char lowercase hex string
-      #   that is not the all-zero W3C "invalid" trace ID
+      # @api private
       def valid?(trace_id)
         return false unless trace_id.is_a?(String) && TRACE_ID_PATTERN.match?(trace_id)
 
-        # W3C trace-context: the all-zero trace ID is reserved as "invalid"
-        # and OpenTelemetry treats it as an invalid SpanContext.
         trace_id != INVALID_TRACE_ID
-      end
-
-      # @param id [Object] Value to validate
-      # @return [Boolean] true when the value is a 16-char lowercase hex string
-      #   that is not the all-zero W3C "invalid" span ID
-      def valid_observation_id?(id)
-        return false unless id.is_a?(String) && OBSERVATION_ID_PATTERN.match?(id)
-
-        # W3C trace-context: the all-zero span ID is reserved as "invalid".
-        id != INVALID_OBSERVATION_ID
       end
 
       # Build a sampled OpenTelemetry SpanContext carrying the given hex trace ID.
       #
-      # Passed as `parent_span_context:` to {Langfuse.start_observation}, this
-      # forces the next span onto the provided trace. A SpanContext also needs
-      # a span_id, so a random one is generated; it is never persisted — only
-      # the trace_id is consumed by the child span that gets created. This
-      # mirrors the Python SDK's `create_trace_id` / SpanContext wiring.
+      # A random span_id is generated as a placeholder — only the trace_id is
+      # consumed by the child span that gets created.
       #
-      # @param trace_id [String] 32-character lowercase hex trace ID
-      # @return [OpenTelemetry::Trace::SpanContext] sampled span context
-      # @raise [ArgumentError] if `trace_id` is not a valid trace ID
+      # @api private
       def to_span_context(trace_id)
         raise ArgumentError, "Invalid trace_id: #{trace_id.inspect}" unless valid?(trace_id)
 
@@ -91,6 +78,8 @@ module Langfuse
           trace_id: [trace_id].pack("H*"),
           span_id: OpenTelemetry::Trace.generate_span_id,
           trace_flags: OpenTelemetry::Trace::TraceFlags::SAMPLED,
+          # Cross-SDK parity: Python uses is_remote=False (_create_remote_parent_span).
+          # Changing this would alter ParentBased sampler behavior across SDKs.
           remote: false
         )
       end
