@@ -233,13 +233,13 @@ config.logger = Logger.new(IO::NULL)
 - **Type:** Boolean
 - **Default:** `true`
 - **Status:** Implemented for OpenTelemetry batching; ActiveJob integration is not implemented
-- **Description:** Controls OpenTelemetry export behavior. When `true`, spans are exported in the background on a schedule. When `false`, spans are queued and exported on explicit flush with a long schedule delay.
+- **Description:** Controls OpenTelemetry export behavior. When `true`, spans are exported in the background on a schedule. When `false`, spans are still batched with a longer schedule delay and are typically flushed explicitly at lifecycle boundaries.
 
 ```ruby
 config.tracing_async = true
 ```
 
-**Current Behavior:** Uses OpenTelemetry `BatchSpanProcessor` in both modes. Async mode uses `flush_interval` for scheduled export; sync mode uses a long schedule delay and relies on explicit `force_flush`.
+**Current Behavior:** Uses OpenTelemetry `BatchSpanProcessor` in both modes. Async mode uses `flush_interval` for scheduled export; sync mode uses a 60-second schedule delay and is usually paired with explicit `force_flush` for deterministic delivery timing.
 
 #### `job_queue` ⚠️ Experimental
 

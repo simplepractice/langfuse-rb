@@ -780,8 +780,9 @@ Create a score for a trace or observation.
 **Signature:**
 
 ```ruby
-create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, metadata: nil,
-             data_type: :numeric, dataset_run_id: nil, config_id: nil)
+create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil,
+             comment: nil, metadata: nil, environment: nil, data_type: :numeric,
+             dataset_run_id: nil, config_id: nil)
 ```
 
 **Parameters:**
@@ -790,15 +791,16 @@ create_score(name:, value:, trace_id: nil, observation_id: nil, comment: nil, me
 | ---------------- | ---------------------- | -------- | ----------------------------------------- |
 | `name`           | String                 | Yes      | Score name                                |
 | `value`          | Numeric/String/Boolean | Yes      | Score value                               |
+| `id`             | String                 | No       | Custom score ID                           |
 | `trace_id`       | String                 | No       | Trace ID to score                         |
+| `session_id`     | String                 | No       | Session ID to associate with the score    |
 | `observation_id` | String                 | No       | Observation ID to score                   |
 | `comment`        | String                 | No       | Score comment                             |
 | `metadata`       | Hash                   | No       | Additional metadata                       |
+| `environment`    | String                 | No       | Environment tag for the score             |
 | `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, or `:categorical` |
 | `dataset_run_id` | String                 | No       | Dataset run ID to associate with          |
 | `config_id`      | String                 | No       | Score config ID                           |
-
-**Note:** Must provide at least one of `trace_id` or `observation_id`.
 
 **Example:**
 

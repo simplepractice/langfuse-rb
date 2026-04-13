@@ -205,7 +205,7 @@ end
 ```ruby
 warmer = Langfuse::CacheWarmer.new
 warmer.warm!(["prompt1", "prompt2", "nonexistent"])
-# => Langfuse::CacheWarmingError: Failed to warm cache for 1 prompt(s)
+# => Langfuse::CacheWarmingError: Failed to cache prompts: nonexistent
 ```
 
 **Solutions:**
