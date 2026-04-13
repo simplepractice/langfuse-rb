@@ -7,24 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Custom/deterministic trace ID support via `Langfuse.create_trace_id(seed:)` (#74)
-- `trace_id:` keyword on `Langfuse.observe` and `Langfuse.start_observation` for attaching observations to a specific trace
-- Cross-SDK deterministic IDs: same seed produces the same trace ID in Ruby, Python, and JS SDKs (SHA-256 based)
-- PII safety warnings in YARD docs for seed parameters
-
-### Changed
-- **BREAKING:** `create_trace_id(seed:)` now raises `ArgumentError` for non-String seeds (previously coerced via `.to_s`). This ensures cross-SDK parity since Python/JS reject non-strings.
-- `Langfuse::TraceId.valid?` and `Langfuse::TraceId.to_span_context` are now private (internal API only)
-
-### Removed
-- `Langfuse.create_observation_id` and `Langfuse::TraceId.create_observation_id` (no consumer; Python's equivalent is also private)
-- `Langfuse::TraceId.valid_observation_id?` (no callers)
-
-### Fixed
-- Block exceptions in `observe`/`start_observation` now reliably end the span via `ensure`, even when `span.end` itself raises (#74)
-- Reject all-zero trace IDs per W3C trace-context spec (#74)
-
 ## [0.6.0] - 2026-03-06
 
 ### Added
