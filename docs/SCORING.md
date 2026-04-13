@@ -392,7 +392,33 @@ end
 
 ### Store for Later Scoring
 
-Common pattern: Store trace ID with user interaction for async scoring:
+#### Recommended: Deterministic Trace IDs
+
+Use `Langfuse.create_trace_id(seed:)` to derive the trace ID from a stable external identifier. No database column needed — any code that knows the external ID can recompute the trace ID:
+
+```ruby
+# During request — derive trace_id from order ID
+trace_id = Langfuse.create_trace_id(seed: "order-#{order.id}")
+
+Langfuse.observe("process-order", trace_id: trace_id) do |obs|
+  result = process_request(order)
+  obs.update(output: result)
+end
+
+# Later (background job, different service) — recompute, don't look up
+trace_id = Langfuse.create_trace_id(seed: "order-#{order.id}")
+
+Langfuse.create_score(
+  name: "quality",
+  value: evaluate(order),
+  trace_id: trace_id,
+  data_type: :numeric
+)
+```
+
+#### Alternative: Store the Trace ID
+
+If you don't have a stable external identifier, capture and persist the trace ID:
 
 ```ruby
 # During request

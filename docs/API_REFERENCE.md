@@ -7,6 +7,7 @@ Complete method reference for the Langfuse Ruby SDK.
 - [Global Configuration](#global-configuration)
 - [Client Access](#client-access)
 - [Prompt Management](#prompt-management)
+- [Trace ID Generation](#trace-id-generation)
 - [Tracing & Observability](#tracing--observability)
 - [Traces](#traces)
 - [Scoring](#scoring)
@@ -403,6 +404,46 @@ messages = prompt.compile(topic: "Ruby", level: "beginner")
 # ]
 ```
 
+## Trace ID Generation
+
+### `Langfuse.create_trace_id`
+
+Generate a deterministic or random trace ID.
+
+**Signature:**
+
+```ruby
+create_trace_id(seed: nil) # => String
+```
+
+**Parameters:**
+
+| Parameter | Type   | Required | Default | Description                                                                 |
+| --------- | ------ | -------- | ------- | --------------------------------------------------------------------------- |
+| `seed`    | String | No       | `nil`   | Deterministic seed. Same seed → same ID across Ruby, Python, JS SDKs.      |
+
+**Returns:** 32-character lowercase hex trace ID
+
+**Raises:** `ArgumentError` if seed is not nil and not a String
+
+**Example:**
+
+```ruby
+# Random
+trace_id = Langfuse.create_trace_id
+# => "a7f2b3c4d5e6f7a8b9c0d1e2f3a4b5c6"
+
+# Deterministic from seed
+trace_id = Langfuse.create_trace_id(seed: "order-42")
+# => "3bf8b157c4238eefe5ae4a66eca81c6b"
+
+# Cross-SDK: same result in Python and JS
+# Python: Langfuse.create_trace_id(seed="order-42")
+# JS:     await createTraceId("order-42")
+```
+
+See [TRACING.md](TRACING.md#custom-trace-ids) for usage patterns.
+
 ## Tracing & Observability
 
 ### `Langfuse.observe`
@@ -413,10 +454,10 @@ Create a traced observation (block or stateful mode).
 
 ```ruby
 # Block mode (auto-ends)
-observe(name, attributes = {}, as_type: :span) { |obs| ... }
+observe(name, attributes = {}, as_type: :span, trace_id: nil) { |obs| ... }
 
 # Stateful mode (manual end)
-observe(name, attributes = {}, as_type: :span) # => BaseObservation
+observe(name, attributes = {}, as_type: :span, trace_id: nil) # => BaseObservation
 ```
 
 **Parameters:**
@@ -426,6 +467,7 @@ observe(name, attributes = {}, as_type: :span) # => BaseObservation
 | `name`       | String | Yes      | -       | Operation name     |
 | `attributes` | Hash   | No       | `{}`    | Initial attributes |
 | `as_type`    | Symbol | No       | `:span` | Observation type   |
+| `trace_id`   | String | No       | `nil`   | Custom trace ID (32 lowercase hex chars). Use `Langfuse.create_trace_id(seed:)` to generate. |
 
 **Observation Types:**
 
@@ -454,6 +496,41 @@ obs.end
 ```
 
 See [TRACING.md](TRACING.md) for complete guide.
+
+### `Langfuse.start_observation`
+
+Low-level factory for creating observations. Prefer `Langfuse.observe` for most use cases.
+
+**Signature:**
+
+```ruby
+start_observation(name, attrs = {}, as_type: :span, trace_id: nil,
+                  parent_span_context: nil, start_time: nil)
+```
+
+**Parameters:**
+
+| Parameter              | Type         | Required | Default | Description                                                                 |
+| ---------------------- | ------------ | -------- | ------- | --------------------------------------------------------------------------- |
+| `name`                 | String       | Yes      | -       | Operation name                                                              |
+| `attrs`                | Hash         | No       | `{}`    | Initial attributes                                                          |
+| `as_type`              | Symbol       | No       | `:span` | Observation type                                                            |
+| `trace_id`             | String       | No       | `nil`   | Custom trace ID (32 lowercase hex chars). Mutually exclusive with `parent_span_context`. |
+| `parent_span_context`  | SpanContext  | No       | `nil`   | Parent span context for child observations                                  |
+| `start_time`           | Time/Integer | No       | `nil`   | Custom start time                                                           |
+
+**Returns:** `BaseObservation` (Span, Generation, Event, etc.)
+
+**Raises:** `ArgumentError` if both `trace_id` and `parent_span_context` provided, or if `trace_id` is invalid
+
+**Example:**
+
+```ruby
+trace_id = Langfuse.create_trace_id(seed: "order-42")
+obs = Langfuse.start_observation("process", { input: "data" }, trace_id: trace_id)
+obs.update(output: { result: "done" })
+obs.end
+```
 
 ### `BaseObservation`
 

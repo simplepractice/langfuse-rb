@@ -10,6 +10,7 @@ For basic setup and quick start examples, see [GETTING_STARTED.md](GETTING_START
 - [Quick Examples](#quick-examples)
 - [Complete Examples](#complete-examples)
 - [Best Practices](#best-practices)
+- [Custom Trace IDs](#custom-trace-ids)
 - [Advanced Usage](#advanced-usage)
 - [Masking](#masking)
 
@@ -493,6 +494,119 @@ end
 Langfuse.observe("operation") do |span|
   span.update_trace(user_id: "user-123", session_id: "session-456")
   # Only this span has the attributes, not children created before this call
+end
+```
+
+## Custom Trace IDs
+
+By default, Langfuse generates random trace IDs. Custom trace IDs let you control the trace identity — useful when you need to reference a trace later from a different part of your system.
+
+### When to Use Custom Trace IDs
+
+- **Background job scoring** — a web request creates a trace, a worker scores it hours later
+- **Cross-service correlation** — multiple services contribute to the same logical trace
+- **Idempotent retries** — reprocessing the same input lands on the same trace
+- **External ID correlation** — link Langfuse traces to your database rows without storing trace IDs
+
+### Deterministic Trace IDs from Seeds
+
+Generate the same trace ID from the same seed, every time, across Ruby, Python, and JS SDKs:
+
+```ruby
+trace_id = Langfuse.create_trace_id(seed: "order-42")
+# => "3bf8b157c4238eefe5ae4a66eca81c6b"
+
+# Same seed, same ID — even from a different process
+trace_id_again = Langfuse.create_trace_id(seed: "order-42")
+# => "3bf8b157c4238eefe5ae4a66eca81c6b"
+```
+
+Under the hood: `SHA-256(seed)[0..15]` → 32-char lowercase hex. This matches the Python SDK's `Langfuse.create_trace_id(seed=...)` and the JS SDK's `createTraceId(seed)`.
+
+> [!IMPORTANT]
+> Seeds must be **String** values. Passing non-String types (integers, symbols) raises `ArgumentError`. This ensures cross-SDK parity — Python and JS also reject non-strings.
+
+> [!WARNING]
+> Do not pass PII, secrets, or credentials as seeds. The seed itself appears in your application code and may leak through logs and backtraces. Use stable, non-sensitive identifiers: database primary keys, UUIDs, or request IDs.
+
+### Using Custom Trace IDs
+
+Pass `trace_id:` to `observe` or `start_observation`:
+
+```ruby
+trace_id = Langfuse.create_trace_id(seed: "order-42")
+
+# Block-based
+Langfuse.observe("process-order", trace_id: trace_id) do |span|
+  span.update_trace(user_id: "user-123", tags: ["orders"])
+  result = process_order(42)
+  span.update(output: result)
+end
+
+# Stateful
+obs = Langfuse.observe("process-order", trace_id: trace_id)
+obs.update(output: { status: "done" })
+obs.end
+```
+
+You can also use a pre-generated hex trace ID directly (must be 32 lowercase hex characters):
+
+```ruby
+# ✅ Good — valid 32-char lowercase hex
+Langfuse.observe("op", trace_id: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4") { ... }
+
+# ❌ Bad — not valid hex format
+Langfuse.observe("op", trace_id: "my-custom-id") { ... }
+# => ArgumentError: Invalid trace_id
+```
+
+### Complete Example: Web Request + Background Scoring
+
+```ruby
+# === Web server ===
+class OrdersController < ApplicationController
+  def create
+    order = Order.create!(params)
+
+    # Deterministic trace ID from order's primary key
+    trace_id = Langfuse.create_trace_id(seed: "order-#{order.id}")
+
+    Langfuse.observe("process-order", trace_id: trace_id) do |span|
+      span.update_trace(user_id: current_user.id, tags: ["orders"])
+
+      span.start_observation("validate", input: order.attributes) do |child|
+        child.update(output: { valid: true })
+      end
+
+      span.start_observation("llm-summarize", as_type: :generation) do |gen|
+        gen.model = "gpt-4"
+        gen.input = [{ role: "user", content: "Summarize: #{order.description}" }]
+        summary = call_llm(gen.input)
+        gen.update(output: summary, usage_details: { input: 50, output: 20 })
+      end
+    end
+
+    # No need to store trace_id — it can be recomputed from order.id
+    render json: order
+  end
+end
+
+# === Background worker (hours later) ===
+class OrderQualityJob
+  def perform(order_id)
+    # Recompute the same trace ID — no database lookup needed
+    trace_id = Langfuse.create_trace_id(seed: "order-#{order_id}")
+
+    score = evaluate_order_quality(order_id)
+
+    Langfuse.create_score(
+      name: "order_quality",
+      value: score,
+      trace_id: trace_id,
+      data_type: :numeric,
+      comment: "Async quality evaluation"
+    )
+  end
 end
 ```
 
