@@ -54,6 +54,7 @@ Block receives a configuration object with these properties:
 | `job_queue`                    | Symbol  | No       | `:default`                     | ⚠️ Experimental (not implemented) |
 | `environment`                  | String  | No       | `nil`                          | Default trace environment          |
 | `release`                      | String  | No       | `nil`                          | Default release identifier         |
+| `should_export_span`           | `#call` | No       | `nil`                          | Span export filter callback        |
 | `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
 
 **Example:**
@@ -106,6 +107,29 @@ Langfuse.reset!
 RSpec.configure do |config|
   config.before { Langfuse.reset! }
 end
+```
+
+### `Langfuse.tracer_provider`
+
+Return Langfuse's internal tracer provider so you can explicitly install it as the global OpenTelemetry provider.
+
+**Signature:**
+
+```ruby
+Langfuse.tracer_provider # => OpenTelemetry::SDK::Trace::TracerProvider
+```
+
+**Raises:** `ConfigurationError` if `public_key`, `secret_key`, or `base_url` are not configured
+
+**Example:**
+
+```ruby
+Langfuse.configure do |config|
+  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+end
+
+OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 ```
 
 ## Client Access

@@ -16,6 +16,8 @@ end
 
 Call this once at application startup (Rails initializer, boot script, etc.).
 
+`Langfuse.configure` only stores configuration. Module-level tracing initializes lazily on first use, and Langfuse does not install itself into the global OpenTelemetry tracer provider unless you opt in with `Langfuse.tracer_provider`.
+
 ## All Configuration Options
 
 ### Required
@@ -274,6 +276,27 @@ config.environment = "production"
 config.release = "2024.1"
 ```
 
+#### `should_export_span`
+
+- **Type:** `#call` (Proc, Lambda, Method, or any object responding to `call`) or `nil`
+- **Default:** `nil` (uses Langfuse's default export filter)
+- **Description:** Controls whether an ended span is exported to Langfuse
+
+```ruby
+config.should_export_span = lambda { |span|
+  Langfuse.is_default_export_span(span) &&
+    span.instrumentation_scope&.name != "my_framework.worker"
+}
+```
+
+Default behavior exports:
+
+- Langfuse SDK spans
+- Spans with `gen_ai.*` attributes
+- Spans from conservative LLM-related instrumentation scopes such as `langsmith.*`, `openinference.*`, and `opentelemetry.instrumentation.anthropic.*`
+
+The allowlist is intentionally conservative. It exists to include obvious LLM-related scopes, not every Ruby instrumentation namespace.
+
 #### `mask`
 
 - **Type:** `#call` (Proc, Lambda, or any object responding to `call`) or `nil`
@@ -292,6 +315,46 @@ config.mask = lambda { |data:|
 ```
 
 See [TRACING.md](TRACING.md#masking) for usage patterns and behavior details.
+
+## Tracing Behavior and OpenTelemetry Ownership
+
+Tracing is isolated by default:
+
+- `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
+- `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is ready
+- If `public_key`, `secret_key`, or `base_url` are missing, module-level tracing falls back to a no-op tracer and logs one warning
+
+If you want Langfuse to own the global OpenTelemetry provider, install it explicitly:
+
+```ruby
+Langfuse.configure do |config|
+  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+end
+
+OpenTelemetry.tracer_provider = Langfuse.tracer_provider
+```
+
+That global install is a lifecycle commitment. `Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider. If you reset or reconfigure Langfuse, reinstall `OpenTelemetry.tracer_provider = Langfuse.tracer_provider` afterward.
+
+After the first successful tracing initialization, these settings require `Langfuse.reset!` before changes take effect:
+
+- `public_key`
+- `secret_key`
+- `base_url`
+- `environment`
+- `release`
+- `should_export_span`
+- `tracing_async`
+- `batch_size`
+- `flush_interval`
+
+That includes processor tuning. Changing `batch_size` or `flush_interval` after tracing is already live will not rebuild the exporter pipeline until reset.
+
+Performance note for `should_export_span`:
+
+- It runs synchronously on every ended span in the application thread
+- Keep it allocation-light, non-blocking, and free of network/database calls
 
 ## Environment Variables
 
@@ -460,6 +523,7 @@ Validation rules:
 - `secret_key` must be present
 - `cache_backend` must be `:memory` or `:rails`
 - If `:rails`, Rails must be defined
+- `should_export_span` must respond to `#call` (if set)
 - `mask` must respond to `#call` (if set)
 
 ## Accessing Current Configuration

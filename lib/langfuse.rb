@@ -44,6 +44,7 @@ require_relative "langfuse/prompt_cache"
 require_relative "langfuse/rails_cache_adapter"
 require_relative "langfuse/cache_warmer"
 require_relative "langfuse/api_client"
+require_relative "langfuse/span_filter"
 require_relative "langfuse/otel_setup"
 require_relative "langfuse/masking"
 require_relative "langfuse/otel_attributes"
@@ -91,10 +92,6 @@ module Langfuse
     #   end
     def configure
       yield(configuration)
-
-      # Auto-initialize OpenTelemetry
-      OtelSetup.setup(configuration)
-
       configuration
     end
 
@@ -103,6 +100,28 @@ module Langfuse
     # @return [Client] the global client instance
     def client
       @client ||= Client.new(configuration)
+    end
+
+    # Return Langfuse's internal tracer provider for explicit global OpenTelemetry installation.
+    #
+    # @return [OpenTelemetry::SDK::Trace::TracerProvider]
+    # @raise [ConfigurationError] if tracing is not fully configured
+    #
+    # @example
+    #   Langfuse.configure do |config|
+    #     config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+    #     config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+    #   end
+    #
+    #   OpenTelemetry.tracer_provider = Langfuse.tracer_provider
+    def tracer_provider
+      unless tracing_config_ready?
+        raise ConfigurationError,
+              "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
+      end
+
+      OtelSetup.setup(configuration) unless OtelSetup.initialized?
+      OtelSetup.tracer_provider
     end
 
     # Shutdown Langfuse and flush any pending traces and scores
@@ -323,10 +342,14 @@ module Langfuse
       OtelSetup.shutdown(timeout: 5) if OtelSetup.initialized?
       @configuration = nil
       @client = nil
+      @noop_tracer = nil
+      @tracing_disabled_warning_emitted = false
     rescue StandardError
       # Ignore shutdown errors during reset (e.g., in tests)
       @configuration = nil
       @client = nil
+      @noop_tracer = nil
+      @tracing_disabled_warning_emitted = false
     end
 
     # Creates a new observation (root or child)
@@ -478,7 +501,10 @@ module Langfuse
     #
     # @return [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     def otel_tracer
-      OpenTelemetry.tracer_provider.tracer("langfuse-rb", Langfuse::VERSION)
+      return tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION) if setup_tracing_if_ready
+
+      warn_tracing_disabled_once
+      noop_tracer
     end
 
     # Creates an OpenTelemetry span (root or child)
@@ -513,6 +539,47 @@ module Langfuse
     def wrap_otel_span(otel_span, type_str, otel_tracer, attributes: nil)
       observation_class = OBSERVATION_TYPE_REGISTRY[type_str] || Span
       observation_class.new(otel_span, otel_tracer, attributes: attributes)
+    end
+
+    # rubocop:disable Naming/PredicateMethod
+    def setup_tracing_if_ready
+      return true if OtelSetup.initialized?
+      return false unless tracing_config_ready?
+
+      OtelSetup.setup(configuration)
+      true
+    end
+    # rubocop:enable Naming/PredicateMethod
+
+    def tracing_config_ready?
+      configured?(configuration.public_key) &&
+        configured?(configuration.secret_key) &&
+        configured?(configuration.base_url)
+    end
+
+    def configured?(value)
+      !value.nil? && !value.empty?
+    end
+
+    def warn_tracing_disabled_once
+      return if @tracing_disabled_warning_emitted
+
+      tracing_warning_mutex.synchronize do
+        return if @tracing_disabled_warning_emitted
+
+        configuration.logger.warn(
+          "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
+        )
+        @tracing_disabled_warning_emitted = true
+      end
+    end
+
+    def tracing_warning_mutex
+      @tracing_warning_mutex ||= Mutex.new
+    end
+
+    def noop_tracer
+      @noop_tracer ||= OpenTelemetry::Trace::TracerProvider.new.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION)
     end
   end
   # rubocop:enable Metrics/ClassLength

@@ -6,100 +6,71 @@ require "opentelemetry/trace/propagation/trace_context"
 require "base64"
 
 module Langfuse
-  # OpenTelemetry initialization and setup
-  #
-  # Handles configuration of the OTel SDK with Langfuse OTLP exporter
-  # when tracing is enabled.
-  #
+  # OpenTelemetry initialization and setup for Langfuse tracing.
+  # rubocop:disable Metrics/ModuleLength
   module OtelSetup
+    TRACING_CONFIG_FIELDS = %i[
+      public_key
+      secret_key
+      base_url
+      environment
+      release
+      should_export_span
+      tracing_async
+      batch_size
+      flush_interval
+    ].freeze
+    private_constant(:TRACING_CONFIG_FIELDS)
+
     class << self
-      # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil] The configured tracer provider
+      # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil] The configured internal tracer provider
       attr_reader :tracer_provider
 
-      # Initialize OpenTelemetry with Langfuse OTLP exporter
+      # Initialize Langfuse's internal tracer provider without mutating the global OTel provider.
       #
       # @param config [Langfuse::Config] The Langfuse configuration
-      # @return [void]
-      # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
+      # @return [OpenTelemetry::SDK::Trace::TracerProvider]
       def setup(config)
-        # Create OTLP exporter configured for Langfuse
-        exporter = OpenTelemetry::Exporter::OTLP::Exporter.new(
-          endpoint: "#{config.base_url}/api/public/otel/v1/traces",
-          headers: build_headers(config.public_key, config.secret_key),
-          compression: "gzip"
-        )
+        validate_tracing_config!(config)
+        return existing_provider_for(config) if initialized?
 
-        # Create processor based on async configuration
-        # IMPORTANT: Always use BatchSpanProcessor (even in sync mode) to ensure spans
-        # are exported together, which allows proper parent-child relationship detection
-        processor = if config.tracing_async
-                      # Async: BatchSpanProcessor batches and sends in background
-                      OpenTelemetry::SDK::Trace::Export::BatchSpanProcessor.new(
-                        exporter,
-                        max_queue_size: config.batch_size * 2, # Buffer more than batch_size
-                        schedule_delay: config.flush_interval * 1000, # Convert seconds to milliseconds
-                        max_export_batch_size: config.batch_size
-                      )
-                    else
-                      # Sync: BatchSpanProcessor with minimal delay (flushes on force_flush)
-                      # This collects spans from the same trace and exports them together,
-                      # which is critical for correct parent_observation_id calculation
-                      OpenTelemetry::SDK::Trace::Export::BatchSpanProcessor.new(
-                        exporter,
-                        max_queue_size: config.batch_size * 2,
-                        schedule_delay: 60_000, # 60 seconds (relies on explicit force_flush)
-                        max_export_batch_size: config.batch_size
-                      )
-                    end
+        provider = nil
+        created = false
+        provider = build_tracer_provider(config)
+        provider, created = publish_provider(provider, tracing_config_snapshot(config))
+        return existing_provider_for(config) unless created
 
-        # Create TracerProvider with processor
-        @tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
-        @tracer_provider.add_span_processor(processor)
-
-        # Add span processor for propagated attributes and env/release defaults
-        # This must be added AFTER the BatchSpanProcessor so it runs before export and can
-        # apply all attributes (propagated IDs, environment, release) to the spans being sent
-        span_processor = SpanProcessor.new(config: config)
-        @tracer_provider.add_span_processor(span_processor)
-
-        # Set as global tracer provider
-        OpenTelemetry.tracer_provider = @tracer_provider
-
-        # Configure W3C TraceContext propagator if not already set
-        if OpenTelemetry.propagation.is_a?(OpenTelemetry::Context::Propagation::NoopTextMapPropagator)
-          OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
-          config.logger.debug("Langfuse: Configured W3C TraceContext propagator")
-        else
-          config.logger.debug("Langfuse: Using existing propagator: #{OpenTelemetry.propagation.class}")
-        end
-
-        mode = config.tracing_async ? "async" : "sync"
-        config.logger.info("Langfuse tracing initialized with OpenTelemetry (#{mode} mode)")
+        configure_propagation(config)
+        log_initialized(config)
+        provider
+      rescue StandardError
+        rollback_provider(provider) if created
+        raise
       end
-      # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
 
-      # Shutdown the tracer provider and flush any pending spans
+      # Shutdown the internal tracer provider and flush any pending spans.
       #
       # @param timeout [Integer] Timeout in seconds
       # @return [void]
       def shutdown(timeout: 30)
-        return unless @tracer_provider
-
-        @tracer_provider.shutdown(timeout: timeout)
-        @tracer_provider = nil
+        provider = nil
+        setup_mutex.synchronize do
+          provider = @tracer_provider
+          @tracer_provider = nil
+          @config_snapshot = nil
+        end
+        provider&.shutdown(timeout: timeout)
       end
 
-      # Force flush all pending spans
+      # Force flush all pending spans on the internal tracer provider.
       #
       # @param timeout [Integer] Timeout in seconds
       # @return [void]
       def force_flush(timeout: 30)
-        return unless @tracer_provider
-
-        @tracer_provider.force_flush(timeout: timeout)
+        @tracer_provider&.force_flush(timeout: timeout)
       end
 
-      # Check if OTel is initialized
+      # Check if Langfuse tracing has been initialized.
       #
       # @return [Boolean]
       def initialized?
@@ -108,18 +79,105 @@ module Langfuse
 
       private
 
-      # Build HTTP headers for Langfuse OTLP endpoint
-      #
-      # @param public_key [String] Langfuse public API key
-      # @param secret_key [String] Langfuse secret API key
-      # @return [Hash] HTTP headers with Basic Auth
+      def existing_provider_for(config)
+        snapshot = tracing_config_snapshot(config)
+        if @config_snapshot == snapshot
+          config.logger.debug("Langfuse tracing already initialized; reusing existing tracer provider")
+        else
+          config.logger.warn(
+            "Langfuse tracing is already initialized. Changes to #{TRACING_CONFIG_FIELDS.join(', ')} " \
+            "require Langfuse.reset! before they take effect."
+          )
+        end
+        @tracer_provider
+      end
+
+      def publish_provider(provider, snapshot)
+        created = false
+        current = nil
+
+        # This mutex only guards publication so setup never exposes a half-built provider.
+        setup_mutex.synchronize do
+          if @tracer_provider
+            current = @tracer_provider
+          else
+            @tracer_provider = provider
+            @config_snapshot = snapshot
+            current = provider
+            created = true
+          end
+        end
+
+        [current, created]
+      end
+
+      def rollback_provider(provider)
+        setup_mutex.synchronize do
+          return unless @tracer_provider.equal?(provider)
+
+          @tracer_provider = nil
+          @config_snapshot = nil
+        end
+        provider.shutdown(timeout: 1)
+      rescue StandardError
+        nil
+      end
+
+      def build_tracer_provider(config)
+        provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+        provider.add_span_processor(
+          SpanProcessor.new(config: config, exporter: build_exporter(config))
+        )
+        provider
+      end
+
+      def build_exporter(config)
+        OpenTelemetry::Exporter::OTLP::Exporter.new(
+          endpoint: "#{config.base_url}/api/public/otel/v1/traces",
+          headers: build_headers(config.public_key, config.secret_key),
+          compression: "gzip"
+        )
+      end
+
+      def configure_propagation(config)
+        return unless OpenTelemetry.propagation.is_a?(OpenTelemetry::Context::Propagation::NoopTextMapPropagator)
+
+        OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
+        config.logger.debug("Langfuse: Configured W3C TraceContext propagator")
+      end
+
+      def log_initialized(config)
+        mode = config.tracing_async ? "async" : "sync"
+        config.logger.info("Langfuse tracing initialized with OpenTelemetry (#{mode} mode)")
+      end
+
+      def validate_tracing_config!(config)
+        raise ConfigurationError, "public_key is required" if blank?(config.public_key)
+        raise ConfigurationError, "secret_key is required" if blank?(config.secret_key)
+        raise ConfigurationError, "base_url cannot be empty" if blank?(config.base_url)
+        return if config.should_export_span.nil? || config.should_export_span.respond_to?(:call)
+
+        raise ConfigurationError, "should_export_span must respond to #call"
+      end
+
+      def tracing_config_snapshot(config)
+        TRACING_CONFIG_FIELDS.to_h { |field| [field, config.public_send(field)] }.freeze
+      end
+
+      def setup_mutex
+        @setup_mutex ||= Mutex.new
+      end
+
+      def blank?(value)
+        value.nil? || value.empty?
+      end
+
       def build_headers(public_key, secret_key)
         credentials = "#{public_key}:#{secret_key}"
         encoded = Base64.strict_encode64(credentials)
-        {
-          "Authorization" => "Basic #{encoded}"
-        }
+        { "Authorization" => "Basic #{encoded}" }
       end
     end
   end
+  # rubocop:enable Metrics/ModuleLength
 end

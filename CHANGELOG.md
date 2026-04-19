@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `Langfuse.tracer_provider`, `should_export_span`, and public span-filter helpers for explicit OpenTelemetry integration
+
+### Changed
+- Breaking: tracing is isolated by default and `Langfuse.configure` no longer installs Langfuse into `OpenTelemetry.tracer_provider`
+
 ## [0.7.0] - 2026-04-14
 
 ### Added

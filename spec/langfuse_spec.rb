@@ -6,9 +6,11 @@ require "opentelemetry/sdk"
 RSpec.describe Langfuse do
   before do
     described_class.reset!
-    # Setup minimal OTel for testing
-    tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
-    OpenTelemetry.tracer_provider = tracer_provider
+    described_class.configure do |config|
+      config.public_key = "pk_test"
+      config.secret_key = "sk_test"
+      config.base_url = "https://cloud.langfuse.com"
+    end
   end
 
   it "has a version number" do
@@ -43,6 +45,15 @@ RSpec.describe Langfuse do
       expect(described_class.configuration.secret_key).to eq("test_sk")
       expect(described_class.configuration.cache_ttl).to eq(300)
     end
+
+    it "does not eagerly initialize tracing" do
+      described_class.configure do |config|
+        config.public_key = "test_pk"
+        config.secret_key = "test_sk"
+      end
+
+      expect(Langfuse::OtelSetup.initialized?).to be false
+    end
   end
 
   describe ".client" do
@@ -74,6 +85,35 @@ RSpec.describe Langfuse do
       expect(client.api_client.public_key).to eq("pk_test_123")
       expect(client.api_client.secret_key).to eq("sk_test_456")
       expect(client.api_client.base_url).to eq("https://cloud.langfuse.com")
+    end
+  end
+
+  describe ".tracer_provider" do
+    it "raises when tracing is not ready" do
+      described_class.reset!
+      described_class.configure do |config|
+        config.public_key = nil
+        config.secret_key = nil
+        config.base_url = nil
+      end
+
+      expect { described_class.tracer_provider }.to raise_error(
+        Langfuse::ConfigurationError,
+        /Langfuse tracing is disabled/
+      )
+    end
+
+    it "lazily initializes and returns the internal tracer provider" do
+      described_class.configure do |config|
+        config.public_key = "pk_test"
+        config.secret_key = "sk_test"
+        config.base_url = "https://cloud.langfuse.com"
+      end
+
+      provider = described_class.tracer_provider
+
+      expect(provider).to be_a(OpenTelemetry::SDK::Trace::TracerProvider)
+      expect(Langfuse::OtelSetup.tracer_provider).to equal(provider)
     end
   end
 
@@ -406,6 +446,25 @@ RSpec.describe Langfuse do
   end
 
   describe ".observe" do
+    it "warns once and uses a no-op tracer when tracing is not ready" do
+      described_class.reset!
+      logger = instance_double(Logger, warn: nil)
+      described_class.configure do |config|
+        config.public_key = nil
+        config.secret_key = nil
+        config.base_url = nil
+        config.logger = logger
+      end
+
+      expect(logger).to receive(:warn).once.with(/Langfuse tracing is disabled/)
+
+      first = described_class.observe("first")
+      second = described_class.observe("second")
+
+      expect(first.otel_span.recording?).to be(false)
+      expect(second.otel_span.recording?).to be(false)
+    end
+
     it "creates and returns observation without block" do
       observation = described_class.observe("test", input: { data: "test" })
       expect(observation).to be_a(Langfuse::Span)
