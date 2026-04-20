@@ -284,7 +284,7 @@ config.release = "2024.1"
 
 ```ruby
 config.should_export_span = lambda { |span|
-  Langfuse.is_default_export_span(span) &&
+  Langfuse.default_export_span?(span) &&
     span.instrumentation_scope&.name != "my_framework.worker"
 }
 ```

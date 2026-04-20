@@ -18,13 +18,12 @@ module Langfuse
     "vllm"
   ].freeze
 
-  # rubocop:disable Naming/PredicateMethod, Naming/PredicatePrefix
   class << self
     # Return whether the span was created by Langfuse's tracer.
     #
     # @param span [#instrumentation_scope] Span or span data to inspect
     # @return [Boolean]
-    def is_langfuse_span(span)
+    def langfuse_span?(span)
       instrumentation_scope_name(span) == LANGFUSE_TRACER_NAME
     end
 
@@ -32,7 +31,7 @@ module Langfuse
     #
     # @param span [#attributes] Span or span data to inspect
     # @return [Boolean]
-    def is_genai_span(span)
+    def genai_span?(span)
       attributes = span.attributes
       return false unless attributes
 
@@ -43,7 +42,7 @@ module Langfuse
     #
     # @param span [#instrumentation_scope] Span or span data to inspect
     # @return [Boolean]
-    def is_known_llm_instrumentor(span)
+    def known_llm_instrumentor?(span)
       scope_name = instrumentation_scope_name(span)
       return false unless scope_name
 
@@ -56,14 +55,15 @@ module Langfuse
     #
     # @param span [#instrumentation_scope, #attributes] Span or span data to inspect
     # @return [Boolean]
-    def is_default_export_span(span)
-      is_langfuse_span(span) || is_genai_span(span) || is_known_llm_instrumentor(span)
+    def default_export_span?(span)
+      langfuse_span?(span) || genai_span?(span) || known_llm_instrumentor?(span)
     end
 
-    alias langfuse_span? is_langfuse_span
-    alias genai_span? is_genai_span
-    alias known_llm_instrumentor? is_known_llm_instrumentor
-    alias default_export_span? is_default_export_span
+    # Cross-SDK parity keeps the `is_*` names public for compatibility.
+    alias is_langfuse_span langfuse_span?
+    alias is_genai_span genai_span?
+    alias is_known_llm_instrumentor known_llm_instrumentor?
+    alias is_default_export_span default_export_span?
 
     private
 
@@ -75,5 +75,4 @@ module Langfuse
       scope_name == prefix || scope_name.start_with?("#{prefix}.")
     end
   end
-  # rubocop:enable Naming/PredicateMethod, Naming/PredicatePrefix
 end

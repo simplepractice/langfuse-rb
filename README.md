@@ -102,7 +102,7 @@ Langfuse.configure do |config|
   config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
   config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
   config.should_export_span = lambda { |span|
-    Langfuse.is_default_export_span(span) &&
+    Langfuse.default_export_span?(span) &&
       span.instrumentation_scope&.name != "my_framework.worker"
   }
 end

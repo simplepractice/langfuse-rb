@@ -12,7 +12,7 @@ module Langfuse
     def initialize(config:, exporter:)
       @logger = config.logger
       @default_trace_attributes = build_default_trace_attributes(config).freeze
-      @should_export_span = config.should_export_span || Langfuse.method(:is_default_export_span)
+      @should_export_span = config.should_export_span || Langfuse.method(:default_export_span?)
 
       super(
         exporter,
