@@ -1,10 +1,15 @@
 # frozen_string_literal: true
 
 require "simplecov"
+require "simplecov_json_formatter"
 SimpleCov.start do
   add_filter "/spec/"
   # Maintain high coverage standards
   minimum_coverage 95
+  # CI uploads JSON coverage to Codecov while local runs still need HTML output.
+  formatter SimpleCov::Formatter::MultiFormatter.new(
+    [SimpleCov::Formatter::HTMLFormatter, SimpleCov::Formatter::JSONFormatter]
+  )
 end
 
 require "langfuse"
