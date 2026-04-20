@@ -46,8 +46,13 @@ module Langfuse
 
     private
 
+    # Sync mode relies on explicit `force_flush` calls, so keep the background flush
+    # interval long enough that it rarely fires on its own.
+    SYNC_SCHEDULE_DELAY_MS = 60_000
+    private_constant :SYNC_SCHEDULE_DELAY_MS
+
     def schedule_delay_for(config)
-      config.tracing_async ? config.flush_interval * 1000 : 60_000
+      config.tracing_async ? config.flush_interval * 1000 : SYNC_SCHEDULE_DELAY_MS
     end
 
     def build_default_trace_attributes(config)

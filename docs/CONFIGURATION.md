@@ -321,21 +321,25 @@ See [TRACING.md](TRACING.md#masking) for usage patterns and behavior details.
 Tracing is isolated by default:
 
 - `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
+- `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
 - `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is ready
 - If `public_key`, `secret_key`, or `base_url` are missing, module-level tracing falls back to a no-op tracer and logs one warning
 
 If you want Langfuse to own the global OpenTelemetry provider, install it explicitly:
 
 ```ruby
+require "opentelemetry/trace/propagation/trace_context"
+
 Langfuse.configure do |config|
   config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
   config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
 end
 
 OpenTelemetry.tracer_provider = Langfuse.tracer_provider
+OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
 ```
 
-That global install is a lifecycle commitment. `Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider. If you reset or reconfigure Langfuse, reinstall `OpenTelemetry.tracer_provider = Langfuse.tracer_provider` afterward.
+That global install is a lifecycle commitment. `Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider. If you reset or reconfigure Langfuse, reinstall the tracer provider and any propagators you want afterward.
 
 After the first successful tracing initialization, these settings require `Langfuse.reset!` before changes take effect:
 

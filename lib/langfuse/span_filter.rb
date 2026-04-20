@@ -18,6 +18,11 @@ module Langfuse
     "vllm"
   ].freeze
 
+  # Matched per span in the export path, so avoid allocating the dotted form each call.
+  KNOWN_LLM_INSTRUMENTATION_SCOPE_DOTTED_PREFIXES =
+    KNOWN_LLM_INSTRUMENTATION_SCOPE_PREFIXES.map { |prefix| "#{prefix}." }.freeze
+  private_constant :KNOWN_LLM_INSTRUMENTATION_SCOPE_DOTTED_PREFIXES
+
   class << self
     # Return whether the span was created by Langfuse's tracer.
     #
@@ -46,8 +51,10 @@ module Langfuse
       scope_name = instrumentation_scope_name(span)
       return false unless scope_name
 
-      KNOWN_LLM_INSTRUMENTATION_SCOPE_PREFIXES.any? do |prefix|
-        matches_scope_prefix?(scope_name, prefix)
+      return true if KNOWN_LLM_INSTRUMENTATION_SCOPE_PREFIXES.include?(scope_name)
+
+      KNOWN_LLM_INSTRUMENTATION_SCOPE_DOTTED_PREFIXES.any? do |dotted_prefix|
+        scope_name.start_with?(dotted_prefix)
       end
     end
 
@@ -69,10 +76,6 @@ module Langfuse
 
     def instrumentation_scope_name(span)
       span.instrumentation_scope&.name
-    end
-
-    def matches_scope_prefix?(scope_name, prefix)
-      scope_name == prefix || scope_name.start_with?("#{prefix}.")
     end
   end
 end

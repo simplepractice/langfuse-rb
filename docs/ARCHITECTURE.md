@@ -286,13 +286,13 @@ end
 
 **Why?**
 - Industry standard (CNCF)
-- Automatic distributed tracing (W3C Trace Context)
+- W3C Trace Context compatibility when the host app configures propagation
 - Works with existing APM tools (Datadog, New Relic, etc.)
-- Battle-tested context propagation
+- Battle-tested context and propagation model
 
 **Trade-offs:**
 - ✅ More robust, future-proof
-- ✅ Automatic distributed tracing
+- ✅ Cross-service tracing when the app installs an OpenTelemetry propagator
 - ❌ ~10 additional gem dependencies
 - ❌ Slightly more complex setup
 
@@ -511,7 +511,7 @@ User Code
 
 **Why OpenTelemetry?**
 - CNCF standard for distributed tracing
-- Automatic context propagation (W3C Trace Context)
+- Supports W3C Trace Context when the host app configures a propagator
 - Works with existing APM tools
 - Future-proof (industry direction)
 - OTLP export protocol (standardized)
@@ -520,7 +520,7 @@ User Code
 - **OTLP Exporter** - Sends spans to Langfuse via `/api/public/otel/v1/traces`
 - **BatchSpanProcessor** - Batches spans for efficient export
 - **SpanProcessor** - Custom processor for attribute propagation
-- **W3C TraceContext Propagator** - Distributed tracing across services
+- **Application-configured W3C TraceContext Propagator** - Optional cross-service propagation outside the SDK
 
 ## Performance Considerations
 

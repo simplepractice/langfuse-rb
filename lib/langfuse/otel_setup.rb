@@ -2,7 +2,6 @@
 
 require "opentelemetry/sdk"
 require "opentelemetry/exporter/otlp"
-require "opentelemetry/trace/propagation/trace_context"
 require "base64"
 
 module Langfuse
@@ -26,7 +25,7 @@ module Langfuse
       # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil] The configured internal tracer provider
       attr_reader :tracer_provider
 
-      # Initialize Langfuse's internal tracer provider without mutating the global OTel provider.
+      # Initialize Langfuse's internal tracer provider without mutating global OpenTelemetry state.
       #
       # @param config [Langfuse::Config] The Langfuse configuration
       # @return [OpenTelemetry::SDK::Trace::TracerProvider]
@@ -44,7 +43,6 @@ module Langfuse
           return existing_provider_for(config)
         end
 
-        configure_propagation(config)
         log_initialized(config)
         provider
       rescue StandardError
@@ -141,13 +139,6 @@ module Langfuse
           headers: build_headers(config.public_key, config.secret_key),
           compression: "gzip"
         )
-      end
-
-      def configure_propagation(config)
-        return unless OpenTelemetry.propagation.is_a?(OpenTelemetry::Context::Propagation::NoopTextMapPropagator)
-
-        OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
-        config.logger.debug("Langfuse: Configured W3C TraceContext propagator")
       end
 
       def log_initialized(config)

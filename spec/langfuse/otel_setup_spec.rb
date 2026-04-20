@@ -42,10 +42,12 @@ RSpec.describe Langfuse::OtelSetup do
       expect(OpenTelemetry.tracer_provider).to eq(original_global_provider)
     end
 
-    it "configures W3C TraceContext propagation when none is set" do
+    it "does not mutate the global propagator" do
+      original_global_propagation = OpenTelemetry.propagation
+
       described_class.setup(config)
 
-      expect(OpenTelemetry.propagation).to be_a(OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator)
+      expect(OpenTelemetry.propagation).to eq(original_global_propagation)
     end
 
     it "reuses the existing provider for identical tracing config" do
