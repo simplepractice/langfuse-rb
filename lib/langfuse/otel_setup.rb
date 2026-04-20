@@ -34,11 +34,15 @@ module Langfuse
         validate_tracing_config!(config)
         return existing_provider_for(config) if initialized?
 
+        candidate_provider = nil
         provider = nil
         created = false
-        provider = build_tracer_provider(config)
-        provider, created = publish_provider(provider, tracing_config_snapshot(config))
-        return existing_provider_for(config) unless created
+        candidate_provider = build_tracer_provider(config)
+        provider, created = publish_provider(candidate_provider, tracing_config_snapshot(config))
+        unless created
+          candidate_provider.shutdown(timeout: 30)
+          return existing_provider_for(config)
+        end
 
         configure_propagation(config)
         log_initialized(config)

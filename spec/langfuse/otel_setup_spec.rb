@@ -63,6 +63,20 @@ RSpec.describe Langfuse::OtelSetup do
       expect(described_class.setup(config)).to equal(provider)
     end
 
+    it "shuts down unpublished providers lost in the setup race" do
+      candidate_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider, shutdown: nil)
+      existing_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider)
+
+      allow(described_class).to receive_messages(
+        build_tracer_provider: candidate_provider,
+        publish_provider: [existing_provider, false],
+        existing_provider_for: existing_provider
+      )
+
+      expect(candidate_provider).to receive(:shutdown).with(timeout: 30)
+      expect(described_class.setup(config)).to equal(existing_provider)
+    end
+
     it "validates should_export_span in setup" do
       config.should_export_span = "bad"
 

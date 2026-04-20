@@ -16,6 +16,10 @@ RSpec.describe "Langfuse span filters" do
     it "rejects other scopes" do
       expect(Langfuse.is_langfuse_span(make_span(scope_name: "other-lib"))).to be false
     end
+
+    it "exposes an idiomatic predicate alias" do
+      expect(Langfuse.langfuse_span?(make_span(scope_name: Langfuse::LANGFUSE_TRACER_NAME))).to be true
+    end
   end
 
   describe ".is_genai_span" do
@@ -25,6 +29,10 @@ RSpec.describe "Langfuse span filters" do
 
     it "rejects non gen_ai attributes" do
       expect(Langfuse.is_genai_span(make_span(attributes: { "http.method" => "GET" }))).to be false
+    end
+
+    it "exposes an idiomatic predicate alias" do
+      expect(Langfuse.genai_span?(make_span(attributes: { "gen_ai.system" => "openai" }))).to be true
     end
   end
 
@@ -39,6 +47,10 @@ RSpec.describe "Langfuse span filters" do
 
     it "rejects unrelated scopes" do
       expect(Langfuse.is_known_llm_instrumentor(make_span(scope_name: "dalli"))).to be false
+    end
+
+    it "exposes an idiomatic predicate alias" do
+      expect(Langfuse.known_llm_instrumentor?(make_span(scope_name: "langsmith.client"))).to be true
     end
   end
 
@@ -57,6 +69,10 @@ RSpec.describe "Langfuse span filters" do
 
     it "drops unrelated spans" do
       expect(Langfuse.is_default_export_span(make_span(scope_name: "dalli"))).to be false
+    end
+
+    it "exposes an idiomatic predicate alias" do
+      expect(Langfuse.default_export_span?(make_span(scope_name: "openinference.instrumentation"))).to be true
     end
   end
 end

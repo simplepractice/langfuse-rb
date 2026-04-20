@@ -60,6 +60,11 @@ module Langfuse
       is_langfuse_span(span) || is_genai_span(span) || is_known_llm_instrumentor(span)
     end
 
+    alias langfuse_span? is_langfuse_span
+    alias genai_span? is_genai_span
+    alias known_llm_instrumentor? is_known_llm_instrumentor
+    alias default_export_span? is_default_export_span
+
     private
 
     def instrumentation_scope_name(span)
