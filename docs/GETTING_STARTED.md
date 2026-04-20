@@ -35,7 +35,7 @@ The SDK uses a global configuration pattern. Set up once at application startup.
 ### Plain Ruby
 
 ```ruby
-require 'langfuse-rb'
+require 'langfuse'
 
 Langfuse.configure do |config|
   config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
@@ -55,7 +55,8 @@ Langfuse.configure do |config|
 
   # Optional: Performance optimization
   config.cache_backend = :rails  # Use Rails.cache (requires Redis)
-  config.cache_stale_while_revalidate = true  # Serve stale data while refreshing (recommended for production)
+  config.cache_stale_while_revalidate = true  # Advisory intent flag
+  config.cache_stale_ttl = 60  # SWR activates when stale_ttl > 0
   # Logger auto-detected as Rails.logger
 end
 ```
@@ -90,7 +91,7 @@ Go to your Langfuse dashboard → Prompts → Create new prompt:
 **Plain Ruby:**
 
 ```ruby
-require 'langfuse-rb'
+require 'langfuse'
 
 client = Langfuse.client
 prompt = client.get_prompt("greeting")
@@ -141,7 +142,7 @@ Instrument any operation with `Langfuse.observe`:
 **Plain Ruby:**
 
 ```ruby
-require 'langfuse-rb'
+require 'langfuse'
 
 result = Langfuse.observe("generate-greeting", input: { name: "Alice" }) do |obs|
   # Your code here
@@ -178,7 +179,7 @@ Use the `:generation` observation type for LLM calls:
 
 ```ruby
 require 'openai'
-require 'langfuse-rb'
+require 'langfuse'
 
 client = OpenAI::Client.new(access_token: ENV['OPENAI_API_KEY'])
 
@@ -253,7 +254,7 @@ You can also get the trace URL programmatically:
 ```ruby
 Langfuse.observe("my-operation") do |obs|
   puts obs.trace_url
-  # => "https://cloud.langfuse.com/traces/abc123..."
+  # => "https://cloud.langfuse.com/project/{project_id}/traces/abc123..."
 end
 ```
 

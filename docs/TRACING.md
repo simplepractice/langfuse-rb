@@ -833,13 +833,14 @@ Trace context automatically flows through:
 Traces can be exported to multiple observability platforms:
 
 ```ruby
-# config/initializers/opentelemetry.rb
+# config/initializers/langfuse.rb
 require 'opentelemetry/sdk'
-require 'langfuse-rb/otel_setup'
+require 'langfuse'
 
-Langfuse::OtelSetup.configure do |config|
-  config.service_name = 'my-rails-app'
-  config.service_version = ENV['APP_VERSION']
+Langfuse.configure do |config|
+  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
+  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
+  config.base_url = ENV.fetch('LANGFUSE_BASE_URL', 'https://cloud.langfuse.com')
 end
 ```
 

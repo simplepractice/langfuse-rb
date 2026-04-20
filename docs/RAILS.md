@@ -503,8 +503,9 @@ class LangfuseMetrics
     status, headers, response = @app.call(env)
 
     # Log cache stats
-    if Langfuse.client.respond_to?(:cache_stats)
-      Rails.logger.info("Langfuse cache stats: #{Langfuse.client.cache_stats}")
+    stats = Langfuse::CacheWarmer.new.cache_stats
+    if stats
+      Rails.logger.info("Langfuse cache stats: #{stats}")
     end
 
     [status, headers, response]

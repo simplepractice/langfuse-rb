@@ -53,8 +53,8 @@ Block receives a configuration object with these properties:
 | `logger`                       | Logger  | No       | Auto-detected                  | Logger instance                   |
 | `tracing_async`                | Boolean | No       | `true`                         | ⚠️ Experimental (OTel export mode) |
 | `job_queue`                    | Symbol  | No       | `:default`                     | ⚠️ Experimental (not implemented) |
-| `environment`                  | String  | No       | `nil`                          | Default trace environment          |
-| `release`                      | String  | No       | `nil`                          | Default release identifier         |
+| `environment`                  | String  | No       | `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]`) | Default trace environment          |
+| `release`                      | String  | No       | `nil` (or `ENV["LANGFUSE_RELEASE"]` / common CI commit SHA env) | Default release identifier         |
 | `should_export_span`           | `#call` | No       | `nil`                          | Span export filter callback        |
 | `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
 
