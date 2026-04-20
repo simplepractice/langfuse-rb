@@ -50,7 +50,7 @@ Langfuse.configure do |config|
 end
 ```
 
-> Langfuse tracing is isolated by default. `Langfuse.configure` stores configuration only; it does not replace `OpenTelemetry.tracer_provider` or `OpenTelemetry.propagation`.
+> Langfuse tracing is isolated by default. `Langfuse.configure` stores configuration only; it does not replace `OpenTelemetry.tracer_provider`.
 
 > Fetch and use a prompt
 
@@ -85,18 +85,15 @@ end
 > Explicit OpenTelemetry global install (optional)
 
 ```ruby
-require "opentelemetry/trace/propagation/trace_context"
-
 Langfuse.configure do |config|
   config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
   config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
 end
 
 OpenTelemetry.tracer_provider = Langfuse.tracer_provider
-OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
 ```
 
-If you install Langfuse globally, you own that lifecycle. `Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider, so reconfigure and reinstall the provider and any propagators you want after resets.
+If you install Langfuse globally, you own that lifecycle. `Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider, so reconfigure and reinstall it after resets.
 
 > Filter exported spans (optional)
 
