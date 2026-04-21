@@ -1,6 +1,12 @@
+![header](https://camo.githubusercontent.com/26d19b945bc752101b4aca468e07b118a44af07340db79af29f7df95505f2cea/68747470733a2f2f6c616e67667573652e636f6d2f6c616e67667573655f6c6f676f5f77686974652e706e67)
+
 # Langfuse Ruby SDK
 
-Ruby SDK for [Langfuse](https://langfuse.com) prompt management, tracing, and scoring.
+[![Gem Version](https://badge.fury.io/rb/langfuse-rb.svg?icon=si%3Arubygems)](https://badge.fury.io/rb/langfuse-rb)
+[![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.2.0-ruby.svg)](https://www.ruby-lang.org/en/)
+[![Test Coverage](https://img.shields.io/badge/coverage-99.6%25-brightgreen.svg)](coverage)
+
+> Ruby SDK for [Langfuse](https://langfuse.com) - Open-source LLM observability and prompt management.
 
 ## Installation
 
