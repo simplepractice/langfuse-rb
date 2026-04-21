@@ -1,316 +1,203 @@
 # Getting Started with Langfuse Ruby SDK
 
-This guide walks you through installing and using the Langfuse Ruby SDK from scratch.
+This is the happy path for a new consumer. The goal is simple: configure the SDK once, fetch a real prompt, send a real trace, and know where to go next without guessing how tracing works.
 
-## Prerequisites
+## Before You Start
 
-- Ruby >= 3.2.0
-- A Langfuse account (sign up at [langfuse.com](https://langfuse.com))
-- Your Langfuse API keys (found in your project settings)
+- Ruby `>= 3.2.0`
+- A Langfuse project with API keys
+- At least one prompt created in the Langfuse UI
 
-## Installation
-
-Add the gem to your Gemfile:
+## 1. Install the Gem
 
 ```ruby
-gem 'langfuse-rb'
+gem "langfuse-rb"
 ```
 
-Then run:
+Then install dependencies:
 
 ```bash
 bundle install
 ```
 
-Or install directly:
+## 2. Configure Langfuse Once at Startup
 
-```bash
-gem install langfuse-rb
-```
-
-## Configuration
-
-The SDK uses a global configuration pattern. Set up once at application startup.
-
-### Plain Ruby
+Rails first, because that is the common consumer path.
 
 ```ruby
-require 'langfuse'
-
-Langfuse.configure do |config|
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-  config.base_url = "https://cloud.langfuse.com"  # Optional, this is default
-end
-```
-
-### Rails
-
-Create `config/initializers/langfuse.rb`:
-
-```ruby
+# config/initializers/langfuse.rb
 Langfuse.configure do |config|
   config.public_key = Rails.application.credentials.dig(:langfuse, :public_key)
   config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
+  config.base_url = ENV.fetch("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
 
-  # Optional: Performance optimization
-  config.cache_backend = :rails  # Use Rails.cache (requires Redis)
-  config.cache_stale_while_revalidate = true  # Advisory intent flag
-  config.cache_stale_ttl = 60  # SWR activates when stale_ttl > 0
-  # Logger auto-detected as Rails.logger
+  config.cache_backend = :rails
+  config.cache_ttl = 300
+  config.cache_stale_ttl = 300
 end
 ```
 
-**Environment Variables:**
-
-Set these in your shell or `.env` file:
-
-```bash
-export LANGFUSE_PUBLIC_KEY="pk-lf-..."
-export LANGFUSE_SECRET_KEY="sk-lf-..."
-```
-
-**Tip:** If you're contributing to the SDK, use `make env` to quickly set up a `.env` file from the template.
-
-For all configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
-
-## Your First Prompt
-
-Langfuse manages your LLM prompts centrally. Let's fetch and use one.
-
-### 1. Create a Prompt in Langfuse UI
-
-Go to your Langfuse dashboard → Prompts → Create new prompt:
-
-- **Name:** `greeting`
-- **Type:** Text
-- **Template:** `Hello {{name}}! Welcome to {{app_name}}.`
-
-### 2. Fetch and Compile
-
-**Plain Ruby:**
+Plain Ruby uses the same API:
 
 ```ruby
-require 'langfuse'
+require "langfuse"
 
-client = Langfuse.client
-prompt = client.get_prompt("greeting")
-
-# Compile with variables
-message = prompt.compile(name: "Alice", app_name: "MyApp")
-puts message
-# => "Hello Alice! Welcome to MyApp."
-```
-
-**Rails Controller:**
-
-```ruby
-class GreetingsController < ApplicationController
-  def show
-    client = Langfuse.client
-    prompt = client.get_prompt("greeting")
-
-    @message = prompt.compile(
-      name: current_user.name,
-      app_name: "MyApp"
-    )
-
-    render json: { message: @message }
-  end
+Langfuse.configure do |config|
+  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+  config.base_url = ENV.fetch("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
 end
 ```
 
-### Convenience Method
+`Langfuse.configure` stores configuration only. It does not replace `OpenTelemetry.tracer_provider`. The default onboarding path is isolated tracing through the Langfuse helpers. If you want Langfuse to become the global OpenTelemetry provider, that is an explicit later step in [TRACING.md](TRACING.md#opentelemetry-integration).
 
-Fetch and compile in one call:
+For the full config surface, see [CONFIGURATION.md](CONFIGURATION.md).
+
+## 3. Fetch and Compile a Prompt
+
+Create a prompt in the Langfuse UI first. For example:
+
+- Name: `support-answer`
+- Type: chat
+- Label: `production`
+
+Then fetch and compile it in your app:
 
 ```ruby
-message = Langfuse.client.compile_prompt(
-  "greeting",
-  variables: { name: "Alice", app_name: "MyApp" }
+prompt = Langfuse.client.get_prompt("support-answer", label: "production")
+
+messages = prompt.compile(
+  customer_name: "Alice",
+  question: "How do I reset my password?"
 )
 ```
 
-See [PROMPTS.md](PROMPTS.md) for advanced prompt management (chat prompts, versioning, fallbacks).
-
-## Your First Trace
-
-Instrument any operation with `Langfuse.observe`:
-
-### Basic Tracing
-
-**Plain Ruby:**
+If you prefer the one-call version:
 
 ```ruby
-require 'langfuse'
-
-result = Langfuse.observe("generate-greeting", input: { name: "Alice" }) do |obs|
-  # Your code here
-  message = "Hello Alice!"
-
-  obs.update(output: { message: message })
-  message  # Return value
-end
-
-puts result  # => "Hello Alice!"
-```
-
-**Rails Service Object:**
-
-```ruby
-class GreetingService
-  def call(user)
-    Langfuse.observe("greeting-service", input: { user_id: user.id }) do |obs|
-      prompt = Langfuse.client.get_prompt("greeting")
-      message = prompt.compile(name: user.name, app_name: "MyApp")
-
-      obs.update(output: { message: message }, metadata: { user_id: user.id })
-      message
-    end
-  end
-end
-```
-
-### Tracing LLM Calls
-
-Use the `:generation` observation type for LLM calls:
-
-**Plain Ruby with OpenAI:**
-
-```ruby
-require 'openai'
-require 'langfuse'
-
-client = OpenAI::Client.new(access_token: ENV['OPENAI_API_KEY'])
-
-response = Langfuse.observe("openai-chat", { model: "gpt-4" }, as_type: :generation) do |gen|
-  result = client.chat(
-    parameters: {
-      model: "gpt-4",
-      messages: [{ role: "user", content: "Say hello!" }],
-      temperature: 0.7
-    }
-  )
-
-  gen.model = "gpt-4"
-  gen.model_parameters = { temperature: 0.7 }
-  gen.usage_details = {
-    prompt_tokens: result.dig("usage", "prompt_tokens"),
-    completion_tokens: result.dig("usage", "completion_tokens"),
-    total_tokens: result.dig("usage", "total_tokens")
+messages = Langfuse.client.compile_prompt(
+  "support-answer",
+  label: "production",
+  variables: {
+    customer_name: "Alice",
+    question: "How do I reset my password?"
   }
-  gen.output = result.dig("choices", 0, "message", "content")
-
-  result
-end
+)
 ```
 
-**Rails Background Job:**
+More prompt patterns live in [PROMPTS.md](PROMPTS.md).
+
+## 4. Send Your First Real Trace
+
+Use a root observation for the workflow, then nest the model call as a generation. This is the pattern most consumers actually want.
 
 ```ruby
-class AiSummaryJob < ApplicationJob
-  queue_as :default
+class SupportAnswerService
+  def initialize(llm_client:)
+    @llm_client = llm_client
+  end
 
-  def perform(article_id)
-    Langfuse.observe("summarize-article", { article_id: article_id }, as_type: :generation) do |gen|
-      article = Article.find(article_id)
+  def call(user:, question:)
+    Langfuse.propagate_attributes(
+      user_id: user.id.to_s,
+      session_id: "support-#{user.id}"
+    ) do
+      Langfuse.observe("support-answer", input: { question: question }) do |root|
+        prompt = Langfuse.client.get_prompt("support-answer", label: "production")
+        messages = prompt.compile(
+          customer_name: user.name,
+          question: question
+        )
 
-      response = openai_client.chat(
-        parameters: {
-          model: "gpt-4",
-          messages: [{ role: "user", content: "Summarize: #{article.body}" }]
-        }
-      )
+        answer = root.start_observation("llm-response", as_type: :generation) do |gen|
+          gen.model = "gpt-4.1-mini"
+          gen.input = messages
 
-      summary = response.dig("choices", 0, "message", "content")
+          response = @llm_client.chat(
+            parameters: {
+              model: "gpt-4.1-mini",
+              messages: messages
+            }
+          )
 
-      gen.model = "gpt-4"
-      gen.input = { article_body: article.body[0..100] }
-      gen.output = { summary: summary }
-      gen.usage_details = {
-        prompt_tokens: response.dig("usage", "prompt_tokens"),
-        completion_tokens: response.dig("usage", "completion_tokens"),
-        total_tokens: response.dig("usage", "total_tokens")
-      }
+          answer = response.dig("choices", 0, "message", "content")
 
-      article.update!(ai_summary: summary)
+          gen.update(
+            output: answer,
+            usage_details: {
+              prompt_tokens: response.dig("usage", "prompt_tokens"),
+              completion_tokens: response.dig("usage", "completion_tokens"),
+              total_tokens: response.dig("usage", "total_tokens")
+            }
+          )
+
+          answer
+        end
+
+        root.event(name: "reply-generated", input: { channel: "support" })
+        root.update(output: { answer: answer })
+
+        answer
+      end
     end
   end
 end
 ```
 
-See [TRACING.md](TRACING.md) for advanced patterns (nested spans, RAG, multi-turn conversations).
+Why this shape matters:
 
-## Verify It's Working
+- The root observation gives you a real trace entrypoint
+- The nested generation carries model-specific fields like `model` and `usage_details`
+- `root.event(...)` persists a point-in-time annotation on the active observation
+- `root.update(...)` persists the final workflow output instead of leaving the trace half-empty
 
-After running traced code, check your Langfuse dashboard:
-
-1. Go to **Traces** tab
-2. Find your trace by name (e.g., "generate-greeting")
-3. Click to see detailed timeline, inputs/outputs, and metadata
-
-You can also get the trace URL programmatically:
+Plain Ruby is the same pattern without Rails wrappers:
 
 ```ruby
-Langfuse.observe("my-operation") do |obs|
-  puts obs.trace_url
-  # => "https://cloud.langfuse.com/project/{project_id}/traces/abc123..."
+Langfuse.observe("support-answer", input: { question: question }) do |root|
+  answer = root.start_observation("llm-response", as_type: :generation) do |gen|
+    gen.model = "gpt-4.1-mini"
+    # ...
+  end
+
+  root.update(output: { answer: answer })
 end
 ```
 
-## Troubleshooting
+For deeper tracing patterns, see [TRACING.md](TRACING.md).
 
-### Authentication Errors
+## 5. Verify It Worked
+
+After running the code:
+
+1. Open the Langfuse UI.
+2. Find the `support-answer` trace.
+3. Confirm you can see:
+   - the root observation input and output
+   - the nested `llm-response` generation
+   - usage details on the generation
+   - the `reply-generated` event
+
+If you do not see traces, start with [ERROR_HANDLING.md](ERROR_HANDLING.md) and the Rails operational checks in [RAILS.md](RAILS.md#troubleshooting).
+
+## 6. Add Scores Once Traces Exist
+
+Do not invent a scoring workflow before the trace is working. First make the trace visible, then attach evaluation or feedback signals.
+
+Example:
 
 ```ruby
-# Error: Langfuse::UnauthorizedError
-# Solution: Check your API keys
-```
-
-Verify keys are correct:
-
-```ruby
-Langfuse.configure do |config|
-  puts "Public key: #{config.public_key}"  # Should start with "pk-lf-"
-  puts "Secret key: #{config.secret_key[0..8]}..."  # Should start with "sk-lf-"
+Langfuse.observe("support-answer") do |root|
+  # ... do work ...
+  root.score_trace(name: "customer-satisfaction", value: 5)
 end
 ```
 
-### Prompts Not Found
+Scoring details live in [SCORING.md](SCORING.md).
 
-```ruby
-# Error: Langfuse::NotFoundError: Prompt 'greeting' not found
-# Solution: Ensure prompt exists in Langfuse UI and is deployed
-```
+## What to Read Next
 
-Use fallback for development:
-
-```ruby
-prompt = client.get_prompt("greeting",
-  fallback: "Hello {{name}}!",
-  type: :text
-)
-```
-
-### Connection Timeouts
-
-```ruby
-# Increase timeout in config
-Langfuse.configure do |config|
-  config.timeout = 10  # Default is 5 seconds
-end
-```
-
-See [ERROR_HANDLING.md](ERROR_HANDLING.md) for complete error reference.
-
-## See Also
-
-- [Prompts Guide](PROMPTS.md) - Chat prompts, versioning, Mustache templating
-- [Tracing Guide](TRACING.md) - Nested observations, RAG patterns, OpenTelemetry
-- [Scoring Guide](SCORING.md) - Add quality scores to traces
-- [Datasets Guide](DATASETS.md) - Create and manage evaluation datasets
-- [Experiments Guide](EXPERIMENTS.md) - Run evaluations against datasets
-- [Caching Guide](CACHING.md) - In-memory and Rails.cache backends, SWR
-- [Configuration Reference](CONFIGURATION.md) - All configuration options
-- [Rails Integration](RAILS.md) - Rails-specific patterns and testing
-- [API Reference](API_REFERENCE.md) - Complete method reference
+- [PROMPTS.md](PROMPTS.md) if prompt versioning and fallbacks are your next problem
+- [TRACING.md](TRACING.md) if you need nested workflows, events, jobs, or OpenTelemetry integration
+- [SCORING.md](SCORING.md) if you want feedback or eval signals on traces
+- [RAILS.md](RAILS.md) if you are wiring this into controllers, services, or background jobs

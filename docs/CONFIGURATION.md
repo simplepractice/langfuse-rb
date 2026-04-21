@@ -16,7 +16,39 @@ end
 
 Call this once at application startup (Rails initializer, boot script, etc.).
 
-`Langfuse.configure` only stores configuration. Module-level tracing initializes lazily on first use, and Langfuse does not install itself into the global OpenTelemetry tracer provider unless you opt in with `Langfuse.tracer_provider`.
+## Tracing Ownership
+
+This is the part people get wrong.
+
+- `Langfuse.configure` stores configuration only.
+- Module-level tracing initializes lazily on first use.
+- Langfuse tracing is isolated by default.
+- `Langfuse.tracer_provider` is the explicit seam for installing Langfuse as the global OpenTelemetry provider.
+- `should_export_span` only runs on spans handled by Langfuse's provider.
+- Filtering is not the fix for ambient-span overcapture. Isolation is.
+- Langfuse does not auto-configure a second OpenTelemetry backend or any multi-export pipeline for you.
+
+Default isolated setup:
+
+```ruby
+Langfuse.configure do |config|
+  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+end
+```
+
+Explicit global install:
+
+```ruby
+Langfuse.configure do |config|
+  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+end
+
+OpenTelemetry.tracer_provider = Langfuse.tracer_provider
+```
+
+If you also want propagation or another OpenTelemetry backend, configure those in your application. Langfuse does not infer or install them.
 
 ## All Configuration Options
 
@@ -321,6 +353,8 @@ When Langfuse processes a span and no custom filter is configured, default behav
 
 Composing with `Langfuse.default_export_span?` keeps that allowlist and lets you add tighter exclusions.
 
+Use this callback to narrow a provider path Langfuse already owns. Do not treat it as the fix for default ambient-span overcapture. The isolated default already prevents that problem.
+
 #### `mask`
 
 - **Type:** `#call` (Proc, Lambda, or any object responding to `call`) or `nil`
@@ -342,12 +376,16 @@ See [TRACING.md](TRACING.md#masking) for usage patterns and behavior details.
 
 ## Tracing Behavior and OpenTelemetry Ownership
 
-Tracing is isolated by default:
+There are three states worth documenting.
+
+### Default Isolated Langfuse Tracing
 
 - `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
 - `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
 - `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is ready
-- If `public_key`, `secret_key`, or `base_url` are missing, module-level tracing falls back to a no-op tracer and logs one warning
+- if `public_key`, `secret_key`, or `base_url` are missing, module-level tracing falls back to a no-op tracer and logs one warning
+
+### Explicit Global Install with `Langfuse.tracer_provider`
 
 If you want Langfuse to own the global OpenTelemetry provider, install it explicitly:
 
@@ -364,6 +402,13 @@ OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::Tex
 ```
 
 That global install is a lifecycle commitment. `Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider. If you reset or reconfigure Langfuse, reinstall the tracer provider and any propagators you want afterward.
+
+### Additional OTel Backends Are Application-Owned
+
+If you want spans in another OpenTelemetry backend as well, configure that pipeline in your application. Langfuse does not auto-install multi-export. That can mean:
+
+- adding processors/exporters to the provider you own
+- or managing your own provider pipeline explicitly
 
 After the first successful tracing initialization, these settings require `Langfuse.reset!` before changes take effect:
 

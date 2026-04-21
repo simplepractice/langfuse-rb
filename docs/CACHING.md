@@ -607,7 +607,7 @@ prompt = Langfuse.client.get_prompt(
 
 ```ruby
 # Rails console
-Langfuse.client.instance_variable_get(:@api_client).cache&.clear
+Langfuse.client.api_client.cache&.clear
 
 # Or use rake task
 rake langfuse:clear_cache
