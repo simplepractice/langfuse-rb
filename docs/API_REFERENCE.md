@@ -80,10 +80,10 @@ Access current configuration.
 **Signature:**
 
 ```ruby
-Langfuse.configuration # => Configuration
+Langfuse.configuration # => Langfuse::Config
 ```
 
-**Returns:** Configuration object with all settings
+**Returns:** `Langfuse::Config` object with all settings
 
 **Example:**
 
@@ -132,6 +132,54 @@ end
 
 OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 ```
+
+### Span Filter Helpers
+
+These public helpers are useful when composing `should_export_span` callbacks.
+
+#### `Langfuse.default_export_span?`
+
+Return whether a span matches Langfuse's default export allowlist.
+
+**Signature:**
+
+```ruby
+Langfuse.default_export_span?(span) # => true | false
+```
+
+**Returns:** `true` for Langfuse spans, spans with `gen_ai.*` attributes, and spans from known LLM-related instrumentation scopes
+
+#### `Langfuse.langfuse_span?`
+
+Return whether a span was created by Langfuse's tracer.
+
+**Signature:**
+
+```ruby
+Langfuse.langfuse_span?(span) # => true | false
+```
+
+#### `Langfuse.genai_span?`
+
+Return whether a span contains `gen_ai.*` attributes.
+
+**Signature:**
+
+```ruby
+Langfuse.genai_span?(span) # => true | false
+```
+
+#### `Langfuse.known_llm_instrumentor?`
+
+Return whether a span came from one of Langfuse's known LLM-related instrumentation scopes.
+
+**Signature:**
+
+```ruby
+Langfuse.known_llm_instrumentor?(span) # => true | false
+```
+
+**Compatibility aliases:** `Langfuse.is_default_export_span`, `Langfuse.is_langfuse_span`, `Langfuse.is_genai_span`, `Langfuse.is_known_llm_instrumentor`
 
 ## Client Access
 

@@ -432,9 +432,8 @@ puts config.inspect
 ### Check Cache State
 
 ```ruby
-# Not exposed publicly, but useful in console debugging:
-cache = Langfuse.client.instance_variable_get(:@prompt_client).instance_variable_get(:@cache)
-puts "Cache backend: #{cache.class}"
+cache = Langfuse.client.api_client.cache
+puts "Cache backend: #{cache&.class || 'disabled'}"
 ```
 
 ### Test Credentials

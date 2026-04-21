@@ -185,9 +185,11 @@ class DocumentsController < ApplicationController
       trace_id = trace.trace_id
       ProcessDocumentJob.perform_later(document.id, trace_id)
 
-      trace.start_observation("job-enqueued", as_type: :event) do |event|
-        event.update(input: { document_id: document.id })
-      end
+      trace.start_observation(
+        "job-enqueued",
+        { input: { document_id: document.id } },
+        as_type: :event
+      )
 
       render json: document, status: :created
     end

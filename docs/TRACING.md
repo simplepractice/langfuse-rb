@@ -102,10 +102,12 @@ A **point-in-time occurrence** within a span or trace. Like a log message but st
 - Metadata
 
 ```ruby
-# Event using start_observation (auto-ends immediately)
-Langfuse.observe("user-feedback", as_type: :event) do |event|
-  event.update(input: { rating: "thumbs_up", comment: "Very helpful!" })
-end
+# Standalone event observation (auto-ends immediately)
+Langfuse.observe(
+  "user-feedback",
+  input: { rating: "thumbs_up", comment: "Very helpful!" },
+  as_type: :event
+)
 
 # Event using the event method on an observation
 Langfuse.observe("operation") do |span|
@@ -247,12 +249,12 @@ def answer_question(user_id:, question:)
     end
 
     # Step 3: Log result event
-    Langfuse.observe("answer-generated", as_type: :event) do |event|
-      event.update(
-        input: { question: question },
-        output: { answer: answer, sources: documents.map(&:id) }
-      )
-    end
+    Langfuse.observe(
+      "answer-generated",
+      input: { question: question },
+      output: { answer: answer, sources: documents.map(&:id) },
+      as_type: :event
+    )
 
     answer
   end

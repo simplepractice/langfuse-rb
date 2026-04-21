@@ -296,7 +296,7 @@ config.release = "2024.1"
 
 - **Type:** `#call` (Proc, Lambda, Method, or any object responding to `call`) or `nil`
 - **Default:** `nil` (uses Langfuse's default export filter)
-- **Description:** Controls whether an ended span is exported to Langfuse
+- **Description:** Controls whether an ended span handled by Langfuse's tracer provider is exported to Langfuse
 
 ```ruby
 config.should_export_span = lambda { |span|
@@ -305,13 +305,21 @@ config.should_export_span = lambda { |span|
 }
 ```
 
-Default behavior exports:
+This callback only runs for spans processed by Langfuse's tracer provider. Under the default isolated setup, ambient spans created on some other global OpenTelemetry provider never reach this filter.
+
+If you want shared OpenTelemetry spans to be eligible for this filter, install Langfuse explicitly:
+
+```ruby
+OpenTelemetry.tracer_provider = Langfuse.tracer_provider
+```
+
+When Langfuse processes a span and no custom filter is configured, default behavior exports:
 
 - Langfuse SDK spans
 - Spans with `gen_ai.*` attributes
 - Spans from conservative LLM-related instrumentation scopes such as `langsmith.*`, `openinference.*`, and `opentelemetry.instrumentation.anthropic.*`
 
-The allowlist is intentionally conservative. It exists to include obvious LLM-related scopes, not every Ruby instrumentation namespace.
+Composing with `Langfuse.default_export_span?` keeps that allowlist and lets you add tighter exclusions.
 
 #### `mask`
 
