@@ -3,22 +3,26 @@
 require "opentelemetry/sdk"
 
 module Langfuse
-  # Span processor that applies default and propagated trace attributes on new spans.
-  #
-  # On span start, this processor first applies configured trace defaults
-  # (environment/release), then overlays attributes propagated in OpenTelemetry
-  # context (user/session/metadata/tags/version). This ensures consistent
-  # trace dimensions while still honoring per-request propagation.
+  # Batch span processor that owns Langfuse's enrichment and export filtering.
   #
   # @api private
-  class SpanProcessor < OpenTelemetry::SDK::Trace::SpanProcessor
-    # @param config [Langfuse::Config, nil] SDK configuration used to build trace defaults
-    def initialize(config: Langfuse.configuration)
+  class SpanProcessor < OpenTelemetry::SDK::Trace::Export::BatchSpanProcessor
+    # @param config [Langfuse::Config] SDK configuration used for defaults and filtering
+    # @param exporter [#export, #force_flush, #shutdown] Span exporter used by the batch processor
+    def initialize(config:, exporter:)
+      @logger = config.logger
       @default_trace_attributes = build_default_trace_attributes(config).freeze
-      super()
+      @should_export_span = config.should_export_span || Langfuse.method(:default_export_span?)
+
+      super(
+        exporter,
+        max_queue_size: config.batch_size * 2,
+        schedule_delay: schedule_delay_for(config),
+        max_export_batch_size: config.batch_size
+      )
     end
 
-    # Called when a span starts
+    # Apply Langfuse trace defaults and propagated attributes before a span records work.
     #
     # @param span [OpenTelemetry::SDK::Trace::Span] The span that started
     # @param parent_context [OpenTelemetry::Context] The parent context
@@ -30,41 +34,28 @@ module Langfuse
       apply_attributes(span, propagated_attributes(parent_context))
     end
 
-    # Called when a span ends
+    # Drop spans when the export filter rejects them or raises.
     #
     # @param span [OpenTelemetry::SDK::Trace::Span] The span that ended
     # @return [void]
     def on_finish(span)
-      # No-op - we don't need to do anything when spans finish
-    end
+      return unless should_export_span?(span)
 
-    # Shutdown the processor
-    #
-    # @param timeout [Integer, nil] Timeout in seconds (unused for this processor)
-    # @return [Integer] Always returns 0 (no timeout needed for no-op)
-    def shutdown(timeout: nil)
-      # No-op - nothing to clean up
-      # Return 0 to match OpenTelemetry SDK expectation (it finds max timeout from processors)
-      _ = timeout # Suppress unused argument warning
-      0
-    end
-
-    # Force flush (no-op for this processor)
-    #
-    # @param timeout [Integer, nil] Timeout in seconds (unused for this processor)
-    # @return [Integer] Always returns 0 (no timeout needed for no-op)
-    def force_flush(timeout: nil)
-      # No-op - nothing to flush
-      # Return 0 to match OpenTelemetry SDK expectation (it finds max timeout from processors)
-      _ = timeout # Suppress unused argument warning
-      0
+      super
     end
 
     private
 
-    def build_default_trace_attributes(config)
-      return {} unless config
+    # Sync mode relies on explicit `force_flush` calls, so keep the background flush
+    # interval long enough that it rarely fires on its own.
+    SYNC_SCHEDULE_DELAY_MS = 60_000
+    private_constant :SYNC_SCHEDULE_DELAY_MS
 
+    def schedule_delay_for(config)
+      config.tracing_async ? config.flush_interval * 1000 : SYNC_SCHEDULE_DELAY_MS
+    end
+
+    def build_default_trace_attributes(config)
       OtelAttributes.create_trace_attributes(
         { environment: config.environment, release: config.release }
       )
@@ -78,6 +69,16 @@ module Langfuse
 
     def apply_attributes(span, attributes)
       attributes.each { |key, value| span.set_attribute(key, value) }
+    end
+
+    def should_export_span?(span)
+      @should_export_span.call(span)
+    rescue StandardError => e
+      @logger.error(
+        "Langfuse tracing dropped span '#{span.name}' because should_export_span raised: " \
+        "#{e.class}: #{e.message}"
+      )
+      false
     end
   end
 end

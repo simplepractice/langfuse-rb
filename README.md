@@ -50,6 +50,8 @@ Langfuse.configure do |config|
 end
 ```
 
+> Langfuse tracing is isolated by default. `Langfuse.configure` stores configuration only; it does not replace `OpenTelemetry.tracer_provider`.
+
 > Fetch and use a prompt
 
 ```ruby
@@ -79,6 +81,34 @@ Langfuse.observe("chat-completion", as_type: :generation) do |gen|
   )
 end
 ```
+
+> Explicit OpenTelemetry global install (optional)
+
+```ruby
+Langfuse.configure do |config|
+  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+end
+
+OpenTelemetry.tracer_provider = Langfuse.tracer_provider
+```
+
+If you install Langfuse globally, you own that lifecycle. `Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider, so reconfigure and reinstall it after resets.
+
+> Filter exported spans (optional)
+
+```ruby
+Langfuse.configure do |config|
+  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+  config.should_export_span = lambda { |span|
+    Langfuse.default_export_span?(span) &&
+      span.instrumentation_scope&.name != "my_framework.worker"
+  }
+end
+```
+
+`should_export_span` runs synchronously on every ended span in the application thread. Keep it allocation-light, non-blocking, and free of network/database calls.
 
 > [!IMPORTANT]
 > For complete reference see [docs](./docs/) section.

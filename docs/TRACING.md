@@ -849,7 +849,18 @@ Your traces will appear in:
 
 ### W3C Trace Context
 
-The SDK uses the [W3C Trace Context](https://www.w3.org/TR/trace-context/) standard for distributed tracing:
+Langfuse spans are compatible with the [W3C Trace Context](https://www.w3.org/TR/trace-context/) standard for distributed tracing, but the SDK does not install a global propagator for you. If you want cross-service propagation, configure `OpenTelemetry.propagation` in your application:
+
+```ruby
+require "opentelemetry/trace/propagation/trace_context"
+
+OpenTelemetry.propagation =
+  OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
+```
+
+That global OpenTelemetry propagator is separate from `Langfuse::Propagation`, which handles Langfuse-specific trace attributes and optional baggage propagation.
+
+With an application-configured propagator, traces can flow across services using headers like:
 
 ```
 traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01

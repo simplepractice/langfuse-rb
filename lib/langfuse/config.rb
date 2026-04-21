@@ -18,6 +18,7 @@ module Langfuse
   #     c.secret_key = "sk_..."
   #   end
   #
+  # rubocop:disable Metrics/ClassLength
   class Config
     # @return [String, nil] Langfuse public API key
     attr_accessor :public_key
@@ -73,6 +74,9 @@ module Langfuse
 
     # @return [String, nil] Default release identifier applied to new traces/observations
     attr_accessor :release
+
+    # @return [#call, nil] Callback that decides whether an ended span should export to Langfuse.
+    attr_accessor :should_export_span
 
     # @return [#call, nil] Mask callable applied to input, output, and metadata before serialization.
     #   Receives `data:` keyword argument. nil disables masking.
@@ -155,6 +159,7 @@ module Langfuse
       @job_queue = DEFAULT_JOB_QUEUE
       @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
       @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
+      @should_export_span = nil
       @mask = nil
       @logger = default_logger
 
@@ -183,6 +188,8 @@ module Langfuse
       validate_swr_config!
 
       validate_cache_backend!
+
+      validate_should_export_span!
 
       validate_mask!
     end
@@ -261,6 +268,12 @@ module Langfuse
       raise ConfigurationError, "mask must respond to #call"
     end
 
+    def validate_should_export_span!
+      return if should_export_span.nil? || should_export_span.respond_to?(:call)
+
+      raise ConfigurationError, "should_export_span must respond to #call"
+    end
+
     def detect_release_from_ci_env
       COMMON_RELEASE_ENV_KEYS.each do |key|
         value = env_value(key)
@@ -277,4 +290,5 @@ module Langfuse
       value
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end

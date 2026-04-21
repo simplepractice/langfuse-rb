@@ -13,6 +13,7 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_stale_while_revalidate).to be false
       expect(config.cache_stale_ttl).to eq(0) # Defaults to 0 (SWR disabled)
       expect(config.cache_refresh_threads).to eq(5)
+      expect(config.should_export_span).to be_nil
     end
 
     it "reads from environment variables" do
@@ -180,6 +181,23 @@ RSpec.describe Langfuse::Config do
           Langfuse::ConfigurationError,
           "timeout must be positive"
         )
+      end
+    end
+
+    context "when should_export_span is invalid" do
+      it "raises ConfigurationError when it does not respond to #call" do
+        config.should_export_span = "not callable"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "should_export_span must respond to #call"
+        )
+      end
+
+      it "accepts callables" do
+        config.should_export_span = ->(_span) { true }
+
+        expect { config.validate! }.not_to raise_error
       end
     end
 

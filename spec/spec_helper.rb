@@ -1,13 +1,19 @@
 # frozen_string_literal: true
 
 require "simplecov"
+require "simplecov_json_formatter"
 SimpleCov.start do
   add_filter "/spec/"
   # Maintain high coverage standards
   minimum_coverage 95
+  # CI uploads JSON coverage to Codecov while local runs still need HTML output.
+  formatter SimpleCov::Formatter::MultiFormatter.new(
+    [SimpleCov::Formatter::HTMLFormatter, SimpleCov::Formatter::JSONFormatter]
+  )
 end
 
 require "langfuse"
+require "opentelemetry/sdk"
 require "webmock/rspec"
 require "logger"
 require "fileutils"
@@ -31,10 +37,17 @@ RSpec.configure do |config|
     FileUtils.mkdir_p("log")
     config.add_setting :test_logger
     config.test_logger = Logger.new("log/test.log")
+    OpenTelemetry.tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
   end
 
   # Reset global Langfuse state before each test
   config.before do
+    ENV.delete("LANGFUSE_PUBLIC_KEY")
+    ENV.delete("LANGFUSE_SECRET_KEY")
+    ENV.delete("LANGFUSE_BASE_URL")
+    ENV.delete("LANGFUSE_TRACING_ENVIRONMENT")
+    ENV.delete("LANGFUSE_RELEASE")
+
     # Stub OTLP endpoint BEFORE reset (which may flush traces)
     # (tests can override this with more specific stubs if needed)
     stub_request(:post, %r{/api/public/otel/v1/traces})
@@ -44,8 +57,14 @@ RSpec.configure do |config|
 
     # Configure logger to write to log file instead of stdout
     Langfuse.configure do |c|
+      c.public_key = "pk_test"
+      c.secret_key = "sk_test"
+      c.base_url = "https://cloud.langfuse.com"
       c.logger = RSpec.configuration.test_logger
     end
+
+    OpenTelemetry.tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+    OpenTelemetry.propagation = OpenTelemetry::Context::Propagation::NoopTextMapPropagator.new
 
     # Stub Logger.new to use test log file when using $stdout, but allow other outputs
     test_logger = RSpec.configuration.test_logger
