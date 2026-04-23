@@ -193,6 +193,38 @@ end
 
 The block receives a traced span. On completion (or error), the trace is flushed and the item is linked automatically.
 
+## Managing Dataset Runs
+
+Dataset runs are created when you link items into a named run, either manually or through experiments. Once a run exists, you can fetch it, list all runs for a dataset, or delete it by dataset name and run name.
+
+```ruby
+# Fetch a single run with its linked run items
+run = client.get_dataset_run(
+  dataset_name: "qa-eval",
+  run_name: "qa-v2"
+)
+
+run["id"]              # => "run-123"
+run["datasetRunItems"] # => [...]
+
+# List all runs for a dataset (auto-paginates)
+runs = client.list_dataset_runs(dataset_name: "qa-eval")
+
+# Fetch a single page only
+runs = client.list_dataset_runs(dataset_name: "qa-eval", page: 2, limit: 20)
+
+# Delete a run by name
+client.delete_dataset_run(dataset_name: "qa-eval", run_name: "qa-v2")
+```
+
+| Method                     | Behavior |
+| -------------------------- | -------- |
+| `get_dataset_run`          | Fetch one run and its linked run items |
+| `list_dataset_runs`        | Returns `Array<Hash>` of runs; auto-paginates unless `page:` is provided |
+| `delete_dataset_run`       | Deletes a run by dataset and run name |
+
+Unlike `delete_dataset_item`, deleting a missing dataset run is not idempotent in this SDK. A missing run raises `Langfuse::NotFoundError` to match the upstream API behavior.
+
 ## See Also
 
 - [EXPERIMENTS.md](EXPERIMENTS.md) - Run systematic evaluations against datasets
