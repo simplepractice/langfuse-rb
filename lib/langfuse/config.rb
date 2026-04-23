@@ -146,7 +146,6 @@ module Langfuse
     # @yield [config] Optional block for configuration
     # @yieldparam config [Config] The config instance
     # @return [Config] a new Config instance
-    # rubocop:disable Metrics/AbcSize
     def initialize
       @public_key = ENV.fetch("LANGFUSE_PUBLIC_KEY", nil)
       @secret_key = ENV.fetch("LANGFUSE_SECRET_KEY", nil)
@@ -163,19 +162,11 @@ module Langfuse
       @batch_size = DEFAULT_BATCH_SIZE
       @flush_interval = DEFAULT_FLUSH_INTERVAL
       @job_queue = DEFAULT_JOB_QUEUE
-      @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
-      @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
-      @sample_rate = DEFAULT_SAMPLE_RATE
-      @should_export_span = nil
-      @mask = nil
+      initialize_tracing_defaults
       @logger = default_logger
-
-      env_sample_rate = env_value("LANGFUSE_SAMPLE_RATE")
-      self.sample_rate = env_sample_rate if env_sample_rate
 
       yield(self) if block_given?
     end
-    # rubocop:enable Metrics/AbcSize
 
     # Validate the configuration
     #
@@ -238,6 +229,14 @@ module Langfuse
       else
         Logger.new($stdout, level: Logger::WARN)
       end
+    end
+
+    def initialize_tracing_defaults
+      @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
+      @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
+      self.sample_rate = env_value("LANGFUSE_SAMPLE_RATE") || DEFAULT_SAMPLE_RATE
+      @should_export_span = nil
+      @mask = nil
     end
 
     def validate_cache_backend!
