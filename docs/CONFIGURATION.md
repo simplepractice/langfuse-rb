@@ -362,6 +362,7 @@ After the first successful tracing initialization, these settings require `Langf
 - `base_url`
 - `environment`
 - `release`
+- `sample_rate`
 - `should_export_span`
 - `tracing_async`
 - `batch_size`

@@ -320,9 +320,9 @@ RSpec.describe Langfuse::ScoreClient do
       let(:original_tracer_provider) { OpenTelemetry.tracer_provider }
 
       before do
-        config.sample_rate = 0.5
+        config.sample_rate = 0.0
         OpenTelemetry.tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
-          sampler: OpenTelemetry::SDK::Trace::Samplers::ALWAYS_OFF
+          sampler: OpenTelemetry::SDK::Trace::Samplers::ALWAYS_ON
         )
       end
 
@@ -330,7 +330,7 @@ RSpec.describe Langfuse::ScoreClient do
         OpenTelemetry.tracer_provider = original_tracer_provider
       end
 
-      it "drops trace-linked scores when sampler rejects the trace id" do
+      it "drops trace-linked scores when Langfuse sampling rejects the trace id" do
         expect(api_client).not_to receive(:send_batch)
 
         score_client.create(
@@ -452,6 +452,31 @@ RSpec.describe Langfuse::ScoreClient do
       score_client.flush
     ensure
       OpenTelemetry.tracer_provider = original_tracer_provider
+    end
+
+    it "drops sampled-out Langfuse spans without installing the global tracer provider" do
+      original_tracer_provider = OpenTelemetry.tracer_provider
+      config.sample_rate = 0.0
+      Langfuse.reset!
+      Langfuse.configure do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+        c.base_url = "https://cloud.langfuse.com"
+        c.sample_rate = 0.0
+        c.logger = Logger.new(StringIO.new)
+      end
+      OpenTelemetry.tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
+        sampler: OpenTelemetry::SDK::Trace::Samplers::ALWAYS_ON
+      )
+      expect(api_client).not_to receive(:send_batch)
+
+      Langfuse.observe("sampled-out") do
+        score_client.score_active_trace(name: "overall_quality", value: 5)
+      end
+      score_client.flush
+    ensure
+      OpenTelemetry.tracer_provider = original_tracer_provider
+      Langfuse.reset!
     end
   end
 

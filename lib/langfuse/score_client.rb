@@ -298,10 +298,13 @@ module Langfuse
 
     # Keep score sampling aligned with trace sampling to avoid orphaned trace-linked scores.
     def enqueue_trace_linked_score?(trace_id)
-      return true if trace_id.nil? || config.sample_rate >= 1.0
+      return true if trace_id.nil?
       return true unless HEX_TRACE_ID_PATTERN.match?(trace_id)
 
-      sampler = active_sampler
+      active_trace_sampled = active_trace_sampling_decision(trace_id)
+      return active_trace_sampled unless active_trace_sampled.nil?
+
+      sampler = score_sampler
       return true unless sampler.respond_to?(:should_sample?)
 
       sample_result = sampler.should_sample?(
@@ -318,9 +321,30 @@ module Langfuse
       true
     end
 
-    def active_sampler
-      provider = OpenTelemetry.tracer_provider
-      provider.sampler if provider.respond_to?(:sampler)
+    def score_sampler
+      provider = OtelSetup.tracer_provider if OtelSetup.initialized?
+      return provider.sampler if provider.respond_to?(:sampler)
+
+      configured_sampler
+    end
+
+    # Active-span scores should trust the span context because Langfuse tracing stays internal by default.
+    def active_trace_sampling_decision(trace_id)
+      span_context = OpenTelemetry::Trace.current_span&.context
+      return nil unless span_context&.valid?
+      return nil unless span_context.trace_id.unpack1("H*") == trace_id
+
+      span_context.trace_flags.sampled?
+    end
+
+    # Explicit trace-id scoring can happen before tracing initializes, so reuse a sampler from config when needed.
+    def configured_sampler
+      sample_rate = config.sample_rate
+      return nil if sample_rate >= 1.0
+      return @configured_sampler if @configured_sampler_rate == sample_rate
+
+      @configured_sampler_rate = sample_rate
+      @configured_sampler = OpenTelemetry::SDK::Trace::Samplers::TraceIdRatioBased.new(sample_rate)
     end
 
     # Send a batch of events to the API
