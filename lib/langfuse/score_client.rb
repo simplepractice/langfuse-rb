@@ -305,6 +305,7 @@ module Langfuse
       return active_trace_sampled unless active_trace_sampled.nil?
 
       sampler = score_sampler
+      return true if sampler.nil?
       return true unless sampler.respond_to?(:should_sample?)
 
       sample_result = sampler.should_sample?(

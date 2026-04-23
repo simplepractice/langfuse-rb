@@ -434,13 +434,12 @@ RSpec.describe Langfuse::ScoreClient do
       end.to raise_error(ArgumentError, "No active OpenTelemetry span found")
     end
 
-    it "does not enqueue when active span is sampled out" do
+    it "does not enqueue when active span is sampled out even with sample_rate at 1.0" do
       original_tracer_provider = OpenTelemetry.tracer_provider
       sampled_out_provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
         sampler: OpenTelemetry::SDK::Trace::Samplers::ALWAYS_OFF
       )
       OpenTelemetry.tracer_provider = sampled_out_provider
-      config.sample_rate = 0.5
       tracer = sampled_out_provider.tracer("sampled-out")
       expect(api_client).not_to receive(:send_batch)
 
