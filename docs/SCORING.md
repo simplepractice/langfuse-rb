@@ -360,11 +360,14 @@ Langfuse.flush_scores
 
 ## Sampling Behavior
 
-Trace-linked scores follow the same sampler as traces.
+Trace-linked scores follow the same deterministic `sample_rate` decision as traces.
 
-- If a trace is sampled out (`sample_rate < 1.0`), scores with `trace_id` are dropped.
+- If a trace is sampled out, scores with that lowercase 32-hex `trace_id` are dropped.
 - Scores without `trace_id` (for example, session-only or dataset-run-only) are not sampled out.
-- Legacy/non-hex trace IDs are treated as in-sample for backwards compatibility.
+- Legacy/non-valid trace IDs are treated as in-sample for backwards compatibility. This matches `langfuse-python`: only lowercase 32-character hex trace IDs participate in sampling, while uppercase or custom IDs are treated as legacy.
+- Sampling is decided by the Langfuse client's `sample_rate` alone. An active span's OpenTelemetry trace flags do not override the decision. If you run Langfuse inside a host OTel tracer with its own sampler, that tracer's flags will not steer Langfuse score emission.
+- Score sampling is scoped to the client that creates the score. Another Langfuse client or global OpenTelemetry provider in the same process does not change that client's score sampling.
+- The client snapshots `sample_rate` when it is built. If you mutate `config.sample_rate` afterward, call `Langfuse.reset!` and rebuild the client before expecting different trace or score sampling.
 
 ```ruby
 Langfuse.configure do |config|

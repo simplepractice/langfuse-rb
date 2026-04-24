@@ -373,6 +373,75 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.create(name: "quality", value: 0.85, trace_id: "legacy-trace-id")
         score_client.flush
       end
+
+      it "keeps uppercase hex trace ids as legacy ids to match langfuse-python" do
+        uppercase_id = "ABCDEF1234567890ABCDEF1234567890"
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(traceId: uppercase_id)
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, trace_id: uppercase_id)
+        score_client.flush
+      end
+    end
+
+    context "with per-client sample_rate isolation" do
+      it "pins sample_rate at construction so later mutations don't diverge from tracing" do
+        pinned_config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test"
+          c.secret_key = "sk_test"
+          c.base_url = "https://cloud.langfuse.com"
+          c.sample_rate = 1.0
+          c.flush_interval = 0
+          c.logger = Logger.new(StringIO.new)
+        end
+        pinned_api_client = instance_double(Langfuse::ApiClient, send_batch: nil)
+        pinned_client = described_class.new(api_client: pinned_api_client, config: pinned_config)
+
+        # Mutate after construction — tracing would remain at 1.0 per the docs contract,
+        # so scoring must stay at 1.0 too.
+        pinned_config.sample_rate = 0.0
+
+        hex_id = "abcdef1234567890abcdef1234567890"
+        expect(pinned_api_client).to receive(:send_batch).with(
+          array_including(hash_including(body: hash_including(traceId: hex_id)))
+        )
+        pinned_client.create(name: "quality", value: 1.0, trace_id: hex_id)
+        pinned_client.flush
+      end
+
+      # Guards against a prior regression where ScoreClient read the sampler from
+      # OtelSetup's singleton provider, so whichever client initialized tracing
+      # first dictated sampling for every other client in the process.
+      it "uses its own config's sample_rate, not another client's" do
+        permissive_config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test"
+          c.secret_key = "sk_test"
+          c.base_url = "https://cloud.langfuse.com"
+          c.sample_rate = 1.0
+          c.flush_interval = 0
+          c.logger = Logger.new(StringIO.new)
+        end
+        permissive_api_client = instance_double(Langfuse::ApiClient, send_batch: nil)
+        described_class.new(api_client: permissive_api_client, config: permissive_config)
+
+        strict_config = Langfuse::Config.new do |c|
+          c.public_key = "pk_test"
+          c.secret_key = "sk_test"
+          c.base_url = "https://cloud.langfuse.com"
+          c.sample_rate = 0.0
+          c.flush_interval = 0
+          c.logger = Logger.new(StringIO.new)
+        end
+        strict_api_client = instance_double(Langfuse::ApiClient, send_batch: nil)
+        strict_client = described_class.new(api_client: strict_api_client, config: strict_config)
+
+        expect(strict_api_client).not_to receive(:send_batch)
+        strict_client.create(name: "quality", value: 1.0, trace_id: "abcdef1234567890abcdef1234567890")
+        strict_client.flush
+      end
     end
   end
 
@@ -432,25 +501,6 @@ RSpec.describe Langfuse::ScoreClient do
       expect do
         score_client.score_active_trace(name: "overall_quality", value: 5)
       end.to raise_error(ArgumentError, "No active OpenTelemetry span found")
-    end
-
-    it "does not enqueue when active span is sampled out even with sample_rate at 1.0" do
-      original_tracer_provider = OpenTelemetry.tracer_provider
-      sampled_out_provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
-        sampler: OpenTelemetry::SDK::Trace::Samplers::ALWAYS_OFF
-      )
-      OpenTelemetry.tracer_provider = sampled_out_provider
-      tracer = sampled_out_provider.tracer("sampled-out")
-      expect(api_client).not_to receive(:send_batch)
-
-      tracer.in_span("sampled-out-span") do
-        expect do
-          score_client.score_active_trace(name: "overall_quality", value: 5)
-        end.not_to raise_error
-      end
-      score_client.flush
-    ensure
-      OpenTelemetry.tracer_provider = original_tracer_provider
     end
 
     it "drops sampled-out Langfuse spans without installing the global tracer provider" do

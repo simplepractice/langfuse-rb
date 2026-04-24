@@ -177,11 +177,7 @@ module Langfuse
       end
 
       def build_sampler(sample_rate)
-        if sample_rate < 1.0
-          OpenTelemetry::SDK::Trace::Samplers::TraceIdRatioBased.new(sample_rate)
-        else
-          OpenTelemetry::SDK::Trace::Samplers::ALWAYS_ON
-        end
+        Sampling.build_sampler(sample_rate) || OpenTelemetry::SDK::Trace::Samplers::ALWAYS_ON
       end
     end
   end

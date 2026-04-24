@@ -44,6 +44,9 @@ Langfuse.configure do |config|
   # Optional: for self-hosted instances
   config.base_url = ENV.fetch('LANGFUSE_BASE_URL', 'https://cloud.langfuse.com')
 
+  # Optional: sample traces and trace-linked scores deterministically
+  config.sample_rate = 1.0
+
   # Optional: Enable stale-while-revalidate for best performance
   config.cache_backend = :rails  # or :memory
   config.cache_stale_while_revalidate = true
@@ -51,6 +54,8 @@ end
 ```
 
 > Langfuse tracing is isolated by default. `Langfuse.configure` stores configuration only; it does not replace `OpenTelemetry.tracer_provider`.
+
+> `sample_rate` is applied to traces and trace-linked scores. Rebuild the client with `Langfuse.reset!` before expecting runtime sampling changes to take effect.
 
 > Fetch and use a prompt
 

@@ -219,15 +219,17 @@ config.flush_interval = 5  # Flush more frequently
 
 - **Type:** Float (`0.0..1.0`)
 - **Default:** `1.0`
-- **Description:** Deterministic trace sampling rate based on trace ID
+- **Description:** Deterministic sampling rate for traces and trace-linked scores, based on trace ID
 
 ```ruby
 config.sample_rate = 0.1  # Sample ~10% of traces
 ```
 
 `0.0` drops all traces, `1.0` preserves current always-on behavior.
-When sampling is below `1.0`, scores linked to sampled-out traces are dropped.
-Session-only and dataset-run-only scores are still sent.
+Trace-linked scores use the same `sample_rate` decision so the SDK does not create orphaned scores for sampled-out traces.
+Session-only and dataset-run-only scores are still sent because they are not tied to a sampled trace.
+
+For Ruby client instances, `sample_rate` is snapshotted when the client is built. Changing `config.sample_rate` later does not update that client's score sampler or the already-initialized trace sampler. Rebuild the client with `Langfuse.reset!` when changing sampling behavior.
 
 #### `logger`
 
@@ -369,6 +371,8 @@ After the first successful tracing initialization, these settings require `Langf
 - `flush_interval`
 
 That includes processor tuning. Changing `batch_size` or `flush_interval` after tracing is already live will not rebuild the exporter pipeline until reset.
+
+The singleton client follows the same rule for score sampling: once `Langfuse.client` has been built, changing `sample_rate` on `Langfuse.configuration` does not change that client's trace-linked score sampling. Call `Langfuse.reset!`, configure again, and then rebuild the client.
 
 Performance note for `should_export_span`:
 

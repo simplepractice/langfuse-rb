@@ -31,7 +31,7 @@ module Langfuse
     # @return [Logger] Logger instance
     attr_reader :logger
 
-    HEX_TRACE_ID_PATTERN = /\A\h{32}\z/
+    HEX_TRACE_ID_PATTERN = /\A[0-9a-f]{32}\z/
 
     # Initialize a new ScoreClient
     #
@@ -45,6 +45,9 @@ module Langfuse
       @mutex = Mutex.new
       @flush_thread = nil
       @shutdown = false
+      # Match the immutable tracing setup contract: once this client exists, later config
+      # mutations must not change score sampling without rebuilding the client.
+      @score_sampler = Sampling.build_sampler(config.sample_rate)
 
       start_flush_timer
     end
@@ -296,13 +299,11 @@ module Langfuse
       }
     end
 
-    # Keep score sampling aligned with trace sampling to avoid orphaned trace-linked scores.
+    # Score sampling is decided purely by the configured sampler on the trace_id hash,
+    # matching langfuse-python. Non-hex trace ids and session/dataset-only scores bypass sampling.
     def enqueue_trace_linked_score?(trace_id)
       return true if trace_id.nil?
       return true unless HEX_TRACE_ID_PATTERN.match?(trace_id)
-
-      active_trace_sampled = active_trace_sampling_decision(trace_id)
-      return active_trace_sampled unless active_trace_sampled.nil?
 
       sampler = score_sampler
       return true if sampler.nil?
@@ -322,31 +323,9 @@ module Langfuse
       true
     end
 
-    def score_sampler
-      provider = OtelSetup.tracer_provider if OtelSetup.initialized?
-      return provider.sampler if provider.respond_to?(:sampler)
-
-      configured_sampler
-    end
-
-    # Active-span scores should trust the span context because Langfuse tracing stays internal by default.
-    def active_trace_sampling_decision(trace_id)
-      span_context = OpenTelemetry::Trace.current_span&.context
-      return nil unless span_context&.valid?
-      return nil unless span_context.trace_id.unpack1("H*") == trace_id
-
-      span_context.trace_flags.sampled?
-    end
-
-    # Explicit trace-id scoring can happen before tracing initializes, so reuse a sampler from config when needed.
-    def configured_sampler
-      sample_rate = config.sample_rate
-      return nil if sample_rate >= 1.0
-      return @configured_sampler if @configured_sampler_rate == sample_rate
-
-      @configured_sampler_rate = sample_rate
-      @configured_sampler = OpenTelemetry::SDK::Trace::Samplers::TraceIdRatioBased.new(sample_rate)
-    end
+    # Sampler is pinned at ScoreClient construction to match the "sample_rate requires reset!"
+    # contract and to keep each client's sampling scoped to its own config.
+    attr_reader :score_sampler
 
     # Send a batch of events to the API
     #
