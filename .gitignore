@@ -36,4 +36,5 @@ langfuse-python/
 *.env
 
 # Use for testing against UI
-scripts/
+scripts/*
+!scripts/.gitkeep
