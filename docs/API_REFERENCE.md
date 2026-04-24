@@ -1075,6 +1075,66 @@ create_dataset_run_item(dataset_item_id:, run_name:, trace_id: nil,
 
 **Returns:** `Hash` (created dataset run item data)
 
+### `Client#get_dataset_run`
+
+Fetch a dataset run and its linked run items.
+
+**Signature:**
+
+```ruby
+get_dataset_run(dataset_name:, run_name:) # => Hash
+```
+
+**Parameters:**
+
+| Parameter      | Type   | Required | Description  |
+| -------------- | ------ | -------- | ------------ |
+| `dataset_name` | String | Yes      | Dataset name |
+| `run_name`     | String | Yes      | Run name     |
+
+**Returns:** `Hash`
+
+### `Client#list_dataset_runs`
+
+List runs for a dataset. Auto-paginates when `page` is omitted.
+
+**Signature:**
+
+```ruby
+list_dataset_runs(dataset_name:, page: nil, limit: nil) # => Array<Hash>
+```
+
+**Parameters:**
+
+| Parameter      | Type    | Required | Description                                |
+| -------------- | ------- | -------- | ------------------------------------------ |
+| `dataset_name` | String  | Yes      | Dataset name                               |
+| `page`         | Integer | No       | Page number (nil = fetch all pages)        |
+| `limit`        | Integer | No       | Results per page                           |
+
+**Returns:** `Array<Hash>`
+
+### `Client#delete_dataset_run`
+
+Delete a dataset run by dataset and run name.
+
+**Signature:**
+
+```ruby
+delete_dataset_run(dataset_name:, run_name:) # => nil
+```
+
+Unlike `delete_dataset_item`, this is strict: a missing run raises `Langfuse::NotFoundError`.
+
+**Parameters:**
+
+| Parameter      | Type   | Required | Description  |
+| -------------- | ------ | -------- | ------------ |
+| `dataset_name` | String | Yes      | Dataset name |
+| `run_name`     | String | Yes      | Run name     |
+
+**Returns:** `nil`
+
 See [DATASETS.md](DATASETS.md) for complete guide.
 
 ## Experiments
