@@ -8,6 +8,7 @@ This repository is the official `langfuse-rb` SDK for LLM tracing, observability
 - Keep the SDK framework-agnostic (no Rails dependency).
 - Do not delete existing inline comments unless code changes make them invalid.
 - After any change, validate output/expectations against the Langfuse API using the installed `langfuse` agent skill (see `.agents/skills/langfuse/`).
+- Every PR must include a verification script in `scratchpad/` that exercises the change against the real Langfuse API (via the `langfuse` agent skill / CLI). Mocks and unit tests don't catch API-shape regressions — the scratchpad script does. `scratchpad/` is untracked, so the script ships with the PR locally but is not committed.
 - After any change, run:
 
 ```bash

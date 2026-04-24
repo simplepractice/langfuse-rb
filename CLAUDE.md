@@ -10,6 +10,7 @@ bundle exec rubocop
 ```
 
 - After any change, validate output/expectations against the Langfuse API using the `langfuse` skill (`.claude/skills/langfuse/`).
+- Every PR must include a verification script in `scratchpad/` that exercises the change against the real Langfuse API (via the `langfuse` skill / CLI). Mocks and unit tests don't catch API-shape regressions — the scratchpad script does. `scratchpad/` is untracked, so the script lives alongside the PR but is not committed.
 
 ## Hard Constraints
 
