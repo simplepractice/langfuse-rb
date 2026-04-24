@@ -1,4 +1,5 @@
-![header](https://camo.githubusercontent.com/26d19b945bc752101b4aca468e07b118a44af07340db79af29f7df95505f2cea/68747470733a2f2f6c616e67667573652e636f6d2f6c616e67667573655f6c6f676f5f77686974652e706e67)
+<img width="2255" height="527" alt="langfuse-wordart" src="https://github.com/user-attachments/assets/59422d0a-6ecb-4e5f-a21c-cae955b5ce75" />
+
 
 # Langfuse Ruby SDK
 
