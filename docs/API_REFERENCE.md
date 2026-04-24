@@ -32,7 +32,7 @@ Langfuse.configure { |config| ... }
 
 **Parameters:**
 
-Block receives a configuration object with these properties:
+Block receives a `Langfuse::Config` object with these properties:
 
 | Property                       | Type    | Required | Default                        | Description                       |
 | ------------------------------ | ------- | -------- | ------------------------------ | --------------------------------- |
@@ -53,8 +53,8 @@ Block receives a configuration object with these properties:
 | `logger`                       | Logger  | No       | Auto-detected                  | Logger instance                   |
 | `tracing_async`                | Boolean | No       | `true`                         | ⚠️ Experimental (OTel export mode) |
 | `job_queue`                    | Symbol  | No       | `:default`                     | ⚠️ Experimental (not implemented) |
-| `environment`                  | String  | No       | `nil`                          | Default trace environment          |
-| `release`                      | String  | No       | `nil`                          | Default release identifier         |
+| `environment`                  | String  | No       | `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]`) | Default trace environment          |
+| `release`                      | String  | No       | `nil` (or `ENV["LANGFUSE_RELEASE"]` / common CI commit SHA env) | Default release identifier         |
 | `should_export_span`           | `#call` | No       | `nil`                          | Span export filter callback        |
 | `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
 
@@ -80,10 +80,10 @@ Access current configuration.
 **Signature:**
 
 ```ruby
-Langfuse.configuration # => Configuration
+Langfuse.configuration # => Langfuse::Config
 ```
 
-**Returns:** Configuration object with all settings
+**Returns:** `Langfuse::Config` object with all settings
 
 **Example:**
 
@@ -122,6 +122,8 @@ Langfuse.tracer_provider # => OpenTelemetry::SDK::Trace::TracerProvider
 
 **Raises:** `ConfigurationError` if `public_key`, `secret_key`, or `base_url` are not configured
 
+`Langfuse.configure` does not call this for you. This is the explicit global-install seam. If you also want another OpenTelemetry backend or custom propagation, that remains application-owned setup.
+
 **Example:**
 
 ```ruby
@@ -133,6 +135,54 @@ end
 OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 ```
 
+### Span Filter Helpers
+
+These public helpers are useful when composing `should_export_span` callbacks. The callback receives ended spans handled by Langfuse's provider.
+
+#### `Langfuse.default_export_span?`
+
+Return whether a span matches Langfuse's default export allowlist.
+
+**Signature:**
+
+```ruby
+Langfuse.default_export_span?(span) # => Boolean
+```
+
+**Returns:** `true` for Langfuse spans, spans with `gen_ai.*` attributes, and spans from known LLM-related instrumentation scopes
+
+#### `Langfuse.langfuse_span?`
+
+Return whether a span was created by Langfuse's tracer.
+
+**Signature:**
+
+```ruby
+Langfuse.langfuse_span?(span) # => Boolean
+```
+
+#### `Langfuse.genai_span?`
+
+Return whether a span contains `gen_ai.*` attributes.
+
+**Signature:**
+
+```ruby
+Langfuse.genai_span?(span) # => Boolean
+```
+
+#### `Langfuse.known_llm_instrumentor?`
+
+Return whether a span came from one of Langfuse's known LLM-related instrumentation scopes.
+
+**Signature:**
+
+```ruby
+Langfuse.known_llm_instrumentor?(span) # => Boolean
+```
+
+**Compatibility aliases:** `Langfuse.is_default_export_span`, `Langfuse.is_langfuse_span`, `Langfuse.is_genai_span`, `Langfuse.is_known_llm_instrumentor`
+
 ## Client Access
 
 ### `Langfuse.client`
@@ -142,10 +192,10 @@ Get the global singleton client instance.
 **Signature:**
 
 ```ruby
-Langfuse.client # => Client
+Langfuse.client # => Langfuse::Client
 ```
 
-**Returns:** Client instance
+**Returns:** `Langfuse::Client`
 
 **Raises:** `ConfigurationError` if not configured
 
@@ -178,7 +228,7 @@ get_prompt(name, version: nil, label: nil, fallback: nil, type: nil)
 | `fallback` | String or Array<Hash> | No | Fallback prompt if not found (`String` for text, `Array<Hash>` for chat) |
 | `type`     | Symbol  | Conditional | `:text` or `:chat` (required if `fallback` provided) |
 
-**Returns:** `TextPromptClient` or `ChatPromptClient`
+**Returns:** `Langfuse::TextPromptClient` or `Langfuse::ChatPromptClient`
 
 **Raises:**
 
@@ -266,7 +316,7 @@ create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_me
 | `tags`           | Array<String>      | No       | Tags for categorization                                                  |
 | `commit_message` | String             | No       | Optional commit message                                                  |
 
-**Returns:** `TextPromptClient` or `ChatPromptClient`
+**Returns:** `Langfuse::TextPromptClient` or `Langfuse::ChatPromptClient`
 
 **Raises:**
 
@@ -308,7 +358,7 @@ update_prompt(name:, version:, labels:)
 | `version` | Integer       | Yes      | Prompt version to update                  |
 | `labels`  | Array<String> | Yes      | Replacement labels for that prompt version |
 
-**Returns:** `TextPromptClient` or `ChatPromptClient`
+**Returns:** `Langfuse::TextPromptClient` or `Langfuse::ChatPromptClient`
 
 **Raises:**
 
@@ -382,7 +432,7 @@ Returned by `get_prompt` for text prompts.
 | `version` | Integer       | Version number         |
 | `labels`  | Array<String> | Version labels         |
 | `tags`    | Array<String> | Tags                   |
-| `config`  | Hash          | Configuration metadata |
+| `config`  | Hash          | Prompt config hash returned by Langfuse |
 | `prompt`  | String        | Raw template           |
 
 **Methods:**
@@ -482,7 +532,7 @@ Create a traced observation (block or stateful mode).
 observe(name, attributes = {}, as_type: :span, trace_id: nil) { |obs| ... }
 
 # Stateful mode (manual end)
-observe(name, attributes = {}, as_type: :span, trace_id: nil) # => BaseObservation
+observe(name, attributes = {}, as_type: :span, trace_id: nil) # => Langfuse::BaseObservation
 ```
 
 **Parameters:**
@@ -522,6 +572,8 @@ obs.end
 
 See [TRACING.md](TRACING.md) for complete guide.
 
+For payload-bearing standalone events, pass event attributes at creation time. `:event` observations auto-end immediately, so mutating payload inside a later block is too late.
+
 ### `Langfuse.start_observation`
 
 Low-level factory for creating observations. Prefer `Langfuse.observe` for most use cases.
@@ -544,7 +596,7 @@ start_observation(name, attrs = {}, as_type: :span, trace_id: nil,
 | `parent_span_context`  | SpanContext  | No       | `nil`   | Parent span context for child observations                                  |
 | `start_time`           | Time/Integer | No       | `nil`   | Custom start time                                                           |
 
-**Returns:** `BaseObservation` (Span, Generation, Event, etc.)
+**Returns:** `Langfuse::BaseObservation` (or a subclass such as `Langfuse::Span`, `Langfuse::Generation`, or `Langfuse::Event`)
 
 **Raises:** `ArgumentError` if both `trace_id` and `parent_span_context` provided, or if `trace_id` is invalid
 
@@ -567,7 +619,7 @@ Returned by `observe` in stateful mode or passed to block.
 | ----------- | ------------------------------- | ---------------------------- |
 | `id`        | String                          | Observation ID (hex span ID) |
 | `trace_id`  | String                          | Trace ID (hex trace ID)      |
-| `trace_url` | String                          | URL to Langfuse UI           |
+| `trace_url` | `String` or `nil`              | URL to Langfuse UI, if project lookup succeeds |
 | `otel_span` | OpenTelemetry::SDK::Trace::Span | Underlying OTel span         |
 | `type`      | String                          | Observation type             |
 
@@ -614,7 +666,7 @@ obs.update_trace(
 #### `end`
 
 ```ruby
-end(end_time: Time.now) # => self
+end(end_time: Time.now)
 ```
 
 End the observation (block mode calls this automatically).
@@ -626,7 +678,7 @@ End the observation (block mode calls this automatically).
 start_observation(name, attributes = {}, as_type: :span) { |child| ... }
 
 # Stateful mode
-start_observation(name, attributes = {}, as_type: :span) # => BaseObservation
+start_observation(name, attributes = {}, as_type: :span) # => Langfuse::BaseObservation
 ```
 
 Create a child observation.
@@ -644,10 +696,10 @@ end
 #### `event`
 
 ```ruby
-event(name:, input: nil, output: nil, metadata: nil, level: "default") # => self
+event(name:, input: nil, level: "default")
 ```
 
-Add a point-in-time event to the observation.
+Add a point-in-time event to the observation's span.
 
 **Example:**
 
@@ -655,7 +707,6 @@ Add a point-in-time event to the observation.
 obs.event(
   name: "checkpoint",
   input: { step: 2 },
-  metadata: { timestamp: Time.now.iso8601 },
   level: "DEFAULT"
 )
 ```

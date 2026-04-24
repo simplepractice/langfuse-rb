@@ -686,7 +686,7 @@ prompts:
 # In Rails console
 Langfuse.reset!  # Clears everything
 # Or just clear cache
-Langfuse.client.instance_variable_get(:@api_client).cache&.clear
+Langfuse.client.api_client.cache&.clear
 ```
 
 ### Problem: Variables not substituting correctly

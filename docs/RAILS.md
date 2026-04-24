@@ -1,193 +1,133 @@
 # Rails Integration Guide
 
-Complete guide for integrating the Langfuse Ruby SDK into your Rails application.
+This guide assumes you already read [GETTING_STARTED.md](GETTING_STARTED.md). It is for applied Rails patterns, not basic setup repetition.
 
-For basic setup and configuration options, see [GETTING_STARTED.md](GETTING_STARTED.md) and [CONFIGURATION.md](CONFIGURATION.md).
+## Initializer Pattern
 
-## Table of Contents
-
-- [Configuration](#configuration)
-- [Usage Patterns](#usage-patterns)
-- [Background Jobs](#background-jobs)
-- [Testing](#testing)
-- [Deployment](#deployment)
-- [Best Practices](#best-practices)
-
-## Configuration
-
-See [GETTING_STARTED.md](GETTING_STARTED.md#rails) for Rails-specific setup and [CONFIGURATION.md](CONFIGURATION.md) for all options.
-
-**Quick reference:**
+Keep Langfuse setup in one initializer and keep the ownership boundary explicit.
 
 ```ruby
 # config/initializers/langfuse.rb
 Langfuse.configure do |config|
   config.public_key = Rails.application.credentials.dig(:langfuse, :public_key)
   config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
-  config.cache_backend = :rails  # Use Rails.cache (Redis)
+  config.base_url = ENV.fetch("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+
+  config.cache_backend = :rails
   config.cache_ttl = Rails.env.production? ? 300 : 60
-  # Logger auto-detected as Rails.logger
+  config.cache_stale_ttl = Rails.env.production? ? 300 : 0
+  config.logger = Rails.logger
+end
+
+at_exit do
+  Langfuse.shutdown(timeout: 10)
 end
 ```
 
-## Usage Patterns
+Notes:
 
-### In Controllers
+- `Langfuse.configure` stores config only
+- module-level tracing works without replacing the global `OpenTelemetry.tracer_provider`
+- if you do choose a global install with `Langfuse.tracer_provider`, that is a separate explicit step and you own its lifecycle
+
+## Controller Pattern
+
+Controllers should usually create the root observation, set request-scoped trace attributes, and delegate actual LLM work to a service.
 
 ```ruby
-class UsersController < ApplicationController
+class SupportAnswersController < ApplicationController
   def create
-    # Fetch and compile prompt
-    prompt = Langfuse.client.get_prompt("welcome-email", label: "production")
-    email_body = prompt.compile(
-      user_name: params[:name],
-      app_url: root_url
-    )
-
-    # Send email
-    UserMailer.welcome_email(params[:email], email_body).deliver_later
-
-    render json: { message: "User created" }, status: :created
-  end
-end
-```
-
-### In Service Objects
-
-```ruby
-# app/services/ai_assistant_service.rb
-class AiAssistantService
-  def initialize(user)
-    @user = user
-    @client = Langfuse.client
-  end
-
-  def generate_response(question)
     Langfuse.propagate_attributes(
-      user_id: @user.id.to_s,
-      metadata: { question: question }
+      user_id: current_user.id.to_s,
+      session_id: request.request_id
     ) do
-      Langfuse.observe("ai-assistant", input: { question: question }) do |trace|
-        # Get prompt from Langfuse
-        prompt = @client.get_prompt("assistant-chat", label: Rails.env)
-
-        # Compile with user context
-        messages = prompt.compile(
-          user_name: @user.name,
-          user_context: @user.context_summary
+      Langfuse.observe("support-answer-request", input: { question: params[:question] }) do |root|
+        answer = SupportAnswerService.new.call(
+          user: current_user,
+          question: params[:question]
         )
 
-        # Call LLM with tracing
-        response = trace.start_observation("gpt4-response", as_type: :generation) do |gen|
-          gen.model = "gpt-4"
-          gen.model_parameters = { temperature: 0.7 }
-          gen.input = messages
+        root.event(name: "response-rendered", input: { format: "json" })
+        root.update(output: { answered: true })
 
-          result = call_openai(messages)
-          gen.output = result[:content]
-          gen.usage_details = result[:usage]
-          result[:content]
-        end
-
-        trace.update(output: { response: response })
-        response
+        render json: { answer: answer }
       end
     end
   end
-
-  private
-
-  def call_openai(messages)
-    # Your OpenAI implementation
-  end
 end
 ```
 
-### In Models
+The controller owns request context. The service owns prompt selection and model calls.
+
+## Service Object Pattern
+
+This is where most Rails consumers should put Langfuse prompt + generation logic.
 
 ```ruby
-class Document < ApplicationRecord
-  def summarize
-    prompt = Langfuse.client.get_prompt(
-      "document-summary",
-      fallback: "Summarize this document: {{content}}",
-      type: :text
-    )
+class SupportAnswerService
+  def initialize(llm_client: OpenAI::Client.new(access_token: ENV.fetch("OPENAI_API_KEY")))
+    @llm_client = llm_client
+  end
 
-    prompt.compile(
-      content: self.content,
-      max_length: 500
-    )
+  def call(user:, question:)
+    Langfuse.observe("support-answer", input: { question: question }) do |root|
+      prompt = Langfuse.client.get_prompt("support-answer", label: Rails.env.production? ? "production" : "staging")
+      messages = prompt.compile(customer_name: user.name, question: question)
+
+      answer = root.start_observation("openai-chat", as_type: :generation) do |gen|
+        gen.model = "gpt-4.1-mini"
+        gen.input = messages
+        gen.model_parameters = { temperature: 0.2 }
+
+        response = @llm_client.chat(
+          parameters: {
+            model: "gpt-4.1-mini",
+            messages: messages,
+            temperature: 0.2
+          }
+        )
+
+        answer = response.dig("choices", 0, "message", "content")
+
+        gen.update(
+          output: answer,
+          usage_details: {
+            prompt_tokens: response.dig("usage", "prompt_tokens"),
+            completion_tokens: response.dig("usage", "completion_tokens"),
+            total_tokens: response.dig("usage", "total_tokens")
+          }
+        )
+
+        answer
+      end
+
+      root.update(output: { answer: answer })
+      answer
+    end
   end
 end
 ```
 
-### In Mailers
+This keeps the trace shape honest:
 
-```ruby
-class UserMailer < ApplicationMailer
-  def welcome_email(user)
-    prompt = Langfuse.client.get_prompt("welcome-email-template")
-
-    @body = prompt.compile(
-      user_name: user.name,
-      verification_url: user_verification_url(user)
-    )
-
-    mail(to: user.email, subject: "Welcome!")
-  end
-end
-```
+- controller/request span at the edge
+- workflow root in the service
+- generation for the model call itself
 
 ## Background Jobs
 
-### Sidekiq Integration
+Jobs are where people usually lie to themselves about propagation. Rails does not continue Langfuse trace context across processes for you.
 
-```ruby
-class ProcessDocumentJob < ApplicationJob
-  queue_as :default
-
-  def perform(document_id, trace_id = nil)
-    document = Document.find(document_id)
-
-    # Create new observation with metadata linking to original trace
-    Langfuse.propagate_attributes(
-      metadata: { document_id: document_id, queue: :default, original_trace_id: trace_id }
-    ) do
-      Langfuse.observe("process-document-job", input: { document_id: document_id }) do |trace|
-        text = trace.start_observation("extract-text") do |span|
-          text = extract_text(document)
-          span.update(output: { text_length: text.length })
-          text
-        end
-
-        trace.start_observation("summarize", as_type: :generation) do |gen|
-          gen.model = "gpt-4"
-          summary = generate_summary(text)
-          gen.update(output: summary)
-          document.update!(summary: summary)
-        end
-      end
-    end
-  end
-end
-```
-
-### Enqueue with Trace Context
+### Enqueue with Explicit Trace Context
 
 ```ruby
 class DocumentsController < ApplicationController
   def create
-    Langfuse.observe("document-upload", input: document_params) do |trace|
+    Langfuse.observe("document-upload", input: document_params.to_h) do |root|
       document = Document.create!(document_params)
 
-      # Get trace ID to pass to background job
-      trace_id = trace.trace_id
-      ProcessDocumentJob.perform_later(document.id, trace_id)
-
-      trace.start_observation("job-enqueued", as_type: :event) do |event|
-        event.update(input: { document_id: document.id })
-      end
+      ProcessDocumentJob.perform_later(document.id, root.trace_id)
+      root.event(name: "job-enqueued", input: { document_id: document.id, queue: "default" })
 
       render json: document, status: :created
     end
@@ -195,441 +135,157 @@ class DocumentsController < ApplicationController
 end
 ```
 
-### ActiveJob Configuration
+### Continue the Trace in the Job
 
-OpenTelemetry automatically handles async tracing. No additional configuration needed for ActiveJob integration.
+```ruby
+class ProcessDocumentJob < ApplicationJob
+  queue_as :default
+
+  def perform(document_id, trace_id)
+    document = Document.find(document_id)
+
+    Langfuse.observe("process-document", { input: { document_id: document_id } }, trace_id: trace_id) do |root|
+      text = root.start_observation("extract-text") do |span|
+        extracted_text = extract_text(document)
+        span.update(output: { characters: extracted_text.length })
+        extracted_text
+      end
+
+      summary = root.start_observation("summarize", as_type: :generation) do |gen|
+        gen.model = "gpt-4.1-mini"
+        result = summarize_with_llm(text)
+        gen.update(output: result.fetch(:summary), usage_details: result.fetch(:usage))
+        result.fetch(:summary)
+      end
+
+      root.update(output: { summary: summary })
+      document.update!(summary: summary)
+    end
+  end
+end
+```
+
+Passing `trace_id` is the pragmatic default. It rejoins the same trace, but it does not restore an exact parent span relationship across process boundaries. If you need that, carry and restore OpenTelemetry context yourself.
 
 ## Testing
 
-### RSpec Configuration
+Reset global state between examples and stub external calls aggressively.
 
 ```ruby
-# spec/rails_helper.rb or spec/spec_helper.rb
 RSpec.configure do |config|
-  config.before(:each) do
-    Langfuse.reset!  # Clear global state between tests
-  end
-
-  # Don't make real API calls in tests
-  config.before(:each, type: :request) do
-    allow_any_instance_of(Langfuse::Client).to receive(:get_prompt).and_call_original
+  config.before do
+    Langfuse.reset!
   end
 end
 ```
 
-### Mocking Prompts
+Stub prompt fetches at the client boundary:
 
 ```ruby
-# spec/support/langfuse_helpers.rb
-module LangfuseHelpers
-  def mock_langfuse_prompt(name, content, type: :text)
-    allow_any_instance_of(Langfuse::Client)
-      .to receive(:get_prompt)
-      .with(name, any_args)
-      .and_return(
-        if type == :text
-          Langfuse::TextPromptClient.new(
-            "name" => name,
-            "version" => 1,
-            "type" => "text",
-            "prompt" => content,
-            "labels" => ["test"],
-            "tags" => [],
-            "config" => {}
-          )
-        else
-          Langfuse::ChatPromptClient.new(
-            "name" => name,
-            "version" => 1,
-            "type" => "chat",
-            "prompt" => content,
-            "labels" => ["test"],
-            "tags" => [],
-            "config" => {}
-          )
-        end
-      )
-  end
-end
-
-RSpec.configure do |config|
-  config.include LangfuseHelpers
-end
-```
-
-### Example Test
-
-```ruby
-# spec/services/ai_assistant_service_spec.rb
-require 'rails_helper'
-
-RSpec.describe AiAssistantService do
-  let(:user) { create(:user, name: "Alice") }
-  let(:service) { described_class.new(user) }
-
-  before do
-    mock_langfuse_prompt(
-      "assistant-chat",
-      [
-        { "role" => "system", "content" => "You are an assistant for {{user_name}}" },
-        { "role" => "user", "content" => "{{question}}" }
-      ],
-      type: :chat
+RSpec.describe SupportAnswerService do
+  let(:prompt) do
+    instance_double(
+      Langfuse::ChatPromptClient,
+      compile: [{ role: "user", content: "How do I reset my password?" }]
     )
   end
 
-  it "generates a response using the prompt" do
-    allow(service).to receive(:call_openai).and_return({
-      content: "Hello Alice!",
-      usage: { prompt_tokens: 10, completion_tokens: 5 }
-    })
-
-    response = service.generate_response("What is Ruby?")
-
-    expect(response).to eq("Hello Alice!")
+  before do
+    allow(Langfuse.client).to receive(:get_prompt)
+      .with("support-answer", label: "staging")
+      .and_return(prompt)
   end
 end
 ```
 
-### Integration Tests
+For SDK integration coverage, prefer the repo's existing WebMock/VCR patterns instead of sprinkling real HTTP into ordinary Rails specs.
 
-For integration tests that actually call the Langfuse API, use VCR:
+## Production Hardening
 
-```ruby
-# Gemfile (test group)
-gem 'vcr'
-gem 'webmock'
-```
+### Cache Settings
 
-```ruby
-# spec/support/vcr.rb
-require 'vcr'
-
-VCR.configure do |config|
-  config.cassette_library_dir = 'spec/fixtures/vcr_cassettes'
-  config.hook_into :webmock
-  config.configure_rspec_metadata!
-
-  # Filter sensitive data
-  config.filter_sensitive_data('<LANGFUSE_PUBLIC_KEY>') { ENV['LANGFUSE_PUBLIC_KEY'] }
-  config.filter_sensitive_data('<LANGFUSE_SECRET_KEY>') { ENV['LANGFUSE_SECRET_KEY'] }
-end
-```
-
-```ruby
-# spec/integration/langfuse_api_spec.rb
-require 'rails_helper'
-
-RSpec.describe 'Langfuse API Integration', vcr: true do
-  it 'fetches a real prompt from Langfuse' do
-    prompt = Langfuse.client.get_prompt('greeting')
-
-    expect(prompt).to be_a(Langfuse::TextPromptClient)
-    expect(prompt.name).to eq('greeting')
-  end
-end
-```
-
-## Deployment
-
-### Heroku
-
-Add environment variables:
-
-```bash
-heroku config:set LANGFUSE_PUBLIC_KEY=pk-lf-...
-heroku config:set LANGFUSE_SECRET_KEY=sk-lf-...
-```
-
-### Docker
-
-In your `Dockerfile` or `docker-compose.yml`:
-
-```yaml
-# docker-compose.yml
-services:
-  web:
-    environment:
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-```
-
-### Kubernetes
-
-Use Kubernetes secrets:
-
-```yaml
-# config/secrets.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: langfuse-secrets
-type: Opaque
-data:
-  public-key: <base64-encoded-key>
-  secret-key: <base64-encoded-key>
-```
-
-```yaml
-# deployment.yaml
-env:
-  - name: LANGFUSE_PUBLIC_KEY
-    valueFrom:
-      secretKeyRef:
-        name: langfuse-secrets
-        key: public-key
-  - name: LANGFUSE_SECRET_KEY
-    valueFrom:
-      secretKeyRef:
-        name: langfuse-secrets
-        key: secret-key
-```
-
-### Health Checks
-
-Add a health check endpoint that verifies Langfuse connectivity:
-
-```ruby
-# config/routes.rb
-get '/health/langfuse', to: 'health#langfuse'
-
-# app/controllers/health_controller.rb
-class HealthController < ApplicationController
-  def langfuse
-    # Try to fetch a test prompt
-    Langfuse.client.get_prompt('health-check', fallback: "OK", type: :text)
-
-    render json: { status: 'ok', service: 'langfuse' }
-  rescue => e
-    render json: { status: 'error', service: 'langfuse', error: e.message }, status: :service_unavailable
-  end
-end
-```
-
-### Graceful Shutdown
-
-Ensure traces are flushed on shutdown:
-
-```ruby
-# config/initializers/langfuse.rb (at the end)
-at_exit do
-  Langfuse.shutdown(timeout: 10)
-end
-```
-
-## Best Practices
-
-### 1. Use Environment-Specific Labels
-
-```ruby
-# Fetch prompts by environment
-prompt = Langfuse.client.get_prompt("greeting", label: Rails.env)
-
-# Or use conditional logic
-label = Rails.env.production? ? "production" : "development"
-prompt = Langfuse.client.get_prompt("greeting", label: label)
-```
-
-### 2. Always Provide Fallbacks in Production
-
-```ruby
-# config/initializers/langfuse.rb
-fallback_enabled = Rails.env.production?
-
-# In your code
-prompt = Langfuse.client.get_prompt(
-  "greeting",
-  fallback: fallback_enabled ? "Hello {{name}}!" : nil,
-  type: fallback_enabled ? :text : nil
-)
-```
-
-### 3. Cache Prompts Aggressively in Production
+For multi-process Rails deployments, `cache_backend = :rails` is usually the right default if `Rails.cache` is already backed by Redis.
 
 ```ruby
 Langfuse.configure do |config|
-  # Long cache in production, short in development
-  config.cache_ttl = Rails.env.production? ? 600 : 30  # 10 min vs 30 sec
+  config.cache_backend = :rails
+  config.cache_ttl = 300
+  config.cache_stale_ttl = 300
 end
 ```
 
-### 4. Use Service Objects for Complex LLM Logic
+### Prompt Fallbacks
 
-Instead of putting LLM logic in controllers:
+Use fallbacks for prompts that must not take the request path down:
 
 ```ruby
-# Good: Service object
-class ChatService
-  def initialize(user)
-    @user = user
-  end
-
-  def generate_response(message)
-    # Complex logic here
-  end
-end
-
-# In controller
-class ChatsController < ApplicationController
-  def create
-    service = ChatService.new(current_user)
-    response = service.generate_response(params[:message])
-    render json: { response: response }
-  end
-end
+prompt = Langfuse.client.get_prompt(
+  "support-answer",
+  label: "production",
+  fallback: [
+    { role: "system", content: "You are a helpful assistant." },
+    { role: "user", content: "{{question}}" }
+  ],
+  type: :chat
+)
 ```
 
-### 5. Log Prompt Fetches in Development
+### Global OTel Install
+
+If you install `Langfuse.tracer_provider` as the global provider, remember the lifecycle contract:
+
+- `Langfuse.reset!` tears down the internal provider
+- `Langfuse.shutdown` shuts it down
+- after either one, you must reinstall the provider yourself if the app still expects it globally
+
+## Operational Debugging
+
+Turn logging up when you need to see configuration and export behavior:
 
 ```ruby
-# config/environments/development.rb
-config.after_initialize do
-  Rails.logger.info "Langfuse configured with cache_ttl: #{Langfuse.configuration.cache_ttl}"
+Langfuse.configure do |config|
+  config.logger = Rails.logger
+  config.logger.level = Logger::DEBUG
 end
 ```
 
-### 6. Monitor Cache Hit Rates
-
-Add instrumentation to track cache effectiveness:
+Useful console checks:
 
 ```ruby
-# app/middleware/langfuse_metrics.rb
-class LangfuseMetrics
-  def initialize(app)
-    @app = app
-  end
-
-  def call(env)
-    status, headers, response = @app.call(env)
-
-    # Log cache stats
-    if Langfuse.client.respond_to?(:cache_stats)
-      Rails.logger.info("Langfuse cache stats: #{Langfuse.client.cache_stats}")
-    end
-
-    [status, headers, response]
-  end
-end
-```
-
-### 7. Use Tracing for LLM Observability
-
-```ruby
-# Always wrap LLM calls in observations for observability
-def generate_content(prompt_text)
-  Langfuse.propagate_attributes(user_id: current_user.id.to_s) do
-    Langfuse.observe("generate-content", input: { prompt: prompt_text }) do |span|
-      span.start_observation("openai", as_type: :generation) do |gen|
-        gen.model = "gpt-4"
-        result = call_openai(prompt_text)
-        gen.update(output: result)
-        result
-      end
-    end
-  end
-end
-```
-
-### 8. Handle Rate Limits Gracefully
-
-```ruby
-def fetch_prompt_with_retry(name, max_retries: 3)
-  retries = 0
-
-  begin
-    Langfuse.client.get_prompt(name)
-  rescue Langfuse::ApiError => e
-    retries += 1
-    if retries < max_retries
-      sleep(2 ** retries)  # Exponential backoff
-      retry
-    else
-      # Use fallback
-      Rails.logger.error("Langfuse API failed after #{max_retries} retries: #{e.message}")
-      return fallback_prompt(name)
-    end
-  end
-end
-```
-
-### 9. Organize Prompts by Feature
-
-Use naming conventions:
-
-```
-# Good naming structure
-feature-action-context
-  - email-welcome-user
-  - email-reset-password
-  - chat-support-greeting
-  - chat-support-farewell
-  - summary-document-short
-  - summary-document-detailed
-```
-
-### 10. Test Prompt Compilation Separately
-
-```ruby
-# spec/prompts/greeting_prompt_spec.rb
-RSpec.describe 'Greeting Prompt' do
-  it 'compiles correctly with all variables' do
-    prompt = mock_langfuse_prompt('greeting', 'Hello {{name}}!')
-
-    result = prompt.compile(name: 'Alice')
-
-    expect(result).to eq('Hello Alice!')
-  end
-
-  it 'handles missing variables gracefully' do
-    prompt = mock_langfuse_prompt('greeting', 'Hello {{name}}!')
-
-    # Mustache renders empty string for missing variables
-    result = prompt.compile({})
-
-    expect(result).to eq('Hello !')
-  end
-end
+Langfuse.configuration
+Langfuse.client.api_client.cache
 ```
 
 ## Troubleshooting
 
 ### Prompts Not Updating
 
-If prompts aren't updating after changes in Langfuse:
+The usual problem is stale cache, not a broken prompt API.
 
-1. **Check cache TTL**: Prompts are cached. Wait for TTL to expire or restart server
-2. **Clear cache manually**: `Langfuse.client.instance_variable_get(:@api_client).cache&.clear` (in console)
-3. **Reduce cache TTL in development**: `config.cache_ttl = 10` for faster iteration
-
-### Authentication Errors
+1. Wait for `cache_ttl` to expire.
+2. Clear the cache entry store directly if you need to inspect fresh state now.
+3. Lower `cache_ttl` in development if you are iterating quickly.
 
 ```ruby
-# Verify credentials are loaded
-Rails.application.console do
-  puts "Public Key: #{Langfuse.configuration.public_key}"
-  puts "Secret Key: #{Langfuse.configuration.secret_key&.slice(0, 8)}..."
-end
+Langfuse.client.api_client.cache&.clear
 ```
 
-### High Latency
+### Traces Missing Entirely
 
-If prompt fetches are slow:
+Check the boring stuff first:
 
-1. **Enable caching**: Ensure `cache_ttl > 0`
-2. **Use fallbacks**: Provide fallback prompts for critical paths
-3. **Warm cache on boot**: Fetch frequently-used prompts in initializer
+```ruby
+Langfuse.configuration.public_key.present?
+Langfuse.configuration.secret_key.present?
+Langfuse.configuration.base_url.present?
+```
 
-### Memory Issues
+Then check the ownership assumption:
 
-If experiencing high memory usage:
+- `Langfuse.observe(...)` should work once Langfuse is configured
+- third-party ambient OpenTelemetry spans do not go to Langfuse unless you explicitly install `Langfuse.tracer_provider`
+- `should_export_span` only runs for spans handled by Langfuse's provider
 
-1. **Reduce cache_max_size**: Default is 1000, reduce if needed
-2. **Enable cache cleanup**: Implement periodic cache cleanup in background job
+### Unexpected Spans After Global Install
 
-## See Also
-
-- [Getting Started](GETTING_STARTED.md) - Installation and first trace
-- [Configuration Reference](CONFIGURATION.md) - All config options
-- [Tracing Guide](TRACING.md) - Nested spans and OpenTelemetry
-- [Migration Guide](MIGRATION.md) - Migrating from hardcoded prompts
-- [Langfuse Documentation](https://langfuse.com/docs) - Official Langfuse docs
+That means you chose the global-provider path and now Langfuse is seeing application-wide spans. That is expected. Narrow the export path with `should_export_span` if needed, but do not confuse that with the isolated default behavior.

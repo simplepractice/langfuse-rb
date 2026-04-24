@@ -1,37 +1,43 @@
-# Langfuse Ruby SDK — Documentation
+# Langfuse Ruby SDK Documentation
 
-## Foundations
+This is the consumer hub. Start here unless you are already looking for a specific reference page.
 
-Core concepts you need before using any feature.
+## Start Here
 
-- **[Getting Started](GETTING_STARTED.md)** — Install the gem, configure credentials, send your first trace
-- **[Configuration](CONFIGURATION.md)** — All `Langfuse.configure` options: keys, timeouts, cache backends, SWR
+1. **[Getting Started](GETTING_STARTED.md)** — Rails-first first run: install, configure, fetch a prompt, send a real trace
+2. **[Prompts](PROMPTS.md)** — Fetch, compile, version, and fall back safely
+3. **[Tracing](TRACING.md)** — Root observations, nested generations, events, propagation, and OpenTelemetry ownership
+4. **[Scoring](SCORING.md)** — Add evaluation and feedback signals to traces and observations
+5. **[Rails](RAILS.md)** — Applied controller, service, job, testing, and operational patterns
 
-## Core Features
+## By Intent
 
-The three primitives of the SDK.
+### First Run
 
-- **[Prompts](PROMPTS.md)** — Fetch, compile, and version-manage text and chat prompts
-- **[Tracing](TRACING.md)** — Nested spans, RAG patterns, OpenTelemetry integration
-- **[Scoring](SCORING.md)** — Attach quality scores to traces and observations
+- **[Getting Started](GETTING_STARTED.md)** — The shortest path from zero to a visible prompt + trace
+- **[Prompts](PROMPTS.md)** — The next thing most consumers need after installation
+- **[Tracing](TRACING.md)** — The actual tracing lifecycle, without the hand-wavy OpenTelemetry claims
 
-## Evaluation
+### Instrument an App
 
-Systematic testing of LLM behavior.
+- **[Tracing](TRACING.md)** — Observation hierarchy, propagation, background jobs, explicit global install
+- **[Rails](RAILS.md)** — Rails-specific patterns for controllers, services, jobs, and tests
+- **[Scoring](SCORING.md)** — Capture quality signals after a trace exists
 
-- **[Datasets](DATASETS.md)** — Create and manage evaluation datasets
-- **[Experiments](EXPERIMENTS.md)** — Run evaluations against datasets with the experiment runner
+### Production Hardening
 
-## Production
+- **[Configuration](CONFIGURATION.md)** — Config surface, tracing ownership, export filtering, environment defaults
+- **[Caching](CACHING.md)** — Prompt cache backends, stale-while-revalidate, cache warming
+- **[Error Handling](ERROR_HANDLING.md)** — Failure modes, retry boundaries, debugging
+- **[Migration Guide](MIGRATION.md)** — Move hardcoded prompts into Langfuse-managed prompts without breaking runtime behavior
 
-Patterns for real-world deployments.
+### Evaluation
 
-- **[Caching](CACHING.md)** — In-memory and Rails.cache backends, SWR, stampede protection
-- **[Error Handling](ERROR_HANDLING.md)** — Exception types, retry behavior, fallback strategies
-- **[Rails Integration](RAILS.md)** — Initializers, controller tracing, testing helpers
-- **[Migration Guide](MIGRATION.md)** — Move from hardcoded prompts to Langfuse-managed prompts
+- **[Datasets](DATASETS.md)** — Dataset primitives and management
+- **[Experiments](EXPERIMENTS.md)** — Experiment runner workflows
 
-## Reference
+### Reference
 
-- **[API Reference](API_REFERENCE.md)** — Complete method reference for every public class
-- **[Architecture](ARCHITECTURE.md)** — Internal design: layers, threading, cache architecture
+- **[API Reference](API_REFERENCE.md)** — Exact public signatures and types
+- **[Configuration](CONFIGURATION.md)** — Option-by-option config reference
+- **[Architecture](ARCHITECTURE.md)** — Implementation and internal design reference, not required for the first run
