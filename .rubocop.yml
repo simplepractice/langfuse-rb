@@ -9,7 +9,7 @@ AllCops:
     - 'vendor/**/*'
     - 'tmp/**/*'
     - 'bin/**/*'
-    - 'scripts/**/*'
+    - 'scratchpad/**/*'
 
 # Style preferences
 Style/StringLiterals:

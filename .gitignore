@@ -36,5 +36,5 @@ langfuse-python/
 *.env
 
 # Use for testing against UI
-scripts/*
-!scripts/.gitkeep
+scratchpad/*
+!scratchpad/.gitkeep
