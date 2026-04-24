@@ -68,6 +68,8 @@ end
 - [Tracing](docs/TRACING.md)
 - [Scoring](docs/SCORING.md)
 - [Rails Patterns](docs/RAILS.md)
+- [Agent Skills](https://github.com/langfuse/skills)
+- [Agent Skill Docs](https://langfuse.com/docs/api-and-data-platform/features/agent-skill)
 
 ## License
 
