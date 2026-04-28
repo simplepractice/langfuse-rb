@@ -474,6 +474,7 @@ For Langfuse message placeholders:
 - `placeholder_name: [{ role: :user, content: "..." }]` inserts those messages.
 - `placeholder_name: []` skips the placeholder.
 - Omitting a placeholder keeps `{ type: "placeholder", name: "..." }` in the output and logs a warning.
+- Malformed placeholder values raise `ArgumentError` during compile.
 - Extra message fields are preserved when placeholder messages are inserted.
 
 **Example:**

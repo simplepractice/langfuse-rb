@@ -258,36 +258,36 @@ RSpec.describe Langfuse::ChatPromptClient do
                              ])
       end
 
-      it "degrades non-array placeholder values to a synthetic message and warns" do
-        expect(Langfuse.configuration.logger).to receive(:warn)
-          .with(/Placeholder 'history' must contain an array of chat messages/)
-
-        result = client.compile(role: "helpful", task: "billing", history: "not a list")
-
-        expect(result).to eq([
-                               { role: :system, content: "You are a helpful assistant." },
-                               { role: :not_given, content: "not a list" },
-                               { role: :user, content: "Help me with billing." }
-                             ])
+      it "raises for non-array placeholder values" do
+        expect do
+          client.compile(role: "helpful", task: "billing", history: "not a list")
+        end.to raise_error(
+          ArgumentError,
+          "Placeholder 'history' must contain an array of chat message hashes, got String."
+        )
       end
 
-      it "preserves valid messages and degrades malformed array entries" do
+      it "raises for malformed placeholder array entries" do
         placeholder_value = [
           "invalid message",
           { "role" => "user", "content" => "valid {{task}} message" }
         ]
 
-        expect(Langfuse.configuration.logger).to receive(:warn)
-          .with(/Placeholder 'history' should contain chat message hashes/)
+        expect do
+          client.compile(role: "helpful", task: "billing", history: placeholder_value)
+        end.to raise_error(
+          ArgumentError,
+          "Placeholder 'history' must contain an array of chat message hashes with role and content fields."
+        )
+      end
 
-        result = client.compile(role: "helpful", task: "billing", history: placeholder_value)
-
-        expect(result).to eq([
-                               { role: :system, content: "You are a helpful assistant." },
-                               { role: :not_given, content: placeholder_value.to_s },
-                               { role: :user, content: "valid billing message" },
-                               { role: :user, content: "Help me with billing." }
-                             ])
+      it "raises when placeholder messages are missing role or content" do
+        expect do
+          client.compile(role: "helpful", task: "billing", history: [{ role: :user }])
+        end.to raise_error(
+          ArgumentError,
+          "Placeholder 'history' must contain an array of chat message hashes with role and content fields."
+        )
       end
 
       it "strips message type metadata from compiled normal messages" do

@@ -63,13 +63,14 @@ module Langfuse
     # Compile the chat prompt with variable substitution and message placeholders
     #
     # Returns an array of message hashes with roles and compiled content.
-    # Placeholder entries are resolved from keyword arguments using the
-    # Langfuse Python SDK semantics: arrays are expanded, empty arrays are
-    # skipped, unresolved placeholders stay in the output, and malformed values
-    # degrade to a synthetic message with a warning.
+    # Placeholder entries are resolved from keyword arguments: arrays are
+    # expanded, empty arrays are skipped, unresolved placeholders stay in the
+    # output, and malformed values raise before invalid messages are sent to
+    # an LLM provider.
     #
     # @param kwargs [Hash] Variables and placeholder values to compile
     # @return [Array<Hash>] Array of compiled messages and unresolved placeholders
+    # @raise [ArgumentError] if a placeholder value is malformed
     #
     # @example
     #   chat_prompt.compile(name: "Alice", topic: "Ruby")
@@ -138,12 +139,10 @@ module Langfuse
       return if value.is_a?(Array) && value.empty?
 
       unless value.is_a?(Array)
-        warn_msg("Placeholder '#{name}' must contain an array of chat messages, got #{value.class}.")
-        compiled << not_given(value.to_s)
-        return
+        raise ArgumentError, "Placeholder '#{name}' must contain an array of chat message hashes, got #{value.class}."
       end
 
-      value.each { |entry| compiled << placeholder_message(entry, variables, name, value) }
+      value.each { |entry| compiled << placeholder_message(entry, variables, name) }
     end
 
     # @api private
@@ -155,15 +154,21 @@ module Langfuse
     end
 
     # @api private
-    def placeholder_message(message, variables, name, raw_value)
+    def placeholder_message(message, variables, name)
       unless message.is_a?(Hash)
-        warn_msg("Placeholder '#{name}' should contain chat message hashes. Appended as string.")
-        return not_given(raw_value.to_s)
+        raise ArgumentError,
+              "Placeholder '#{name}' must contain an array of chat message hashes with role and content fields."
       end
+
       normalized = symbolize_keys(message)
+      unless valid_placeholder_message?(normalized)
+        raise ArgumentError,
+              "Placeholder '#{name}' must contain an array of chat message hashes with role and content fields."
+      end
+
       normalized.merge(
-        role: normalize_role(normalized.fetch(:role, "NOT_GIVEN")),
-        content: render(normalized.fetch(:content, ""), variables)
+        role: normalize_role(normalized[:role]),
+        content: render(normalized[:content] || "", variables)
       )
     end
 
@@ -173,8 +178,11 @@ module Langfuse
     end
 
     # @api private
-    def not_given(content)
-      { role: :not_given, content: content }
+    def valid_placeholder_message?(message)
+      message.is_a?(Hash) &&
+        message.key?(:role) &&
+        !message[:role].to_s.empty? &&
+        message.key?(:content)
     end
 
     # @api private

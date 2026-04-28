@@ -137,11 +137,12 @@ messages = prompt.compile(
 # ]
 ```
 
-Placeholder behavior follows the Langfuse Python SDK:
+Placeholder behavior:
 
 - Passing an array inserts those messages in place and compiles variables inside them.
 - Passing an empty array skips the placeholder.
 - Omitting the placeholder keeps `{ type: "placeholder", name: "..." }` in the compiled output and logs a warning.
+- Passing malformed placeholder values raises `ArgumentError` during compile instead of emitting invalid model messages.
 - Placeholder messages preserve extra fields such as `tool_calls`.
 
 ### Using with LLM Libraries
