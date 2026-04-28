@@ -289,6 +289,18 @@ RSpec.describe Langfuse::ChatPromptClient do
                                { role: :user, content: "Help me with billing." }
                              ])
       end
+
+      it "strips message type metadata from compiled normal messages" do
+        data = prompt_data.merge(
+          "prompt" => [
+            { "type" => "message", "role" => "user", "content" => "Hi {{name}}" }
+          ]
+        )
+
+        result = described_class.new(data).compile(name: "Ada")
+
+        expect(result).to eq([{ role: :user, content: "Hi Ada" }])
+      end
     end
 
     context "with complex templates" do

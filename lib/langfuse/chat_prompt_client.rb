@@ -112,7 +112,7 @@ module Langfuse
     # @param variables [Hash] Variables to substitute
     # @return [Hash] Compiled message with :role and :content as symbols
     def compile_message(normalized, variables)
-      normalized.merge(
+      normalized.except(:type).merge(
         role: normalize_role(normalized[:role]),
         content: render(normalized[:content] || "", variables)
       )
