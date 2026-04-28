@@ -20,6 +20,8 @@ module Langfuse
   #   chat_prompt.labels    # => ["production"]
   #
   class ChatPromptClient
+    PLACEHOLDER_TYPE = "placeholder"
+
     # @return [String] Prompt name
     attr_reader :name
 
@@ -76,17 +78,18 @@ module Langfuse
     #   #   { role: :user, content: "Hello Alice, let's discuss Ruby!" }
     #   # ]
     def compile(**kwargs)
-      unresolved_placeholders = []
-      compiled_messages = prompt.flat_map do |message|
-        if placeholder_message?(message)
-          compile_placeholder(message, kwargs, unresolved_placeholders)
+      unresolved = []
+      compiled = []
+      prompt.each do |message|
+        normalized = symbolize_keys(message)
+        if normalized[:type].to_s == PLACEHOLDER_TYPE
+          append_placeholder(normalized, kwargs, compiled, unresolved)
         else
-          [compile_message(message, kwargs)]
+          compiled << compile_message(normalized, kwargs)
         end
       end
-
-      warn_unresolved_placeholders(unresolved_placeholders)
-      compiled_messages
+      warn_unresolved(unresolved)
+      compiled
     end
 
     private
@@ -105,125 +108,90 @@ module Langfuse
 
     # Compile a single role/content message with variable substitution
     #
-    # @param message [Hash] The message with role and content
+    # @param normalized [Hash] Symbolized message hash
     # @param variables [Hash] Variables to substitute
     # @return [Hash] Compiled message with :role and :content as symbols
-    def compile_message(message, variables)
-      normalized = symbolize_keys(message)
-      content = normalized[:content] || ""
-      compiled_content = variables.empty? ? content : PromptRenderer.render(content, variables)
-
-      normalized.except(:type).merge(
+    def compile_message(normalized, variables)
+      normalized.merge(
         role: normalize_role(normalized[:role]),
-        content: compiled_content
+        content: render(normalized[:content] || "", variables)
       )
     end
 
     # @api private
-    def compile_placeholder(message, variables, unresolved_placeholders)
-      placeholder_name = placeholder_name(message)
-      found, value = placeholder_value(variables, placeholder_name)
+    def append_placeholder(message, variables, compiled, unresolved)
+      name = message[:name].to_s
+      found, value = lookup_placeholder(variables, name)
+      return append_unresolved(name, compiled, unresolved) unless found
 
-      unless found
-        unresolved_placeholders << placeholder_name
-        return [placeholder_entry(placeholder_name)]
+      expand_placeholder(name, value, variables, compiled)
+    end
+
+    # @api private
+    def append_unresolved(name, compiled, unresolved)
+      unresolved << name
+      compiled << { type: PLACEHOLDER_TYPE, name: name }
+    end
+
+    # @api private
+    def expand_placeholder(name, value, variables, compiled)
+      return if value.is_a?(Array) && value.empty?
+
+      unless value.is_a?(Array)
+        warn_msg("Placeholder '#{name}' must contain an array of chat messages, got #{value.class}.")
+        compiled << not_given(value.to_s)
+        return
       end
 
-      return [] if value.is_a?(Array) && value.empty?
-      return malformed_placeholder_value(placeholder_name, value) unless value.is_a?(Array)
-
-      value.flat_map do |placeholder_message|
-        compile_placeholder_message(placeholder_name, placeholder_message, value, variables)
-      end
+      value.each { |entry| compiled << placeholder_message(entry, variables, name, value) }
     end
 
     # @api private
-    def compile_placeholder_message(placeholder_name, message, placeholder_value, variables)
-      return malformed_placeholder_message(placeholder_name, placeholder_value) unless message.is_a?(Hash)
-
-      normalized = symbolize_keys(message)
-      content = normalized.fetch(:content, "")
-      compiled_content = variables.empty? ? content : PromptRenderer.render(content, variables)
-
-      [
-        normalized.merge(
-          role: normalize_role(normalized.fetch(:role, "NOT_GIVEN")),
-          content: compiled_content
-        )
-      ]
-    end
-
-    # @api private
-    def malformed_placeholder_value(placeholder_name, value)
-      warn_placeholder("Placeholder '#{placeholder_name}' must contain an array of chat messages, got #{value.class}.")
-      [not_given_message(value.to_s)]
-    end
-
-    # @api private
-    def malformed_placeholder_message(placeholder_name, placeholder_value)
-      warn_placeholder(
-        "Placeholder '#{placeholder_name}' should contain chat message hashes. Appended as string."
-      )
-      [not_given_message(placeholder_value.to_s)]
-    end
-
-    # @api private
-    def placeholder_message?(message)
-      message.is_a?(Hash) && value_for(message, :type).to_s == "placeholder"
-    end
-
-    # @api private
-    def placeholder_name(message)
-      value_for(message, :name).to_s
-    end
-
-    # @api private
-    def placeholder_entry(name)
-      { type: "placeholder", name: name }
-    end
-
-    # @api private
-    def not_given_message(content)
-      { role: :not_given, content: content }
-    end
-
-    # @api private
-    def placeholder_value(variables, name)
-      symbol_name = name.to_sym
+    def lookup_placeholder(variables, name)
+      return [true, variables[name.to_sym]] if variables.key?(name.to_sym)
       return [true, variables[name]] if variables.key?(name)
-      return [true, variables[symbol_name]] if variables.key?(symbol_name)
 
       [false, nil]
     end
 
     # @api private
-    def warn_unresolved_placeholders(names)
-      return if names.empty?
-
-      warn_placeholder(
-        "Placeholders #{names.inspect} have not been resolved. Pass them as keyword arguments to compile()."
+    def placeholder_message(message, variables, name, raw_value)
+      unless message.is_a?(Hash)
+        warn_msg("Placeholder '#{name}' should contain chat message hashes. Appended as string.")
+        return not_given(raw_value.to_s)
+      end
+      normalized = symbolize_keys(message)
+      normalized.merge(
+        role: normalize_role(normalized.fetch(:role, "NOT_GIVEN")),
+        content: render(normalized.fetch(:content, ""), variables)
       )
     end
 
     # @api private
-    def warn_placeholder(message)
-      return unless Langfuse.respond_to?(:configuration)
+    def render(content, variables)
+      variables.empty? ? content : PromptRenderer.render(content, variables)
+    end
 
+    # @api private
+    def not_given(content)
+      { role: :not_given, content: content }
+    end
+
+    # @api private
+    def warn_unresolved(names)
+      return if names.empty?
+
+      warn_msg("Placeholders #{names.inspect} have not been resolved. Pass them as keyword arguments to compile().")
+    end
+
+    # @api private
+    def warn_msg(message)
       Langfuse.configuration.logger.warn("Langfuse: #{message}")
     end
 
     # @api private
     def symbolize_keys(hash)
-      hash.transform_keys do |key|
-        key.to_sym
-      rescue StandardError
-        key
-      end
-    end
-
-    # @api private
-    def value_for(hash, key)
-      hash[key.to_s] || hash[key.to_sym]
+      hash.transform_keys(&:to_sym)
     end
 
     # Normalize role to symbol

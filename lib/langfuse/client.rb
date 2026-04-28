@@ -867,26 +867,17 @@ module Langfuse
 
       # Normalize chat messages to use string keys
       prompt.map do |message|
-        normalized = normalize_chat_item_keys(message)
-        next placeholder_prompt_content(normalized) if normalized["type"] == "placeholder"
+        normalized = message.transform_keys(&:to_s)
+        next placeholder_prompt_content(normalized) if normalized["type"] == ChatPromptClient::PLACEHOLDER_TYPE
 
         normalize_chat_message_content(normalized)
       end
     end
 
     # @api private
-    def normalize_chat_item_keys(message)
-      message.transform_keys do |key|
-        key.to_s
-      rescue StandardError
-        key
-      end
-    end
-
-    # @api private
     def placeholder_prompt_content(message)
       {
-        "type" => "placeholder",
+        "type" => ChatPromptClient::PLACEHOLDER_TYPE,
         "name" => message["name"].to_s
       }
     end
