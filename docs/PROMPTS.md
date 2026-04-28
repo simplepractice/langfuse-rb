@@ -238,14 +238,14 @@ prompt.compile(premium: false)
 # => ""
 ```
 
-### HTML Escaping
+### Raw Variable Substitution
 
-Mustache escapes HTML by default. Use triple braces for raw output:
+Langfuse prompt compilation preserves variable values as raw strings, matching the JavaScript and Python SDKs:
 
 ```ruby
-# Template: "{{safe}} vs {{{unsafe}}}"
-prompt.compile(safe: "<b>Bold</b>", unsafe: "<b>Bold</b>")
-# => "&lt;b&gt;Bold&lt;/b&gt; vs <b>Bold</b>"
+# Template: "{{html}} with {{schema}}"
+prompt.compile(html: "<b>Bold</b>", schema: '{"type":"object"}')
+# => "<b>Bold</b> with {\"type\":\"object\"}"
 ```
 
 ### Complex Example

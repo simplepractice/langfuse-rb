@@ -185,21 +185,29 @@ RSpec.describe Langfuse::TextPromptClient do
     end
 
     context "with special characters" do
-      it "escapes HTML characters by default" do
+      it "preserves HTML-like content with normal variable tags" do
         data = prompt_data.merge("prompt" => "Message: {{message}}")
         client = described_class.new(data)
         result = client.compile(message: "<script>alert('hi')</script>")
-        expect(result).to eq("Message: &lt;script&gt;alert(&#39;hi&#39;)&lt;/script&gt;")
+        expect(result).to eq("Message: <script>alert('hi')</script>")
       end
 
-      it "escapes quotes but preserves newlines" do
+      it "preserves quotes and newlines" do
         data = prompt_data.merge("prompt" => "Text: {{text}}")
         client = described_class.new(data)
         result = client.compile(text: "Line 1\nLine 2\n\"quoted\"")
-        expect(result).to eq("Text: Line 1\nLine 2\n&quot;quoted&quot;")
+        expect(result).to eq("Text: Line 1\nLine 2\n\"quoted\"")
       end
 
-      it "allows unescaped output with triple braces" do
+      it "preserves JSON-like values" do
+        data = prompt_data.merge("prompt" => "Schema: {{schema}}")
+        client = described_class.new(data)
+        result = client.compile(schema: '{"title":"<name>","required":["id"]}')
+
+        expect(result).to eq('Schema: {"title":"<name>","required":["id"]}')
+      end
+
+      it "keeps triple braces compatible" do
         data = prompt_data.merge("prompt" => "Message: {{{message}}}")
         client = described_class.new(data)
         result = client.compile(message: "<script>alert('hi')</script>")

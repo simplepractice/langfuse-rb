@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "mustache"
+require_relative "prompt_renderer"
 
 module Langfuse
   # Chat prompt client for compiling chat prompts with variable substitution
@@ -100,7 +100,7 @@ module Langfuse
     # @return [Hash] Compiled message with :role and :content as symbols
     def compile_message(message, variables)
       content = message["content"] || ""
-      compiled_content = variables.empty? ? content : Mustache.render(content, variables)
+      compiled_content = variables.empty? ? content : PromptRenderer.render(content, variables)
 
       {
         role: normalize_role(message["role"]),

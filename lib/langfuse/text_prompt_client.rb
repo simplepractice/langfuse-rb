@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "mustache"
+require_relative "prompt_renderer"
 
 module Langfuse
   # Text prompt client for compiling text prompts with variable substitution
@@ -69,7 +69,7 @@ module Langfuse
     def compile(**kwargs)
       return prompt if kwargs.empty?
 
-      Mustache.render(prompt, kwargs)
+      PromptRenderer.render(prompt, kwargs)
     end
 
     private

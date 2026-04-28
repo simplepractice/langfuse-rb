@@ -297,7 +297,7 @@ RSpec.describe Langfuse::ChatPromptClient do
     end
 
     context "with special characters" do
-      it "escapes HTML characters by default" do
+      it "preserves HTML-like content with normal variable tags" do
         data = prompt_data.dup
         data["prompt"] = [
           { "role" => "user", "content" => "Message: {{message}}" }
@@ -306,10 +306,22 @@ RSpec.describe Langfuse::ChatPromptClient do
 
         result = client.compile(message: "<script>alert('xss')</script>")
 
-        expect(result[0][:content]).to eq("Message: &lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;")
+        expect(result[0][:content]).to eq("Message: <script>alert('xss')</script>")
       end
 
-      it "allows unescaped output with triple braces" do
+      it "preserves JSON-like values in message content" do
+        data = prompt_data.dup
+        data["prompt"] = [
+          { "role" => "user", "content" => "Schema: {{schema}}" }
+        ]
+        client = described_class.new(data)
+
+        result = client.compile(schema: '{"title":"<name>","required":["id"]}')
+
+        expect(result[0][:content]).to eq('Schema: {"title":"<name>","required":["id"]}')
+      end
+
+      it "keeps triple braces compatible" do
         data = prompt_data.dup
         data["prompt"] = [
           { "role" => "user", "content" => "HTML: {{{html}}}" }
