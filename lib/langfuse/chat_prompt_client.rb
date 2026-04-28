@@ -40,6 +40,15 @@ module Langfuse
     # @return [Array<Hash>] Array of message hashes and placeholder entries
     attr_reader :prompt
 
+    # @return [String] Prompt type
+    attr_reader :type
+
+    # @return [String, nil] Optional commit message for this prompt version
+    attr_reader :commit_message
+
+    # @return [Hash, nil] Optional dependency resolution graph for composed prompts
+    attr_reader :resolution_graph
+
     # @return [Boolean] Whether this client uses caller-provided fallback content
     attr_reader :is_fallback
 
@@ -57,6 +66,9 @@ module Langfuse
       @labels = prompt_data["labels"] || []
       @tags = prompt_data["tags"] || []
       @config = prompt_data["config"] || {}
+      @type = prompt_data["type"] || "chat"
+      @commit_message = prompt_data["commitMessage"] || prompt_data["commit_message"]
+      @resolution_graph = prompt_data["resolutionGraph"] || prompt_data["resolution_graph"]
       @is_fallback = is_fallback
     end
 

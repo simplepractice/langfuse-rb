@@ -225,7 +225,9 @@ RSpec.describe Langfuse::Client do
           "prompt" => "Hello {{name}}!",
           "labels" => ["production"],
           "tags" => ["greetings"],
-          "config" => {}
+          "config" => {},
+          "commitMessage" => "Initial greeting",
+          "resolutionGraph" => { "nodes" => [{ "name" => "shared-greeting" }] }
         }
       end
 
@@ -248,6 +250,9 @@ RSpec.describe Langfuse::Client do
         expect(result.name).to eq("greeting")
         expect(result.version).to eq(1)
         expect(result.prompt).to eq("Hello {{name}}!")
+        expect(result.type).to eq("text")
+        expect(result.commit_message).to eq("Initial greeting")
+        expect(result.resolution_graph).to eq({ "nodes" => [{ "name" => "shared-greeting" }] })
         expect(result.is_fallback).to be(false)
       end
     end
@@ -265,7 +270,9 @@ RSpec.describe Langfuse::Client do
           ],
           "labels" => ["production"],
           "tags" => ["chat"],
-          "config" => {}
+          "config" => {},
+          "commitMessage" => "Initial assistant",
+          "resolutionGraph" => { "nodes" => [{ "name" => "shared-assistant" }] }
         }
       end
 
@@ -288,6 +295,9 @@ RSpec.describe Langfuse::Client do
         expect(result.name).to eq("chat-assistant")
         expect(result.version).to eq(2)
         expect(result.prompt).to be_an(Array)
+        expect(result.type).to eq("chat")
+        expect(result.commit_message).to eq("Initial assistant")
+        expect(result.resolution_graph).to eq({ "nodes" => [{ "name" => "shared-assistant" }] })
         expect(result.is_fallback).to be(false)
       end
 

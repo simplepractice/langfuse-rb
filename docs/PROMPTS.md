@@ -44,6 +44,9 @@ prompt.labels     # => ["production"]
 prompt.tags       # => ["marketing", "seo"]
 prompt.config     # => { "temperature" => 0.7, "model" => "gpt-4" }
 prompt.prompt     # => "Write a {{tone}} product description for {{product_name}}..."
+prompt.type       # => "text"
+prompt.commit_message  # => "Improve product tone"
+prompt.resolution_graph # => nil
 prompt.is_fallback # => false
 ```
 

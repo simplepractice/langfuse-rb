@@ -19,7 +19,9 @@ RSpec.describe Langfuse::ChatPromptClient do
       "type" => "chat",
       "labels" => %w[production support],
       "tags" => %w[customer-facing critical],
-      "config" => { "temperature" => 0.7, "max_tokens" => 500 }
+      "config" => { "temperature" => 0.7, "max_tokens" => 500 },
+      "commitMessage" => "Tune assistant tone",
+      "resolutionGraph" => { "nodes" => [{ "name" => "shared-chat-rules" }] }
     }
   end
 
@@ -69,6 +71,34 @@ RSpec.describe Langfuse::ChatPromptClient do
       expect(client.config).to eq({ "temperature" => 0.7, "max_tokens" => 500 })
     end
 
+    it "sets the type" do
+      client = described_class.new(prompt_data)
+      expect(client.type).to eq("chat")
+    end
+
+    it "sets the commit message" do
+      client = described_class.new(prompt_data)
+      expect(client.commit_message).to eq("Tune assistant tone")
+    end
+
+    it "sets the resolution graph" do
+      client = described_class.new(prompt_data)
+      expect(client.resolution_graph).to eq({ "nodes" => [{ "name" => "shared-chat-rules" }] })
+    end
+
+    it "accepts Ruby-style metadata keys" do
+      data = prompt_data.merge(
+        "commitMessage" => nil,
+        "resolutionGraph" => nil,
+        "commit_message" => "Ruby key",
+        "resolution_graph" => { "nodes" => [] }
+      )
+      client = described_class.new(data)
+
+      expect(client.commit_message).to eq("Ruby key")
+      expect(client.resolution_graph).to eq({ "nodes" => [] })
+    end
+
     it "defaults labels to empty array when not provided" do
       data = prompt_data.dup.tap { |d| d.delete("labels") }
       client = described_class.new(data)
@@ -85,6 +115,19 @@ RSpec.describe Langfuse::ChatPromptClient do
       data = prompt_data.dup.tap { |d| d.delete("config") }
       client = described_class.new(data)
       expect(client.config).to eq({})
+    end
+
+    it "defaults optional metadata when not provided" do
+      data = prompt_data.dup.tap do |d|
+        d.delete("type")
+        d.delete("commitMessage")
+        d.delete("resolutionGraph")
+      end
+      client = described_class.new(data)
+
+      expect(client.type).to eq("chat")
+      expect(client.commit_message).to be_nil
+      expect(client.resolution_graph).to be_nil
     end
 
     context "with invalid prompt data" do
