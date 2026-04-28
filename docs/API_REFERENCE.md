@@ -434,7 +434,7 @@ Returned by `get_prompt` for text prompts.
 | `tags`    | Array<String> | Tags                   |
 | `config`  | Hash          | Prompt config hash returned by Langfuse |
 | `prompt`  | String        | Raw template           |
-| `type`    | String        | Prompt type (`"text"` or `"chat"`) |
+| `type`    | String        | Prompt type (`"text"`) |
 | `commit_message` | String, nil | Commit message for the prompt version |
 | `resolution_graph` | Hash, nil | Dependency resolution graph for composed prompts when returned by Langfuse |
 | `is_fallback` | Boolean  | Whether the client uses caller-provided fallback content |
@@ -460,7 +460,7 @@ message = prompt.compile(name: "Alice", time: "morning")
 
 Returned by `get_prompt` for chat prompts.
 
-**Properties:** Same as `TextPromptClient`
+**Properties:** Same as `TextPromptClient`, except `prompt` is an `Array<Hash>` and `type` is `"chat"`.
 
 **Methods:**
 
