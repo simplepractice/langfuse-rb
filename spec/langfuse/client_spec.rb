@@ -248,6 +248,7 @@ RSpec.describe Langfuse::Client do
         expect(result.name).to eq("greeting")
         expect(result.version).to eq(1)
         expect(result.prompt).to eq("Hello {{name}}!")
+        expect(result.is_fallback).to be(false)
       end
     end
 
@@ -287,6 +288,7 @@ RSpec.describe Langfuse::Client do
         expect(result.name).to eq("chat-assistant")
         expect(result.version).to eq(2)
         expect(result.prompt).to be_an(Array)
+        expect(result.is_fallback).to be(false)
       end
     end
 
@@ -509,6 +511,7 @@ RSpec.describe Langfuse::Client do
           expect(result.name).to eq("missing")
           expect(result.version).to eq(0)
           expect(result.tags).to include("fallback")
+          expect(result.is_fallback).to be(true)
         end
 
         it "raises error when no fallback provided" do
@@ -583,6 +586,7 @@ RSpec.describe Langfuse::Client do
           expect(result.name).to eq("chat-bot")
           expect(result.version).to eq(0)
           expect(result.tags).to include("fallback")
+          expect(result.is_fallback).to be(true)
         end
       end
 

@@ -38,11 +38,15 @@ module Langfuse
     # @return [String] Raw prompt template string
     attr_reader :prompt
 
+    # @return [Boolean] Whether this client uses caller-provided fallback content
+    attr_reader :is_fallback
+
     # Initialize a new text prompt client
     #
     # @param prompt_data [Hash] The prompt data from the API
+    # @param is_fallback [Boolean] Whether this client wraps caller-provided fallback content
     # @raise [ArgumentError] if prompt data is invalid
-    def initialize(prompt_data)
+    def initialize(prompt_data, is_fallback: false)
       validate_prompt_data!(prompt_data)
 
       @name = prompt_data["name"]
@@ -51,6 +55,7 @@ module Langfuse
       @labels = prompt_data["labels"] || []
       @tags = prompt_data["tags"] || []
       @config = prompt_data["config"] || {}
+      @is_fallback = is_fallback
     end
 
     # Compile the prompt with variable substitution
