@@ -434,6 +434,7 @@ Returned by `get_prompt` for text prompts.
 | `tags`    | Array<String> | Tags                   |
 | `config`  | Hash          | Prompt config hash returned by Langfuse |
 | `prompt`  | String        | Raw template           |
+| `is_fallback` | Boolean  | Whether the client uses caller-provided fallback content |
 
 **Methods:**
 

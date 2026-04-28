@@ -302,11 +302,9 @@ module Langfuse
     # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def self.add_prompt_attributes(otel_attributes, prompt)
       return unless prompt
+      return if fallback_prompt?(prompt)
 
-      # Handle hash-like prompts
       if prompt.is_a?(Hash) || prompt.respond_to?(:[])
-        return if prompt[:is_fallback] || prompt["is_fallback"]
-
         otel_attributes[OBSERVATION_PROMPT_NAME] = prompt[:name] || prompt["name"]
         otel_attributes[OBSERVATION_PROMPT_VERSION] = prompt[:version] || prompt["version"]
       # Handle objects with name/version methods (already converted in Trace#generation)
@@ -315,6 +313,16 @@ module Langfuse
         otel_attributes[OBSERVATION_PROMPT_VERSION] = prompt.version
       end
     end
+    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+
+    # @api private
+    def self.fallback_prompt?(prompt)
+      return true if prompt.respond_to?(:is_fallback) && prompt.is_fallback
+      return false unless prompt.is_a?(Hash)
+
+      !!get_hash_value(prompt, :is_fallback)
+    end
+    private_class_method :fallback_prompt?
   end
-  # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/ModuleLength
+  # rubocop:enable Metrics/ModuleLength
 end

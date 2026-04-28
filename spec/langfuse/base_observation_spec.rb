@@ -470,6 +470,25 @@ RSpec.describe Langfuse::BaseObservation do
       expect(span_data.attributes["langfuse.observation.prompt.name"]).to eq("test_prompt")
       expect(span_data.attributes["langfuse.observation.prompt.version"]).to eq(42)
     end
+
+    it "skips fallback prompt clients when starting observations" do
+      prompt = Langfuse::TextPromptClient.new(
+        {
+          "name" => "fallback_prompt",
+          "version" => 0,
+          "prompt" => "Hello {{name}}!",
+          "labels" => [],
+          "tags" => ["fallback"],
+          "config" => {}
+        },
+        is_fallback: true
+      )
+      child = observation.start_observation("test", { prompt: prompt }, as_type: :generation)
+      span_data = child.otel_span.to_span_data
+
+      expect(span_data.attributes).not_to have_key("langfuse.observation.prompt.name")
+      expect(span_data.attributes).not_to have_key("langfuse.observation.prompt.version")
+    end
   end
 
   describe "Generation setters" do
@@ -534,6 +553,26 @@ RSpec.describe Langfuse::BaseObservation do
     it "returns self from update" do
       result = generation.update({ output: "test" })
       expect(result).to eq(generation)
+    end
+
+    it "skips fallback prompt clients when updating observations" do
+      prompt = Langfuse::TextPromptClient.new(
+        {
+          "name" => "fallback_prompt",
+          "version" => 0,
+          "prompt" => "Hello {{name}}!",
+          "labels" => [],
+          "tags" => ["fallback"],
+          "config" => {}
+        },
+        is_fallback: true
+      )
+
+      generation.update({ prompt: prompt })
+      span_data = generation.otel_span.to_span_data
+
+      expect(span_data.attributes).not_to have_key("langfuse.observation.prompt.name")
+      expect(span_data.attributes).not_to have_key("langfuse.observation.prompt.version")
     end
   end
 

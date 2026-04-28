@@ -35,6 +35,16 @@ RSpec.describe Langfuse::TextPromptClient do
       expect(client.prompt).to eq("Hello {{name}}!")
     end
 
+    it "defaults is_fallback to false" do
+      client = described_class.new(prompt_data)
+      expect(client.is_fallback).to be(false)
+    end
+
+    it "sets is_fallback when explicitly provided" do
+      client = described_class.new(prompt_data, is_fallback: true)
+      expect(client.is_fallback).to be(true)
+    end
+
     it "sets the labels" do
       client = described_class.new(prompt_data)
       expect(client.labels).to eq(["production"])

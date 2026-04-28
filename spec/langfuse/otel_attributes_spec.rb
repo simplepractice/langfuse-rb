@@ -461,6 +461,47 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(result).not_to have_key("langfuse.observation.prompt.version")
     end
 
+    it "skips prompt linking for fallback prompt clients" do
+      prompt = Langfuse::TextPromptClient.new(
+        {
+          "name" => "greeting",
+          "version" => 0,
+          "prompt" => "Hello {{name}}!",
+          "labels" => [],
+          "tags" => ["fallback"],
+          "config" => {}
+        },
+        is_fallback: true
+      )
+      attrs = Langfuse::Types::GenerationAttributes.new(model: "gpt-4", prompt: prompt)
+
+      result = described_class.create_observation_attributes("generation", attrs)
+
+      expect(result).not_to have_key("langfuse.observation.prompt.name")
+      expect(result).not_to have_key("langfuse.observation.prompt.version")
+    end
+
+    it "handles prompt clients when is_fallback is false" do
+      prompt = Langfuse::TextPromptClient.new(
+        {
+          "name" => "greeting",
+          "version" => 2,
+          "prompt" => "Hello {{name}}!",
+          "labels" => [],
+          "tags" => [],
+          "config" => {}
+        }
+      )
+      attrs = Langfuse::Types::GenerationAttributes.new(model: "gpt-4", prompt: prompt)
+
+      result = described_class.create_observation_attributes("generation", attrs)
+
+      expect(result).to include(
+        "langfuse.observation.prompt.name" => "greeting",
+        "langfuse.observation.prompt.version" => 2
+      )
+    end
+
     it "handles prompt with string keys" do
       attrs = {
         model: "gpt-4",

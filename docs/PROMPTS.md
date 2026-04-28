@@ -44,6 +44,7 @@ prompt.labels     # => ["production"]
 prompt.tags       # => ["marketing", "seo"]
 prompt.config     # => { "temperature" => 0.7, "model" => "gpt-4" }
 prompt.prompt     # => "Write a {{tone}} product description for {{product_name}}..."
+prompt.is_fallback # => false
 ```
 
 ### Compiling Text Prompts

@@ -823,9 +823,9 @@ module Langfuse
 
       case type
       when :text
-        TextPromptClient.new(prompt_data)
+        TextPromptClient.new(prompt_data, is_fallback: true)
       when :chat
-        ChatPromptClient.new(prompt_data)
+        ChatPromptClient.new(prompt_data, is_fallback: true)
       end
     end
 
