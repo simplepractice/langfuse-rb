@@ -205,6 +205,92 @@ RSpec.describe Langfuse::ChatPromptClient do
       end
     end
 
+    context "with message placeholders" do
+      let(:placeholder_prompt_data) do
+        prompt_data.merge(
+          "prompt" => [
+            { "role" => "system", "content" => "You are a {{role}} assistant." },
+            { "type" => "placeholder", "name" => "history" },
+            { "role" => "user", "content" => "Help me with {{task}}." }
+          ]
+        )
+      end
+
+      let(:client) { described_class.new(placeholder_prompt_data) }
+
+      it "inserts placeholder messages and compiles their content" do
+        result = client.compile(
+          role: "helpful",
+          task: "billing",
+          history: [
+            { role: :user, content: "Show {{task}} context" },
+            { role: :assistant, content: "Prior answer", tool_calls: [{ id: "call_1" }] }
+          ]
+        )
+
+        expect(result).to eq([
+                               { role: :system, content: "You are a helpful assistant." },
+                               { role: :user, content: "Show billing context" },
+                               { role: :assistant, content: "Prior answer", tool_calls: [{ id: "call_1" }] },
+                               { role: :user, content: "Help me with billing." }
+                             ])
+      end
+
+      it "skips placeholders resolved to empty arrays" do
+        result = client.compile(role: "helpful", task: "billing", history: [])
+
+        expect(result).to eq([
+                               { role: :system, content: "You are a helpful assistant." },
+                               { role: :user, content: "Help me with billing." }
+                             ])
+      end
+
+      it "keeps unresolved placeholders and warns" do
+        expect(Langfuse.configuration.logger).to receive(:warn)
+          .with(/Placeholders \["history"\] have not been resolved/)
+
+        result = client.compile(role: "helpful", task: "billing")
+
+        expect(result).to eq([
+                               { role: :system, content: "You are a helpful assistant." },
+                               { type: "placeholder", name: "history" },
+                               { role: :user, content: "Help me with billing." }
+                             ])
+      end
+
+      it "degrades non-array placeholder values to a synthetic message and warns" do
+        expect(Langfuse.configuration.logger).to receive(:warn)
+          .with(/Placeholder 'history' must contain an array of chat messages/)
+
+        result = client.compile(role: "helpful", task: "billing", history: "not a list")
+
+        expect(result).to eq([
+                               { role: :system, content: "You are a helpful assistant." },
+                               { role: :not_given, content: "not a list" },
+                               { role: :user, content: "Help me with billing." }
+                             ])
+      end
+
+      it "preserves valid messages and degrades malformed array entries" do
+        placeholder_value = [
+          "invalid message",
+          { "role" => "user", "content" => "valid {{task}} message" }
+        ]
+
+        expect(Langfuse.configuration.logger).to receive(:warn)
+          .with(/Placeholder 'history' should contain chat message hashes/)
+
+        result = client.compile(role: "helpful", task: "billing", history: placeholder_value)
+
+        expect(result).to eq([
+                               { role: :system, content: "You are a helpful assistant." },
+                               { role: :not_given, content: placeholder_value.to_s },
+                               { role: :user, content: "valid billing message" },
+                               { role: :user, content: "Help me with billing." }
+                             ])
+      end
+    end
+
     context "with complex templates" do
       it "handles nested object properties" do
         data = prompt_data.dup

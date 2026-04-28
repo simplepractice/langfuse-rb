@@ -290,6 +290,25 @@ RSpec.describe Langfuse::Client do
         expect(result.prompt).to be_an(Array)
         expect(result.is_fallback).to be(false)
       end
+
+      it "preserves placeholder entries returned by the API" do
+        placeholder_response = chat_prompt_response.merge(
+          "prompt" => chat_prompt_response["prompt"].dup.insert(
+            1,
+            { "type" => "placeholder", "name" => "history" }
+          )
+        )
+        stub_request(:get, "#{base_url}/api/public/v2/prompts/chat-assistant")
+          .to_return(
+            status: 200,
+            body: placeholder_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        result = client.get_prompt("chat-assistant")
+
+        expect(result.prompt[1]).to eq({ "type" => "placeholder", "name" => "history" })
+      end
     end
 
     context "with unknown prompt type" do
@@ -1075,6 +1094,50 @@ RSpec.describe Langfuse::Client do
           a_request(:post, "#{base_url}/api/public/v2/prompts")
             .with(body: hash_including(
               "prompt" => [{ "role" => "system", "content" => "You are helpful" }]
+            ))
+        ).to have_been_made.once
+      end
+
+      it "normalizes placeholders without dropping their type and name" do
+        client.create_prompt(
+          name: "assistant",
+          prompt: [
+            { role: :system, content: "You are helpful" },
+            { type: "placeholder", name: :history },
+            { role: :user, content: "Hi" }
+          ],
+          type: :chat
+        )
+
+        expect(
+          a_request(:post, "#{base_url}/api/public/v2/prompts")
+            .with(body: hash_including(
+              "prompt" => [
+                { "role" => "system", "content" => "You are helpful" },
+                { "type" => "placeholder", "name" => "history" },
+                { "role" => "user", "content" => "Hi" }
+              ]
+            ))
+        ).to have_been_made.once
+      end
+
+      it "preserves extra message fields during normalization" do
+        client.create_prompt(
+          name: "assistant",
+          prompt: [{ role: :assistant, content: "Prior answer", tool_calls: [{ id: "call_1" }] }],
+          type: :chat
+        )
+
+        expect(
+          a_request(:post, "#{base_url}/api/public/v2/prompts")
+            .with(body: hash_including(
+              "prompt" => [
+                {
+                  "role" => "assistant",
+                  "content" => "Prior answer",
+                  "tool_calls" => [{ "id" => "call_1" }]
+                }
+              ]
             ))
         ).to have_been_made.once
       end

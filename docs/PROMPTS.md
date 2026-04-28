@@ -114,6 +114,36 @@ puts messages
 
 **Note:** Message roles are returned as symbols (`:system`, `:user`, `:assistant`), matching Ruby conventions.
 
+### Message Placeholders
+
+Chat prompts can include Langfuse message placeholders for runtime chat history or few-shot examples:
+
+```ruby
+prompt = client.get_prompt("movie-critic-chat", type: :chat)
+
+messages = prompt.compile(
+  criticlevel: "expert",
+  chat_history: [
+    { role: :user, content: "I like slow cinema." },
+    { role: :assistant, content: "Try contemplative international dramas." }
+  ]
+)
+
+# => [
+#   { role: :system, content: "You are an expert movie critic" },
+#   { role: :user, content: "I like slow cinema." },
+#   { role: :assistant, content: "Try contemplative international dramas." },
+#   { role: :user, content: "What should I watch next?" }
+# ]
+```
+
+Placeholder behavior follows the Langfuse Python SDK:
+
+- Passing an array inserts those messages in place and compiles variables inside them.
+- Passing an empty array skips the placeholder.
+- Omitting the placeholder keeps `{ type: "placeholder", name: "..." }` in the compiled output and logs a warning.
+- Placeholder messages preserve extra fields such as `tool_calls`.
+
 ### Using with LLM Libraries
 
 Direct integration with OpenAI:
@@ -339,6 +369,7 @@ prompt = client.create_prompt(
   name: "support-bot",
   prompt: [
     { role: "system", content: "You are a {{role}} support assistant for {{company}}." },
+    { type: "placeholder", name: "history" },
     { role: "user", content: "{{question}}" }
   ],
   type: :chat,
@@ -347,7 +378,7 @@ prompt = client.create_prompt(
 )
 ```
 
-**Note:** Message roles can use either strings (`"system"`) or symbols (`:system`).
+**Note:** Message roles can use either strings (`"system"`) or symbols (`:system`). Placeholder entries must use `type: "placeholder"` and a `name`.
 
 ### Commit Messages
 

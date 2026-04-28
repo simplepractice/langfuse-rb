@@ -467,15 +467,27 @@ Returned by `get_prompt` for chat prompts.
 compile(**variables) # => Array<Hash>
 ```
 
-Compiles template, returns array of message hashes.
+Compiles template variables and message placeholders, returning an array of message hashes.
+
+For Langfuse message placeholders:
+
+- `placeholder_name: [{ role: :user, content: "..." }]` inserts those messages.
+- `placeholder_name: []` skips the placeholder.
+- Omitting a placeholder keeps `{ type: "placeholder", name: "..." }` in the output and logs a warning.
+- Extra message fields are preserved when placeholder messages are inserted.
 
 **Example:**
 
 ```ruby
 prompt = client.get_prompt("chat-assistant")
-messages = prompt.compile(topic: "Ruby", level: "beginner")
+messages = prompt.compile(
+  topic: "Ruby",
+  level: "beginner",
+  history: [{ role: :user, content: "Explain {{topic}} simply." }]
+)
 # => [
 #   { role: :system, content: "..." },
+#   { role: :user, content: "Explain Ruby simply." },
 #   { role: :user, content: "..." }
 # ]
 ```
