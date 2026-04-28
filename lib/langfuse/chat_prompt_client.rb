@@ -189,7 +189,10 @@ module Langfuse
     def warn_unresolved(names)
       return if names.empty?
 
-      warn_msg("Placeholders #{names.inspect} have not been resolved. Pass them as keyword arguments to compile().")
+      unresolved_names = names.uniq.sort
+      message = "Placeholders #{unresolved_names.inspect} have not been resolved. " \
+                "Pass them as keyword arguments to compile()."
+      warn_msg(message)
     end
 
     # @api private

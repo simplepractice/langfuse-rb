@@ -119,10 +119,10 @@ puts messages
 Chat prompts can include Langfuse message placeholders for runtime chat history or few-shot examples:
 
 ```ruby
-prompt = client.get_prompt("movie-critic-chat", type: :chat)
+prompt = client.get_prompt("movie-critic-chat")
 
 messages = prompt.compile(
-  criticlevel: "expert",
+  critic_level: "expert",
   chat_history: [
     { role: :user, content: "I like slow cinema." },
     { role: :assistant, content: "Try contemplative international dramas." }

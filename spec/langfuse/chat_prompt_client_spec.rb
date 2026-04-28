@@ -258,6 +258,22 @@ RSpec.describe Langfuse::ChatPromptClient do
                              ])
       end
 
+      it "deduplicates unresolved placeholder names in warnings" do
+        data = placeholder_prompt_data.merge(
+          "prompt" => [
+            { "type" => "placeholder", "name" => "history" },
+            { "type" => "placeholder", "name" => "examples" },
+            { "type" => "placeholder", "name" => "history" }
+          ]
+        )
+        client = described_class.new(data)
+
+        expect(Langfuse.configuration.logger).to receive(:warn)
+          .with(/Placeholders \["examples", "history"\] have not been resolved/)
+
+        client.compile
+      end
+
       it "raises for non-array placeholder values" do
         expect do
           client.compile(role: "helpful", task: "billing", history: "not a list")
