@@ -77,19 +77,6 @@ RSpec.describe Langfuse::TextPromptClient do
       expect(client.resolution_graph).to eq({ "nodes" => [{ "name" => "shared-system" }] })
     end
 
-    it "accepts Ruby-style metadata keys" do
-      data = prompt_data.merge(
-        "commitMessage" => nil,
-        "resolutionGraph" => nil,
-        "commit_message" => "Ruby key",
-        "resolution_graph" => { "nodes" => [] }
-      )
-      client = described_class.new(data)
-
-      expect(client.commit_message).to eq("Ruby key")
-      expect(client.resolution_graph).to eq({ "nodes" => [] })
-    end
-
     it "defaults labels to empty array when not provided" do
       data = prompt_data.dup.tap { |d| d.delete("labels") }
       client = described_class.new(data)
@@ -110,13 +97,11 @@ RSpec.describe Langfuse::TextPromptClient do
 
     it "defaults optional metadata when not provided" do
       data = prompt_data.dup.tap do |d|
-        d.delete("type")
         d.delete("commitMessage")
         d.delete("resolutionGraph")
       end
       client = described_class.new(data)
 
-      expect(client.type).to eq("text")
       expect(client.commit_message).to be_nil
       expect(client.resolution_graph).to be_nil
     end

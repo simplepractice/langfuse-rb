@@ -38,9 +38,6 @@ module Langfuse
     # @return [String] Raw prompt template string
     attr_reader :prompt
 
-    # @return [String] Prompt type
-    attr_reader :type
-
     # @return [String, nil] Optional commit message for this prompt version
     attr_reader :commit_message
 
@@ -64,10 +61,14 @@ module Langfuse
       @labels = prompt_data["labels"] || []
       @tags = prompt_data["tags"] || []
       @config = prompt_data["config"] || {}
-      @type = prompt_data["type"] || "text"
-      @commit_message = prompt_data["commitMessage"] || prompt_data["commit_message"]
-      @resolution_graph = prompt_data["resolutionGraph"] || prompt_data["resolution_graph"]
+      @commit_message = prompt_data["commitMessage"]
+      @resolution_graph = prompt_data["resolutionGraph"]
       @is_fallback = is_fallback
+    end
+
+    # @return [String] Prompt type ("text")
+    def type
+      "text"
     end
 
     # Compile the prompt with variable substitution
