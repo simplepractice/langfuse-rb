@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-28
+
+### Added
+- Expose `type`, `commit_message`, and `resolution_graph` metadata on text and chat prompt clients (#87)
+
 ### Fixed
-- Preserve and compile chat prompt message placeholders in parity with Langfuse Python and JS SDKs.
+- Preserve and compile chat prompt message placeholders in parity with Langfuse Python and JS SDKs (#86)
+- Preserve raw prompt compile variables instead of HTML-escaping JSON, XML, and HTML-like values (#85)
+- Suppress prompt name/version attribution on fallback prompt clients so fallback output is not reported as prompt version 0 (#84)
+
+### Documentation
+- Link to upstream Langfuse agent skills and refresh README header image (#81, #83)
 
 ## [0.8.0] - 2026-04-24
 
@@ -103,7 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from legacy ingestion API to OTLP endpoint
 - Removed `tracing_enabled` configuration flag (#2)
 
-[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.5.0...v0.6.0
