@@ -154,6 +154,35 @@ RSpec.describe Langfuse::Client do
       end
     end
 
+    context "with auto cache backend" do
+      let(:config_with_auto_cache) do
+        Langfuse::Config.new do |config|
+          config.public_key = "pk_test_123"
+          config.secret_key = "sk_test_456"
+          config.base_url = "https://cloud.langfuse.com"
+          config.cache_ttl = 60
+          config.cache_backend = :auto
+        end
+      end
+
+      it "uses memory cache when Rails.cache is unavailable" do
+        client = described_class.new(config_with_auto_cache)
+        expect(client.api_client.cache).to be_a(Langfuse::PromptCache)
+      end
+
+      it "uses Rails cache when Rails.cache is available" do
+        rails_class = Class.new do
+          def self.cache
+            Object.new
+          end
+        end
+        stub_const("Rails", rails_class)
+
+        client = described_class.new(config_with_auto_cache)
+        expect(client.api_client.cache).to be_a(Langfuse::RailsCacheAdapter)
+      end
+    end
+
     context "with invalid cache backend" do
       let(:config_invalid_backend) do
         Langfuse::Config.new do |config|
@@ -520,6 +549,27 @@ RSpec.describe Langfuse::Client do
           a_request(:get, "#{base_url}/api/public/v2/prompts/greeting")
         ).to have_been_made.once
       end
+
+      it "returns prompt clients with cache metadata" do
+        result = cached_client.get_prompt_result("greeting")
+        cached_result = cached_client.get_prompt_result("greeting")
+
+        expect(result.prompt).to be_a(Langfuse::TextPromptClient)
+        expect(result.logical_key).to eq("greeting:production")
+        expect(result.cache_status).to eq(:miss)
+        expect(result.source).to eq(:api)
+        expect(cached_result.cache_status).to eq(:hit)
+        expect(cached_result.source).to eq(:cache)
+      end
+
+      it "exposes flat prompt cache inspection and validation APIs" do
+        key = cached_client.prompt_cache_key("greeting")
+
+        expect(key.logical_key).to eq("greeting:production")
+        expect(key.storage_key).to include("g0:")
+        expect(cached_client.prompt_cache_stats).to include(backend: "memory", enabled: true)
+        expect(cached_client.validate_prompt_cache_backend!).to be(true)
+      end
     end
 
     context "with fallback support" do
@@ -541,6 +591,16 @@ RSpec.describe Langfuse::Client do
           expect(result.version).to eq(0)
           expect(result.tags).to include("fallback")
           expect(result.is_fallback).to be(true)
+        end
+
+        it "returns fallback fetch metadata" do
+          result = client.get_prompt_result("missing", fallback: "Hello!", type: :text)
+
+          expect(result.prompt).to be_a(Langfuse::TextPromptClient)
+          expect(result.fallback?).to be(true)
+          expect(result.source).to eq(:fallback)
+          expect(result.cache_status).to eq(:miss)
+          expect(result.logical_key).to eq("missing:production")
         end
 
         it "raises error when no fallback provided" do

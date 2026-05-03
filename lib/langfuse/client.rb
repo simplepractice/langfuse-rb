@@ -46,7 +46,8 @@ module Langfuse
         base_url: config.base_url,
         timeout: config.timeout,
         logger: config.logger,
-        cache: cache
+        cache: cache,
+        cache_observer: config.prompt_cache_observer
       )
 
       @project_id = nil
@@ -68,6 +69,7 @@ module Langfuse
     # @param label [String, nil] Optional label (e.g., "production", "latest")
     # @param fallback [String, Array, nil] Optional fallback prompt to use on error
     # @param type [Symbol, nil] Required when fallback is provided (:text or :chat)
+    # @param cache_ttl [Integer, nil] Optional TTL override for this fetch
     # @return [TextPromptClient, ChatPromptClient] The prompt client
     # @raise [ArgumentError] if both version and label are provided
     # @raise [ArgumentError] if fallback is provided without type
@@ -77,23 +79,112 @@ module Langfuse
     #
     # @example With fallback for graceful degradation
     #   prompt = client.get_prompt("greeting", fallback: "Hello {{name}}!", type: :text)
-    def get_prompt(name, version: nil, label: nil, fallback: nil, type: nil)
-      # Validate fallback usage
-      if fallback && !type
-        raise ArgumentError, "type parameter is required when fallback is provided (use :text or :chat)"
-      end
+    def get_prompt(name, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
+      get_prompt_result(
+        name,
+        version: version,
+        label: label,
+        fallback: fallback,
+        type: type,
+        cache_ttl: cache_ttl
+      ).prompt
+    end
 
-      # Try to fetch from API
-      prompt_data = api_client.get_prompt(name, version: version, label: label)
-      build_prompt_client(prompt_data)
+    # Fetch a prompt and return cache metadata.
+    #
+    # @param name [String] The name of the prompt
+    # @param version [Integer, nil] Optional specific version number
+    # @param label [String, nil] Optional label (e.g., "production", "latest")
+    # @param fallback [String, Array, nil] Optional fallback prompt to use on error
+    # @param type [Symbol, nil] Required when fallback is provided (:text or :chat)
+    # @param cache_ttl [Integer, nil] Optional TTL override for this fetch
+    # @return [PromptFetchResult] Prompt client plus cache metadata
+    # @raise [ArgumentError] if fallback is provided without type
+    # @raise [NotFoundError] if the prompt is not found and no fallback provided
+    # @raise [UnauthorizedError] if authentication fails and no fallback provided
+    # @raise [ApiError] for other API errors and no fallback provided
+    def get_prompt_result(name, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
+      validate_fallback_usage!(fallback, type)
+
+      api_result = api_client.get_prompt_result(name, version: version, label: label, cache_ttl: cache_ttl)
+      build_client_fetch_result(api_result, build_prompt_client(api_result.prompt))
     rescue ApiError, NotFoundError, UnauthorizedError => e
       # If no fallback, re-raise the error
       raise e unless fallback
 
       # Log warning and return fallback
       config.logger.warn("Langfuse API error for prompt '#{name}': #{e.message}. Using fallback.")
-      build_fallback_prompt_client(name, fallback, type)
+      build_fallback_prompt_result(name, version, label, fallback, type, cache_ttl: cache_ttl, error: e)
     end
+
+    # Refresh a prompt from the API, optionally writing through to cache.
+    #
+    # @param name [String] The name of the prompt
+    # @param version [Integer, nil] Optional specific version number
+    # @param label [String, nil] Optional label (e.g., "production", "latest")
+    # @param cache_ttl [Integer, nil] Optional TTL override for this refresh
+    # @return [PromptFetchResult] Prompt client plus cache metadata
+    # @raise [ArgumentError] if both version and label are provided
+    # @raise [NotFoundError] if the prompt is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def refresh_prompt(name, version: nil, label: nil, cache_ttl: nil)
+      api_result = api_client.refresh_prompt(name, version: version, label: label, cache_ttl: cache_ttl)
+      build_client_fetch_result(api_result, build_prompt_client(api_result.prompt))
+    end
+
+    # Invalidate one exact logical prompt cache key.
+    #
+    # @param name [String] The prompt name
+    # @param version [Integer, nil] Optional specific version number
+    # @param label [String, nil] Optional label
+    # @return [PromptCacheKey] The invalidated key
+    def invalidate_prompt_cache(name, version: nil, label: nil)
+      api_client.invalidate_prompt_cache(name, version: version, label: label)
+    end
+
+    # Invalidate all cached variants for one prompt name.
+    #
+    # @param name [String] The prompt name
+    # @return [Integer, nil] New generation, or nil when cache is disabled
+    def invalidate_prompt_cache_by_name(name)
+      api_client.invalidate_prompt_cache_by_name(name)
+    end
+
+    # Logically clear the whole Langfuse prompt cache namespace.
+    #
+    # @return [Integer, nil] New global generation, or nil when cache is disabled
+    def clear_prompt_cache
+      api_client.clear_prompt_cache
+    end
+
+    # Return prompt cache statistics.
+    #
+    # @return [Hash] Cache statistics
+    def prompt_cache_stats
+      api_client.prompt_cache_stats
+    end
+
+    # Inspect the logical and generated cache keys for a prompt.
+    #
+    # @param name [String] The prompt name
+    # @param version [Integer, nil] Optional specific version number
+    # @param label [String, nil] Optional label
+    # @return [PromptCacheKey] Logical and generated cache keys
+    def prompt_cache_key(name, version: nil, label: nil)
+      api_client.prompt_cache_key(name, version: version, label: label)
+    end
+
+    # Validate the configured prompt cache backend before first prompt fetch.
+    #
+    # @return [Boolean] true when the configured backend is usable
+    # @raise [ConfigurationError] if the backend is invalid
+    # rubocop:disable Naming/PredicateMethod
+    def validate_prompt_cache_backend!
+      api_client.cache&.validate! if api_client.cache.respond_to?(:validate!)
+      true
+    end
+    # rubocop:enable Naming/PredicateMethod
 
     # List all prompts in the Langfuse project
     #
@@ -126,6 +217,7 @@ module Langfuse
     # @param label [String, nil] Optional label (e.g., "production", "latest")
     # @param fallback [String, Array, nil] Optional fallback prompt to use on error
     # @param type [Symbol, nil] Required when fallback is provided (:text or :chat)
+    # @param cache_ttl [Integer, nil] Optional TTL override for this fetch
     # @return [String, Array<Hash>] Compiled prompt (String for text, Array for chat)
     # @raise [ArgumentError] if both version and label are provided
     # @raise [ArgumentError] if fallback is provided without type
@@ -148,10 +240,19 @@ module Langfuse
     #     fallback: "Hello {{name}}!",
     #     type: :text
     #   )
-    def compile_prompt(name, variables: {}, version: nil, label: nil, fallback: nil, type: nil)
-      prompt = get_prompt(name, version: version, label: label, fallback: fallback, type: type)
+    # rubocop:disable Metrics/ParameterLists
+    def compile_prompt(name, variables: {}, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
+      prompt = get_prompt(
+        name,
+        version: version,
+        label: label,
+        fallback: fallback,
+        type: type,
+        cache_ttl: cache_ttl
+      )
       prompt.compile(**variables)
     end
+    # rubocop:enable Metrics/ParameterLists
 
     # Create a new prompt (or new version if name already exists)
     #
@@ -738,6 +839,66 @@ module Langfuse
       list_dataset_items(dataset_name: dataset_name)
     end
 
+    def validate_fallback_usage!(fallback, type)
+      return unless fallback && !type
+
+      raise ArgumentError, "type parameter is required when fallback is provided (use :text or :chat)"
+    end
+
+    def build_client_fetch_result(api_result, prompt_client)
+      PromptFetchResult.new(
+        prompt: prompt_client,
+        logical_key: api_result.logical_key,
+        storage_key: api_result.storage_key,
+        cache_status: api_result.cache_status,
+        source: api_result.source,
+        name: prompt_client.name,
+        version: prompt_client.version,
+        label: api_result.label
+      )
+    end
+
+    def build_fallback_prompt_result(name, version, label, fallback, type, fetch_context)
+      prompt_client = build_fallback_prompt_client(name, fallback, type)
+      key = api_client.prompt_cache_key(name, version: version, label: label)
+      api_client.emit_prompt_cache_event(
+        :fallback,
+        fallback_event_payload(key, fetch_context, fetch_context.fetch(:error))
+      )
+      PromptFetchResult.new(
+        prompt: prompt_client,
+        logical_key: key.logical_key,
+        storage_key: key.storage_key,
+        cache_status: fallback_cache_status(fetch_context.fetch(:cache_ttl)),
+        source: :fallback,
+        name: name,
+        version: version || prompt_client.version,
+        label: key.label || (key.version ? nil : "production")
+      )
+    end
+
+    def fallback_event_payload(key, fetch_context, error)
+      {
+        name: key.name,
+        version: key.version,
+        label: key.label || (key.version ? nil : "production"),
+        logical_key: key.logical_key,
+        storage_key: key.storage_key,
+        backend: api_client.prompt_cache_stats.fetch(:backend),
+        cache_status: fallback_cache_status(fetch_context.fetch(:cache_ttl)),
+        source: :fallback,
+        error_class: error.class.name,
+        error_message: error.message
+      }
+    end
+
+    def fallback_cache_status(cache_ttl)
+      return :bypass if cache_ttl&.zero?
+      return :disabled unless api_client.cache
+
+      :miss
+    end
+
     # Check if caching is enabled in configuration
     #
     # @return [Boolean]
@@ -754,9 +915,15 @@ module Langfuse
         create_memory_cache
       when :rails
         create_rails_cache_adapter
+      when :auto
+        rails_cache_available? ? create_rails_cache_adapter : create_memory_cache
       else
         raise ConfigurationError, "Unknown cache backend: #{config.cache_backend}"
       end
+    end
+
+    def rails_cache_available?
+      defined?(Rails) && Rails.respond_to?(:cache) && Rails.cache
     end
 
     # Create in-memory cache with SWR support if enabled

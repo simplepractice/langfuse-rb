@@ -120,7 +120,7 @@ config.cache_max_size = 5000  # Large prompt library
 
 #### `cache_backend`
 
-- **Type:** Symbol (`:memory` or `:rails`)
+- **Type:** Symbol (`:memory`, `:rails`, or `:auto`)
 - **Default:** `:memory`
 - **Description:** Cache storage backend
 
@@ -130,7 +130,12 @@ config.cache_backend = :memory
 
 # Rails.cache (requires Rails + Redis)
 config.cache_backend = :rails
+
+# Opt in to automatic Rails.cache detection
+config.cache_backend = :auto
 ```
+
+`:auto` chooses `:rails` only when Rails and `Rails.cache` are present; otherwise it falls back to `:memory`. The gem default stays `:memory`.
 
 **Requirements for `:rails` backend:**
 
@@ -224,6 +229,20 @@ config.cache_refresh_threads = 10  # More threads for high-traffic apps
 **Memory impact:** ~1-2MB per thread pool (negligible)
 
 Only used when SWR is enabled (`cache_stale_ttl > 0`).
+
+#### `prompt_cache_observer`
+
+- **Type:** Callable or `nil`
+- **Default:** `nil`
+- **Description:** Observer hook for prompt cache events
+
+```ruby
+config.prompt_cache_observer = lambda do |event, payload|
+  Rails.logger.info(event: event, prompt: payload[:name], status: payload[:cache_status])
+end
+```
+
+When ActiveSupport is loaded, the SDK also instruments `prompt_cache.langfuse`.
 
 #### `batch_size`
 

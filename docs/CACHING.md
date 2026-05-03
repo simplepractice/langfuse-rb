@@ -7,6 +7,7 @@ For configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
 ## Table of Contents
 
 - [Overview](#overview)
+- [Public Cache Operations](#public-cache-operations)
 - [In-Memory Cache](#in-memory-cache-default)
 - [Rails.cache Backend](#railscache-backend-distributed)
 - [Stale-While-Revalidate (SWR)](#stale-while-revalidate-swr)
@@ -22,7 +23,69 @@ The Langfuse Ruby SDK provides two caching backends to optimize prompt fetching:
 1. **In-Memory Cache** (default) - Thread-safe, local cache with TTL and bounded expiration-ordered eviction
 2. **Rails.cache Backend** - Distributed caching with Redis/Memcached
 
-Both backends support TTL-based expiration and stale-while-revalidate (SWR). Distributed stampede protection via locking is specific to the Rails.cache backend; the in-memory backend mitigates stampedes within a single process using Monitor-based single-flight locks.
+Both backends support TTL-based expiration, stale-while-revalidate (SWR), and logical generation-based invalidation. Distributed stampede protection via locking is specific to the Rails.cache backend; the in-memory backend mitigates stampedes within a single process using Monitor-based single-flight locks.
+
+## Public Cache Operations
+
+`get_prompt` remains the normal prompt-returning API. Use `get_prompt_result` when you need cache metadata for logs, metrics, or operational validation:
+
+```ruby
+result = Langfuse.client.get_prompt_result("greeting", label: "production", cache_ttl: 60)
+
+result.prompt        # TextPromptClient or ChatPromptClient
+result.logical_key   # "greeting:production"
+result.storage_key   # Generated backend key for the current cache generation
+result.cache_status  # :hit, :miss, :stale, :refresh, :bypass, or :disabled
+result.source        # :cache, :api, or :fallback
+result.fallback?     # true when caller-provided fallback content was used
+```
+
+Per-call `cache_ttl` overrides the write TTL for that fetch. Passing `cache_ttl: 0` bypasses the cache read, fetches from the API, and does not retain the result:
+
+```ruby
+fresh = Langfuse.client.get_prompt_result("greeting", cache_ttl: 0)
+fresh.cache_status # => :bypass
+```
+
+Use `refresh_prompt` when you intentionally want to bypass the read path and write the fresh prompt through to cache:
+
+```ruby
+result = Langfuse.client.refresh_prompt("greeting", label: "production")
+result.cache_status # => :refresh
+```
+
+The operational cache APIs are flat on the client:
+
+```ruby
+Langfuse.client.invalidate_prompt_cache("greeting", label: "production")
+Langfuse.client.invalidate_prompt_cache_by_name("greeting")
+Langfuse.client.clear_prompt_cache
+
+key = Langfuse.client.prompt_cache_key("greeting")
+key.logical_key # => "greeting:production"
+key.storage_key # Includes the current global and prompt-name generations
+
+Langfuse.client.prompt_cache_stats
+Langfuse.client.validate_prompt_cache_backend!
+```
+
+Cache identity is prompt name plus version or label. When neither is supplied, the logical identity defaults to the `production` label. Runtime variables never enter the cache key; the SDK caches the managed prompt template and compiles variables afterward.
+
+Name-wide invalidation and whole-cache clear use generation counters. Old Rails.cache entries are not physically scanned or deleted; they become unreachable under the new generated storage keys and expire by TTL.
+
+### Cache Events
+
+Set `prompt_cache_observer` to receive cache events without binding the SDK to your metric names:
+
+```ruby
+Langfuse.configure do |config|
+  config.prompt_cache_observer = lambda do |event, payload|
+    Rails.logger.info(event: event, prompt: payload[:name], status: payload[:cache_status])
+  end
+end
+```
+
+When `ActiveSupport::Notifications` is loaded, the SDK also instruments `prompt_cache.langfuse`. Event payloads include prompt name, version, label, logical key, storage key, backend, cache status, source, and error details when relevant.
 
 ## In-Memory Cache (Default)
 
@@ -101,6 +164,8 @@ Langfuse.configure do |config|
   config.cache_lock_timeout = 10     # Lock timeout for stampede protection
 end
 ```
+
+Use `config.cache_backend = :auto` only when you want the SDK to choose `:rails` if Rails and `Rails.cache` are present, otherwise `:memory`. The default remains `:memory`.
 
 ### Features
 

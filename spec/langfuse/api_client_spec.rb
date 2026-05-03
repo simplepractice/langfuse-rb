@@ -974,6 +974,207 @@ RSpec.describe Langfuse::ApiClient do
     # rubocop:enable RSpec/MultipleMemoizedHelpers
   end
 
+  # rubocop:disable RSpec/MultipleMemoizedHelpers
+  describe "public prompt cache operations" do
+    let(:prompt_name) { "greeting" }
+    let(:prompt_response) do
+      {
+        "id" => "prompt-123",
+        "name" => prompt_name,
+        "version" => 1,
+        "prompt" => "Hello {{name}}!",
+        "type" => "text",
+        "labels" => ["production"]
+      }
+    end
+    let(:cache) { Langfuse::PromptCache.new(ttl: 60) }
+    let(:cached_client) do
+      described_class.new(public_key: public_key, secret_key: secret_key, base_url: base_url, cache: cache)
+    end
+
+    it "returns fetch metadata while keeping get_prompt prompt-data compatible" do
+      stub_prompt(prompt_response)
+
+      result = cached_client.get_prompt_result(prompt_name)
+      prompt = cached_client.get_prompt(prompt_name)
+
+      expect(result).to be_a(Langfuse::PromptFetchResult)
+      expect(result.prompt).to eq(prompt_response)
+      expect(result.logical_key).to eq("greeting:production")
+      expect(result.storage_key).to include("g0:")
+      expect(result.cache_status).to eq(:miss)
+      expect(result.source).to eq(:api)
+      expect(prompt).to eq(prompt_response)
+      expect(a_request(:get, prompt_url)).to have_been_made.once
+    end
+
+    it "reports cache hits and emits cache events" do
+      events = []
+      client = described_class.new(
+        public_key: public_key,
+        secret_key: secret_key,
+        base_url: base_url,
+        cache: cache,
+        cache_observer: ->(event, payload) { events << [event, payload] }
+      )
+      stub_prompt(prompt_response)
+
+      miss = client.get_prompt_result(prompt_name)
+      hit = client.get_prompt_result(prompt_name)
+
+      expect(miss.cache_status).to eq(:miss)
+      expect(hit.cache_status).to eq(:hit)
+      expect(hit.source).to eq(:cache)
+      expect(events.map(&:first)).to include(:miss, :write, :hit)
+      expect(events.last.last).to include(logical_key: "greeting:production", source: :cache)
+      expect(a_request(:get, prompt_url)).to have_been_made.once
+    end
+
+    it "bypasses cache reads and writes when cache_ttl is zero" do
+      stub_request(:get, prompt_url)
+        .to_return(
+          { status: 200, body: prompt_response.merge("version" => 1).to_json,
+            headers: { "Content-Type" => "application/json" } },
+          { status: 200, body: prompt_response.merge("version" => 2).to_json,
+            headers: { "Content-Type" => "application/json" } }
+        )
+
+      first = cached_client.get_prompt_result(prompt_name, cache_ttl: 0)
+      second = cached_client.get_prompt_result(prompt_name, cache_ttl: 0)
+
+      expect(first.cache_status).to eq(:bypass)
+      expect(second.cache_status).to eq(:bypass)
+      expect(second.version).to eq(2)
+      expect(a_request(:get, prompt_url)).to have_been_made.twice
+    end
+
+    it "refreshes a prompt and writes the refreshed value through to cache" do
+      stub_request(:get, prompt_url)
+        .to_return(
+          { status: 200, body: prompt_response.merge("version" => 1).to_json,
+            headers: { "Content-Type" => "application/json" } },
+          { status: 200, body: prompt_response.merge("version" => 2, "prompt" => "Hi {{name}}!").to_json,
+            headers: { "Content-Type" => "application/json" } }
+        )
+
+      cached_client.get_prompt_result(prompt_name)
+      refresh = cached_client.refresh_prompt(prompt_name)
+      hit = cached_client.get_prompt_result(prompt_name)
+
+      expect(refresh.cache_status).to eq(:refresh)
+      expect(refresh.source).to eq(:api)
+      expect(hit.cache_status).to eq(:hit)
+      expect(hit.prompt["prompt"]).to eq("Hi {{name}}!")
+      expect(a_request(:get, prompt_url)).to have_been_made.twice
+    end
+
+    it "invalidates one exact logical key without prefix matching" do
+      other_response = prompt_response.merge("name" => "greeting-extra")
+      stub_prompt(prompt_response)
+      stub_request(:get, "#{base_url}/api/public/v2/prompts/greeting-extra")
+        .to_return(status: 200, body: other_response.to_json, headers: { "Content-Type" => "application/json" })
+
+      cached_client.get_prompt_result(prompt_name)
+      cached_client.get_prompt_result("greeting-extra")
+      invalidated = cached_client.invalidate_prompt_cache(prompt_name)
+      cached_client.get_prompt_result(prompt_name)
+      cached_client.get_prompt_result("greeting-extra")
+
+      expect(invalidated.logical_key).to eq("greeting:production")
+      expect(a_request(:get, prompt_url)).to have_been_made.twice
+      expect(a_request(:get, "#{base_url}/api/public/v2/prompts/greeting-extra")).to have_been_made.once
+    end
+
+    it "invalidates all variants for a prompt name after prompt mutation" do
+      stub_request(:get, prompt_url)
+        .to_return(
+          { status: 200, body: prompt_response.merge("version" => 1).to_json,
+            headers: { "Content-Type" => "application/json" } },
+          { status: 200, body: prompt_response.merge("version" => 2).to_json,
+            headers: { "Content-Type" => "application/json" } }
+        )
+      stub_request(:post, "#{base_url}/api/public/v2/prompts")
+        .to_return(status: 201, body: prompt_response.merge("version" => 2).to_json,
+                   headers: { "Content-Type" => "application/json" })
+
+      cached_client.get_prompt_result(prompt_name)
+      cached_client.create_prompt(name: prompt_name, prompt: "Hi", type: "text")
+      result = cached_client.get_prompt_result(prompt_name)
+
+      expect(result.version).to eq(2)
+      expect(a_request(:get, prompt_url)).to have_been_made.twice
+    end
+
+    it "uses Rails generation keys for name-wide and global invalidation" do
+      store = build_rails_cache_store
+      stub_const("Rails", Class.new)
+      allow(Rails).to receive(:cache).and_return(store)
+      rails_cache = Langfuse::RailsCacheAdapter.new(ttl: 60)
+      client = described_class.new(
+        public_key: public_key,
+        secret_key: secret_key,
+        base_url: base_url,
+        cache: rails_cache
+      )
+      stub_prompt(prompt_response)
+
+      first_key = client.prompt_cache_key(prompt_name).storage_key
+      client.get_prompt_result(prompt_name)
+      client.invalidate_prompt_cache_by_name(prompt_name)
+      second_key = client.prompt_cache_key(prompt_name).storage_key
+      client.clear_prompt_cache
+      third_key = client.prompt_cache_key(prompt_name).storage_key
+
+      expect(second_key).not_to eq(first_key)
+      expect(third_key).not_to eq(second_key)
+      expect(store.deleted_patterns).to be_empty
+    end
+
+    def prompt_url
+      "#{base_url}/api/public/v2/prompts/#{prompt_name}"
+    end
+
+    def stub_prompt(response)
+      stub_request(:get, prompt_url)
+        .to_return(status: 200, body: response.to_json, headers: { "Content-Type" => "application/json" })
+    end
+
+    def build_rails_cache_store
+      Class.new do
+        attr_reader :deleted_patterns
+
+        def initialize
+          @data = {}
+          @deleted_patterns = []
+        end
+
+        def read(key)
+          @data[key]
+        end
+
+        # rubocop:disable Naming/PredicateMethod
+        def write(key, value, **_options)
+          @data[key] = value
+          true
+        end
+
+        def delete(key)
+          !@data.delete(key).nil?
+        end
+        # rubocop:enable Naming/PredicateMethod
+
+        def delete_matched(pattern)
+          @deleted_patterns << pattern
+        end
+
+        def increment(key, amount)
+          @data[key] = @data.fetch(key, 0).to_i + amount
+        end
+      end.new
+    end
+  end
+  # rubocop:enable RSpec/MultipleMemoizedHelpers
+
   describe "#create_prompt" do
     let(:prompt_name) { "new-prompt" }
     let(:text_prompt_request) do

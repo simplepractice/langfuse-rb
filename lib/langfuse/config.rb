@@ -41,7 +41,7 @@ module Langfuse
     # @return [Integer] Maximum number of cached items
     attr_accessor :cache_max_size
 
-    # @return [Symbol] Cache backend (:memory or :rails)
+    # @return [Symbol] Cache backend (:memory, :rails, or :auto)
     attr_accessor :cache_backend
 
     # @return [Integer] Lock timeout in seconds for distributed cache stampede protection
@@ -56,6 +56,9 @@ module Langfuse
 
     # @return [Integer] Number of background threads for cache refresh
     attr_accessor :cache_refresh_threads
+
+    # @return [#call, nil] Observer called for prompt cache events
+    attr_accessor :prompt_cache_observer
 
     # @return [Boolean] Use async processing for traces (requires ActiveJob)
     attr_accessor :tracing_async
@@ -158,6 +161,7 @@ module Langfuse
       @cache_stale_while_revalidate = DEFAULT_CACHE_STALE_WHILE_REVALIDATE
       @cache_stale_ttl = 0 # Default to 0 (SWR disabled, entries expire immediately after TTL)
       @cache_refresh_threads = DEFAULT_CACHE_REFRESH_THREADS
+      @prompt_cache_observer = nil
       @tracing_async = DEFAULT_TRACING_ASYNC
       @batch_size = DEFAULT_BATCH_SIZE
       @flush_interval = DEFAULT_FLUSH_INTERVAL
@@ -189,6 +193,7 @@ module Langfuse
       validate_swr_config!
 
       validate_cache_backend!
+      validate_prompt_cache_observer!
       validate_sample_rate!
       validate_should_export_span!
       validate_mask!
@@ -240,11 +245,17 @@ module Langfuse
     end
 
     def validate_cache_backend!
-      valid_backends = %i[memory rails]
+      valid_backends = %i[memory rails auto]
       return if valid_backends.include?(cache_backend)
 
       raise ConfigurationError,
             "cache_backend must be one of #{valid_backends.inspect}, got #{cache_backend.inspect}"
+    end
+
+    def validate_prompt_cache_observer!
+      return if prompt_cache_observer.nil? || prompt_cache_observer.respond_to?(:call)
+
+      raise ConfigurationError, "prompt_cache_observer must respond to #call"
     end
 
     def validate_swr_config!

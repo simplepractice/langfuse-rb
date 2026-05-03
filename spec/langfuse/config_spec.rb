@@ -300,6 +300,26 @@ RSpec.describe Langfuse::Config do
         config.cache_backend = :rails
         expect { config.validate! }.not_to raise_error
       end
+
+      it "allows :auto backend" do
+        config.cache_backend = :auto
+        expect { config.validate! }.not_to raise_error
+      end
+    end
+
+    context "when prompt_cache_observer is invalid" do
+      it "raises ConfigurationError when observer is not callable" do
+        config.prompt_cache_observer = Object.new
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "prompt_cache_observer must respond to #call"
+        )
+      end
+
+      it "allows callable observers" do
+        config.prompt_cache_observer = ->(_event, _payload) {}
+        expect { config.validate! }.not_to raise_error
+      end
     end
 
     context "when sample_rate is invalid" do

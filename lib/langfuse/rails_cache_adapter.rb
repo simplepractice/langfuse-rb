@@ -14,6 +14,7 @@ module Langfuse
   #   adapter.set("greeting:1", prompt_data)
   #   adapter.get("greeting:1") # => prompt_data
   #
+  # rubocop:disable Metrics/ClassLength
   class RailsCacheAdapter
     include StaleWhileRevalidate
 
@@ -65,16 +66,34 @@ module Langfuse
       Rails.cache.read(namespaced_key(key))
     end
 
+    # Read a raw cache entry, including stale entries.
+    #
+    # @param key [String] Cache key
+    # @return [Object, nil] Raw cache entry
+    def entry(key)
+      Rails.cache.read(namespaced_key(key))
+    end
+
     # Set a value in the cache
     #
     # @param key [String] Cache key
     # @param value [Object] Value to cache
     # @return [Object] The cached value
-    def set(key, value)
+    def set(key, value, ttl: nil, stale_ttl: nil)
       # Calculate expiration: use total_ttl if SWR enabled, otherwise just ttl
-      expires_in = swr_enabled? ? total_ttl : ttl
+      effective_ttl = ttl.nil? ? self.ttl : ttl
+      effective_stale_ttl = stale_ttl.nil? ? self.stale_ttl : stale_ttl
+      expires_in = swr_enabled? ? effective_ttl + effective_stale_ttl : effective_ttl
       Rails.cache.write(namespaced_key(key), value, expires_in:)
       value
+    end
+
+    # Delete one generated storage key.
+    #
+    # @param key [String] Cache key
+    # @return [Boolean] true if an entry was removed
+    def delete(key)
+      Rails.cache.delete(namespaced_key(key))
     end
 
     # Clear the entire Langfuse cache namespace
@@ -88,6 +107,36 @@ module Langfuse
       Rails.cache.delete_matched("#{namespace}:*")
     end
 
+    # Logically invalidate every generated storage key.
+    #
+    # @return [Integer] New global generation
+    def clear_logically
+      bump_generation(global_generation_key)
+    end
+
+    # Logically invalidate every cache variant for one prompt name.
+    #
+    # @param name [String] Prompt name
+    # @return [Integer] New name generation
+    def invalidate_name(name)
+      bump_generation(name_generation_key(name))
+    end
+
+    # Build a generated storage key for the current cache generation.
+    #
+    # @param logical_key [String] Stable logical cache identity
+    # @param name [String] Prompt name
+    # @return [String] Generated storage key
+    def storage_key(logical_key, name:)
+      generated = PromptCache.storage_key(
+        logical_key,
+        name: name,
+        global_generation: generation_value(global_generation_key),
+        name_generation: generation_value(name_generation_key(name))
+      )
+      namespaced_key(generated)
+    end
+
     # Get current cache size
     #
     # Note: Rails.cache doesn't provide a size method, so we return nil
@@ -96,6 +145,19 @@ module Langfuse
     # @return [nil]
     def size
       nil
+    end
+
+    # @return [Hash] Prompt cache statistics
+    def stats
+      {
+        backend: "rails",
+        enabled: true,
+        current_generation_entries: nil,
+        orphaned_entries: nil,
+        total_entries: nil,
+        global_generation: generation_value(global_generation_key),
+        unsupported_counts: %i[current_generation_entries orphaned_entries total_entries]
+      }
     end
 
     # Check if cache is empty
@@ -107,6 +169,17 @@ module Langfuse
     def empty?
       false
     end
+
+    # Validate that Rails.cache is available for prompt caching.
+    #
+    # @return [Boolean]
+    # @raise [ConfigurationError] if Rails.cache is not available
+    # rubocop:disable Naming/PredicateMethod
+    def validate!
+      validate_rails_cache!
+      true
+    end
+    # rubocop:enable Naming/PredicateMethod
 
     # Build a cache key from prompt name and options
     #
@@ -135,7 +208,7 @@ module Langfuse
     #   cache.fetch_with_lock("greeting:v1") do
     #     api_client.get_prompt("greeting")
     #   end
-    def fetch_with_lock(key)
+    def fetch_with_lock(key, ttl: nil)
       # 1. Check cache first (fast path - no lock needed)
       cached = get(key)
       return cached if cached
@@ -147,7 +220,7 @@ module Langfuse
         begin
           # We got the lock - fetch from source and populate cache
           value = yield
-          set(key, value)
+          set(key, value, ttl: ttl)
           value
         ensure
           # Always release lock, even if block raises
@@ -173,7 +246,7 @@ module Langfuse
     # @param key [String] Cache key
     # @return [Object, nil] Cached value
     def cache_get(key)
-      get(key)
+      entry(key)
     end
 
     # Set value in cache (SWR interface)
@@ -181,8 +254,9 @@ module Langfuse
     # @param key [String] Cache key
     # @param value [Object] Value to cache (expects CacheEntry)
     # @return [Object] The cached value
-    def cache_set(key, value)
-      set(key, value)
+    def cache_set(key, value, ttl: nil)
+      Rails.cache.write(namespaced_key(key), value, expires_in: ttl || total_ttl)
+      value
     end
 
     # Build lock key with namespace
@@ -248,7 +322,38 @@ module Langfuse
     # @param key [String] Original cache key
     # @return [String] Namespaced cache key
     def namespaced_key(key)
-      "#{namespace}:#{key}"
+      key.start_with?("#{namespace}:") ? key : "#{namespace}:#{key}"
+    end
+
+    def global_generation_key
+      namespaced_key("__prompt_cache_generation__:global")
+    end
+
+    def name_generation_key(name)
+      encoded_name = Base64.urlsafe_encode64(name.to_s, padding: false)
+      namespaced_key("__prompt_cache_generation__:name:#{encoded_name}")
+    end
+
+    def generation_value(key)
+      Rails.cache.read(key).to_i
+    end
+
+    def bump_generation(key)
+      incremented = increment_generation(key)
+      return incremented if incremented
+
+      new_value = generation_value(key) + 1
+      Rails.cache.write(key, new_value)
+      new_value
+    end
+
+    def increment_generation(key)
+      return unless Rails.cache.respond_to?(:increment)
+
+      Rails.cache.write(key, 0, unless_exist: true)
+      Rails.cache.increment(key, 1)
+    rescue StandardError
+      nil
     end
 
     # Validate that Rails.cache is available
@@ -273,4 +378,5 @@ module Langfuse
       end
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end

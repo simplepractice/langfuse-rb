@@ -224,6 +224,50 @@ RSpec.describe Langfuse::PromptCache do
     end
   end
 
+  describe "generated cache keys" do
+    it "keeps logical keys stable while changing storage keys by generation" do
+      logical_key = described_class.build_key("greeting")
+      first_storage_key = cache.storage_key(logical_key, name: "greeting")
+
+      cache.invalidate_name("greeting")
+      second_storage_key = cache.storage_key(logical_key, name: "greeting")
+
+      cache.clear_logically
+      third_storage_key = cache.storage_key(logical_key, name: "greeting")
+
+      expect(logical_key).to eq("greeting:production")
+      expect(second_storage_key).not_to eq(first_storage_key)
+      expect(third_storage_key).not_to eq(second_storage_key)
+    end
+
+    it "tracks current and orphaned entries after logical invalidation" do
+      logical_key = described_class.build_key("greeting")
+      old_storage_key = cache.storage_key(logical_key, name: "greeting")
+      cache.set(old_storage_key, test_data)
+
+      cache.invalidate_name("greeting")
+      new_storage_key = cache.storage_key(logical_key, name: "greeting")
+      cache.set(new_storage_key, test_data)
+
+      expect(cache.stats).to include(
+        current_generation_entries: 1,
+        orphaned_entries: 1,
+        total_entries: 2
+      )
+    end
+
+    it "deletes one generated storage key without touching sibling names" do
+      greeting_key = cache.storage_key(described_class.build_key("greeting"), name: "greeting")
+      sibling_key = cache.storage_key(described_class.build_key("greeting-extra"), name: "greeting-extra")
+      cache.set(greeting_key, test_data)
+      cache.set(sibling_key, { "name" => "greeting-extra" })
+
+      expect(cache.delete(greeting_key)).to be(true)
+      expect(cache.get(greeting_key)).to be_nil
+      expect(cache.get(sibling_key)).to eq({ "name" => "greeting-extra" })
+    end
+  end
+
   describe "TTL expiration" do
     it "returns nil for expired entries" do
       cache.set("key1", test_data)

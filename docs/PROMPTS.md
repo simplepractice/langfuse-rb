@@ -553,7 +553,30 @@ Langfuse.configure do |config|
 end
 ```
 
-See [CACHING.md](CACHING.md) for advanced caching strategies (warming, stampede protection).
+Override or bypass cache per call:
+
+```ruby
+prompt = client.get_prompt("greeting", cache_ttl: 300)
+fresh = client.get_prompt_result("greeting", cache_ttl: 0)
+
+fresh.cache_status # => :bypass
+fresh.source       # => :api
+```
+
+Use `get_prompt_result` and the flat cache operations when you need operational visibility:
+
+```ruby
+result = client.get_prompt_result("greeting")
+result.cache_status # => :hit or :miss
+
+client.refresh_prompt("greeting")
+client.invalidate_prompt_cache("greeting")
+client.invalidate_prompt_cache_by_name("greeting")
+client.clear_prompt_cache
+client.prompt_cache_stats
+```
+
+See [CACHING.md](CACHING.md) for advanced caching strategies, generation-based invalidation, cache events, warming, and stampede protection.
 
 ## Combining Prompts with Tracing
 

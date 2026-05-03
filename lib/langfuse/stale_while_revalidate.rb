@@ -41,6 +41,7 @@ module Langfuse
   #       # Implementation-specific lock release
   #     end
   #   end
+  # rubocop:disable Metrics/ModuleLength
   module StaleWhileRevalidate
     # Initialize SWR infrastructure
     #
@@ -72,7 +73,7 @@ module Langfuse
     #   cache.fetch_with_stale_while_revalidate("greeting:v1") do
     #     api_client.get_prompt("greeting")
     #   end
-    def fetch_with_stale_while_revalidate(key, &)
+    def fetch_with_stale_while_revalidate(key, ttl: nil, stale_ttl: nil, &)
       raise ConfigurationError, "fetch_with_stale_while_revalidate requires a positive stale_ttl" unless swr_enabled?
 
       entry = cache_get(key)
@@ -84,13 +85,48 @@ module Langfuse
       elsif entry&.stale?
         # REVALIDATE - return stale + refresh in background
         logger.debug("CACHE STALE!")
-        schedule_refresh(key, &)
+        schedule_refresh(key, ttl: ttl, stale_ttl: stale_ttl, &)
         entry.data # Instant response!
       else
         # MISS - must fetch synchronously
         logger.debug("CACHE MISS!")
-        fetch_and_cache(key, &)
+        fetch_and_cache(key, ttl: ttl, stale_ttl: stale_ttl, &)
       end
+    end
+
+    # Schedule a cache refresh without performing a read.
+    #
+    # @param key [String] Cache key
+    # @param ttl [Integer, nil] Optional fresh TTL override
+    # @param stale_ttl [Integer, nil] Optional stale TTL override
+    # @param on_success [#call, nil] Callback invoked after a successful write
+    # @param on_failure [#call, nil] Callback invoked when refresh raises
+    # @yield Block to execute to fetch fresh data
+    # @return [Boolean] true if a refresh was scheduled
+    def refresh_async(key, ttl: nil, stale_ttl: nil, on_success: nil, on_failure: nil, &)
+      raise ConfigurationError, "refresh_async requires a positive stale_ttl" unless swr_enabled?
+
+      schedule_refresh(
+        key,
+        ttl: ttl,
+        stale_ttl: stale_ttl,
+        on_success: on_success,
+        on_failure: on_failure,
+        &
+      )
+    end
+
+    # Write a value with stale-while-revalidate metadata.
+    #
+    # @param key [String] Cache key
+    # @param value [Object] Value to cache
+    # @param ttl [Integer, nil] Optional fresh TTL override
+    # @param stale_ttl [Integer, nil] Optional stale TTL override
+    # @return [Object] The cached value
+    def write_with_stale_while_revalidate(key, value, ttl: nil, stale_ttl: nil)
+      raise ConfigurationError, "write_with_stale_while_revalidate requires a positive stale_ttl" unless swr_enabled?
+
+      set_cache_entry(key, value, ttl: ttl, stale_ttl: stale_ttl)
     end
 
     # Check if SWR is enabled
@@ -138,29 +174,35 @@ module Langfuse
     # @param key [String] Cache key
     # @yield Block to execute to fetch fresh data
     # @return [void]
-    def schedule_refresh(key, &block)
+    # rubocop:disable Naming/PredicateMethod
+    def schedule_refresh(key, ttl: nil, stale_ttl: nil, on_success: nil, on_failure: nil, &block)
       # Prevent duplicate refreshes
       lock_key = build_lock_key(key)
-      return unless acquire_lock(lock_key)
+      return false unless acquire_lock(lock_key)
 
       @thread_pool.post do
         value = yield block
-        set_cache_entry(key, value)
+        set_cache_entry(key, value, ttl: ttl, stale_ttl: stale_ttl)
+        on_success&.call(value)
       rescue StandardError => e
+        on_failure&.call(e)
         logger.error("Langfuse cache refresh failed for key '#{key}': #{e.class} - #{e.message}")
       ensure
         release_lock(lock_key)
       end
+
+      true
     end
+    # rubocop:enable Naming/PredicateMethod
 
     # Fetch data and cache it with SWR metadata
     #
     # @param key [String] Cache key
     # @yield Block to execute to fetch fresh data
     # @return [Object] Freshly fetched value
-    def fetch_and_cache(key, &block)
+    def fetch_and_cache(key, ttl: nil, stale_ttl: nil, &block)
       value = yield block
-      set_cache_entry(key, value)
+      set_cache_entry(key, value, ttl: ttl, stale_ttl: stale_ttl)
     end
 
     # Set value in cache with SWR metadata (CacheEntry)
@@ -168,13 +210,15 @@ module Langfuse
     # @param key [String] Cache key
     # @param value [Object] Value to cache
     # @return [Object] The cached value
-    def set_cache_entry(key, value)
+    def set_cache_entry(key, value, ttl: nil, stale_ttl: nil)
       now = Time.now
-      fresh_until = now + ttl
-      stale_until = fresh_until + stale_ttl
+      effective_ttl = ttl.nil? ? self.ttl : ttl
+      effective_stale_ttl = stale_ttl.nil? ? self.stale_ttl : stale_ttl
+      fresh_until = now + effective_ttl
+      stale_until = fresh_until + effective_stale_ttl
       entry = PromptCache::CacheEntry.new(value, fresh_until, stale_until)
 
-      cache_set(key, entry)
+      cache_set(key, entry, ttl: effective_ttl + effective_stale_ttl)
 
       value
     end
@@ -213,7 +257,7 @@ module Langfuse
     # @param value [Object] Value to cache
     # @return [Object] The cached value
     # @raise [NotImplementedError] if not implemented by including class
-    def cache_set(_key, _value)
+    def cache_set(_key, _value, ttl: nil)
       raise NotImplementedError, "#{self.class} must implement #cache_set"
     end
 
@@ -259,4 +303,5 @@ module Langfuse
       @logger || raise(NotImplementedError, "#{self.class} must provide @logger")
     end
   end
+  # rubocop:enable Metrics/ModuleLength
 end

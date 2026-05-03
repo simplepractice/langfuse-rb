@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "monitor"
+require "base64"
 require_relative "stale_while_revalidate"
 
 module Langfuse
@@ -14,6 +15,7 @@ module Langfuse
   #   cache.set("greeting:1", prompt_data)
   #   cache.get("greeting:1") # => prompt_data
   #
+  # rubocop:disable Metrics/ClassLength
   class PromptCache
     include StaleWhileRevalidate
 
@@ -79,6 +81,8 @@ module Langfuse
       @stale_ttl = stale_ttl
       @logger = logger
       @cache = {}
+      @global_generation = 0
+      @name_generations = Hash.new(0)
       @monitor = Monitor.new
       @locks = {} # Track locks for in-memory locking
       initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
@@ -98,21 +102,43 @@ module Langfuse
       end
     end
 
+    # Read a raw cache entry, including stale entries.
+    #
+    # @param key [String] Cache key
+    # @return [CacheEntry, nil] Raw cache entry
+    def entry(key)
+      @monitor.synchronize do
+        @cache[key]
+      end
+    end
+
     # Set a value in the cache
     #
     # @param key [String] Cache key
     # @param value [Object] Value to cache
     # @return [Object] The cached value
-    def set(key, value)
+    def set(key, value, ttl: nil, stale_ttl: nil)
       @monitor.synchronize do
         # Evict oldest entry if at max size
         evict_oldest if @cache.size >= max_size
 
         now = Time.now
-        fresh_until = now + ttl
-        stale_until = fresh_until + stale_ttl
+        effective_ttl = ttl.nil? ? self.ttl : ttl
+        effective_stale_ttl = stale_ttl.nil? ? self.stale_ttl : stale_ttl
+        fresh_until = now + effective_ttl
+        stale_until = fresh_until + effective_stale_ttl
         @cache[key] = CacheEntry.new(value, fresh_until, stale_until)
         value
+      end
+    end
+
+    # Delete one generated storage key.
+    #
+    # @param key [String] Generated storage key
+    # @return [Boolean] true if an entry was removed
+    def delete(key)
+      @monitor.synchronize do
+        !@cache.delete(key).nil?
       end
     end
 
@@ -122,6 +148,57 @@ module Langfuse
     def clear
       @monitor.synchronize do
         @cache.clear
+      end
+    end
+
+    # Logically invalidate every generated storage key.
+    #
+    # @return [Integer] New global generation
+    def clear_logically
+      @monitor.synchronize do
+        @global_generation += 1
+      end
+    end
+
+    # Logically invalidate every cache variant for one prompt name.
+    #
+    # @param name [String] Prompt name
+    # @return [Integer] New name generation
+    def invalidate_name(name)
+      @monitor.synchronize do
+        @name_generations[name.to_s] += 1
+      end
+    end
+
+    # Build a generated storage key for the current cache generation.
+    #
+    # @param logical_key [String] Stable logical cache identity
+    # @param name [String] Prompt name
+    # @return [String] Generated storage key
+    def storage_key(logical_key, name:)
+      @monitor.synchronize do
+        self.class.storage_key(
+          logical_key,
+          name: name,
+          global_generation: @global_generation,
+          name_generation: @name_generations[name.to_s]
+        )
+      end
+    end
+
+    # @return [Hash] Prompt cache statistics
+    def stats
+      @monitor.synchronize do
+        counts = count_entries_by_generation
+        {
+          backend: "memory",
+          enabled: true,
+          current_generation_entries: counts.fetch(:current),
+          orphaned_entries: counts.fetch(:orphaned),
+          total_entries: @cache.size,
+          global_generation: @global_generation,
+          unsupported_counts: []
+        }
       end
     end
 
@@ -154,6 +231,15 @@ module Langfuse
       end
     end
 
+    # Validate that the memory cache backend is usable.
+    #
+    # @return [Boolean]
+    # rubocop:disable Naming/PredicateMethod
+    def validate!
+      true
+    end
+    # rubocop:enable Naming/PredicateMethod
+
     # Build a cache key from prompt name and options
     #
     # @param name [String] Prompt name
@@ -166,6 +252,18 @@ module Langfuse
       key += ":#{label}" if label
       key += ":production" unless version || label
       key
+    end
+
+    # Build a generated storage key from generation metadata.
+    #
+    # @param logical_key [String] Stable logical cache identity
+    # @param name [String] Prompt name
+    # @param global_generation [Integer] Global cache generation
+    # @param name_generation [Integer] Prompt-name cache generation
+    # @return [String] Generated storage key
+    def self.storage_key(logical_key, name:, global_generation:, name_generation:)
+      encoded_name = Base64.urlsafe_encode64(name.to_s, padding: false)
+      "g#{global_generation}:n#{encoded_name}:#{name_generation}:#{logical_key}"
     end
 
     private
@@ -187,7 +285,7 @@ module Langfuse
     # @param key [String] Cache key
     # @param value [PromptCache::CacheEntry] Value to cache
     # @return [PromptCache::CacheEntry] The cached value
-    def cache_set(key, value)
+    def cache_set(key, value, **_options)
       @monitor.synchronize do
         # Evict oldest entry if at max size
         evict_oldest if @cache.size >= max_size
@@ -230,6 +328,29 @@ module Langfuse
       end
     end
 
+    def count_entries_by_generation
+      @cache.each_key.with_object({ current: 0, orphaned: 0 }) do |key, counts|
+        if current_generation_key?(key)
+          counts[:current] += 1
+        else
+          counts[:orphaned] += 1
+        end
+      end
+    end
+
+    def current_generation_key?(key)
+      parts = key.split(":", 4)
+      return false unless parts.size == 4
+      return false unless parts[0].start_with?("g") && parts[1].start_with?("n")
+
+      global = Integer(parts[0][1..])
+      name = Base64.urlsafe_decode64(parts[1][1..])
+      name_generation = Integer(parts[2])
+      global == @global_generation && name_generation == @name_generations[name]
+    rescue ArgumentError
+      false
+    end
+
     # In-memory cache helper methods
 
     # Evict the oldest entry from cache
@@ -250,4 +371,5 @@ module Langfuse
       Logger.new($stdout, level: Logger::WARN)
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end
