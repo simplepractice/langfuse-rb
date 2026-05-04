@@ -285,6 +285,42 @@ RSpec.describe Langfuse::RailsCacheAdapter do
     end
   end
 
+  describe "#storage_key" do
+    let(:adapter) { described_class.new }
+    let(:logical_key) { "greeting:production" }
+    let(:encoded_name) { Base64.urlsafe_encode64("greeting", padding: false) }
+    let(:global_generation_key) { "langfuse:__prompt_cache_generation__:global" }
+    let(:name_generation_key) { "langfuse:__prompt_cache_generation__:name:#{encoded_name}" }
+
+    it "memoizes generation reads for repeated key inspection" do
+      expect(mock_cache).to receive(:read).with(global_generation_key).once.and_return(4)
+      expect(mock_cache).to receive(:read).with(name_generation_key).once.and_return(7)
+
+      first_key = adapter.storage_key(logical_key, name: "greeting")
+      second_key = adapter.storage_key(logical_key, name: "greeting")
+
+      expect(second_key).to eq(first_key)
+      expect(first_key).to eq("langfuse:g4:n#{encoded_name}:7:greeting:production")
+    end
+
+    it "updates memoized generations after same-process name invalidation" do
+      allow(mock_cache).to receive(:respond_to?).with(:increment).and_return(true)
+      expect(mock_cache).to receive(:read).with(global_generation_key).once.and_return(0)
+      expect(mock_cache).to receive(:read).with(name_generation_key).once.and_return(0)
+      expect(mock_cache).to receive(:write)
+        .with(name_generation_key, 0, unless_exist: true)
+        .and_return(true)
+      expect(mock_cache).to receive(:increment).with(name_generation_key, 1).and_return(1)
+
+      first_key = adapter.storage_key(logical_key, name: "greeting")
+      adapter.invalidate_name("greeting")
+      second_key = adapter.storage_key(logical_key, name: "greeting")
+
+      expect(first_key).to eq("langfuse:g0:n#{encoded_name}:0:greeting:production")
+      expect(second_key).to eq("langfuse:g0:n#{encoded_name}:1:greeting:production")
+    end
+  end
+
   describe "#size" do
     let(:adapter) { described_class.new }
 

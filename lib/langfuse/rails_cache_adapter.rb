@@ -18,6 +18,8 @@ module Langfuse
   class RailsCacheAdapter
     include StaleWhileRevalidate
 
+    GENERATION_MEMO_TTL_SECONDS = 1.0
+
     # @return [Integer] Time-to-live in seconds
     attr_reader :ttl
 
@@ -55,6 +57,8 @@ module Langfuse
       @lock_timeout = lock_timeout
       @stale_ttl = stale_ttl
       @logger = logger
+      @generation_memo = {}
+      @generation_memo_mutex = Mutex.new
       initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
     end
 
@@ -105,6 +109,7 @@ module Langfuse
     def clear
       # Delete all keys matching the namespace pattern
       Rails.cache.delete_matched("#{namespace}:*")
+      clear_generation_memo
     end
 
     # Logically invalidate every generated storage key.
@@ -335,15 +340,25 @@ module Langfuse
     end
 
     def generation_value(key)
-      Rails.cache.read(key).to_i
+      now = monotonic_time
+      memoized = memoized_generation_value(key, now)
+      return memoized unless memoized.nil?
+
+      Rails.cache.read(key).to_i.tap do |value|
+        memoize_generation_value(key, value, now)
+      end
     end
 
     def bump_generation(key)
       incremented = increment_generation(key)
-      return incremented if incremented
+      if incremented
+        memoize_generation_value(key, incremented.to_i)
+        return incremented
+      end
 
       new_value = generation_value(key) + 1
       Rails.cache.write(key, new_value)
+      memoize_generation_value(key, new_value)
       new_value
     end
 
@@ -355,6 +370,34 @@ module Langfuse
     rescue StandardError => e
       logger.warn("Langfuse prompt cache generation increment failed for key '#{key}': #{e.class} - #{e.message}")
       nil
+    end
+
+    def memoized_generation_value(key, now)
+      @generation_memo_mutex.synchronize do
+        entry = @generation_memo[key]
+        return nil unless entry
+
+        return entry.fetch(:value) if now < entry.fetch(:expires_at)
+
+        @generation_memo.delete(key)
+        nil
+      end
+    end
+
+    def memoize_generation_value(key, value, now = monotonic_time)
+      @generation_memo_mutex.synchronize do
+        @generation_memo[key] = { value: value, expires_at: now + GENERATION_MEMO_TTL_SECONDS }
+      end
+    end
+
+    def clear_generation_memo
+      @generation_memo_mutex.synchronize do
+        @generation_memo.clear
+      end
+    end
+
+    def monotonic_time
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
     # Validate that Rails.cache is available
