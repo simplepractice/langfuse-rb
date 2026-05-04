@@ -73,6 +73,8 @@ Cache identity is prompt name plus version or label. When neither is supplied, t
 
 Name-wide invalidation and whole-cache clear use generation counters. Old Rails.cache entries are not physically scanned or deleted; they become unreachable under the new generated storage keys and expire by TTL.
 
+Automatic mutation invalidation only covers `create_prompt` and `update_prompt` calls made by the current SDK process. Prompt edits made in the Langfuse UI or by other SDKs become visible through TTL expiry, `refresh_prompt`, or explicit invalidation.
+
 ### Cache Events
 
 Set `prompt_cache_observer` to receive cache events without binding the SDK to your metric names:

@@ -352,7 +352,8 @@ module Langfuse
 
       Rails.cache.write(key, 0, unless_exist: true)
       Rails.cache.increment(key, 1)
-    rescue StandardError
+    rescue StandardError => e
+      logger.warn("Langfuse prompt cache generation increment failed for key '#{key}': #{e.class} - #{e.message}")
       nil
     end
 

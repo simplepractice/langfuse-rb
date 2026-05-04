@@ -261,6 +261,30 @@ RSpec.describe Langfuse::RailsCacheAdapter do
     end
   end
 
+  describe "#invalidate_name" do
+    let(:logger) { instance_double(Logger, warn: nil) }
+    let(:adapter) { described_class.new(logger: logger) }
+    let(:generation_key) do
+      encoded_name = Base64.urlsafe_encode64("greeting", padding: false)
+      "langfuse:__prompt_cache_generation__:name:#{encoded_name}"
+    end
+
+    it "warns when atomic generation increment fails" do
+      allow(mock_cache).to receive(:respond_to?).with(:increment).and_return(true)
+      expect(mock_cache).to receive(:write)
+        .with(generation_key, 0, unless_exist: true)
+        .and_raise(StandardError, "connection refused")
+      warning = "Langfuse prompt cache generation increment failed for key '#{generation_key}': " \
+                "StandardError - connection refused"
+      expect(logger).to receive(:warn)
+        .with(warning)
+      expect(mock_cache).to receive(:read).with(generation_key).and_return(2)
+      expect(mock_cache).to receive(:write).with(generation_key, 3).and_return(true)
+
+      expect(adapter.invalidate_name("greeting")).to eq(3)
+    end
+  end
+
   describe "#size" do
     let(:adapter) { described_class.new }
 
