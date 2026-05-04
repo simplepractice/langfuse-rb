@@ -114,7 +114,7 @@ module Langfuse
 
       # Log warning and return fallback
       config.logger.warn("Langfuse API error for prompt '#{name}': #{e.message}. Using fallback.")
-      build_fallback_prompt_result(name, version, label, fallback, type, { cache_ttl: cache_ttl, error: e })
+      build_fallback_prompt_result(name, version, label, fallback, type, cache_ttl: cache_ttl, error: e)
     end
 
     # Refresh a prompt from the API, optionally writing through to cache.
@@ -858,9 +858,8 @@ module Langfuse
       )
     end
 
-    def build_fallback_prompt_result(name, version, label, fallback, type, fetch_context)
-      cache_ttl = fetch_context.fetch(:cache_ttl)
-      error = fetch_context.fetch(:error)
+    # rubocop:disable Metrics/ParameterLists
+    def build_fallback_prompt_result(name, version, label, fallback, type, cache_ttl:, error:)
       prompt_client = build_fallback_prompt_client(name, fallback, type)
       key = api_client.prompt_cache_key(name, version: version, label: label)
       api_client.emit_prompt_cache_event(
@@ -878,6 +877,7 @@ module Langfuse
         label: key.resolved_label
       )
     end
+    # rubocop:enable Metrics/ParameterLists
 
     def fallback_event_payload(key, cache_ttl, error)
       api_client.prompt_event_payload(
