@@ -128,6 +128,24 @@ RSpec.describe Langfuse::PromptCache do
         cache.fetch_with_stale_while_revalidate("test") { "value" }
       end
 
+      it "fetches misses with strict zero-arity callables" do
+        cache = described_class.new(ttl: 60, stale_ttl: 120)
+        fetch_prompt = -> { "value" }
+
+        expect(cache.fetch_with_stale_while_revalidate("test", &fetch_prompt)).to eq("value")
+      end
+
+      it "refreshes stale entries with strict zero-arity callables" do
+        cache = described_class.new(ttl: 60, stale_ttl: 120)
+        thread_pool = cache.instance_variable_get(:@thread_pool)
+        allow(thread_pool).to receive(:post).and_yield
+        fetch_prompt = -> { "refreshed" }
+
+        cache.send(:schedule_refresh, "test", &fetch_prompt)
+
+        expect(cache.entry("test").data).to eq("refreshed")
+      end
+
       it "accepts custom refresh_threads parameter" do
         # Can't verify thread pool size directly, but can verify it doesn't error
         expect do

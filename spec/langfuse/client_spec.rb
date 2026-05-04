@@ -603,6 +603,13 @@ RSpec.describe Langfuse::Client do
           expect(result.logical_key).to eq("missing:production")
         end
 
+        it "returns bypass metadata when fallback is used during a cache bypass" do
+          result = client.get_prompt_result("missing", fallback: "Hello!", type: :text, cache_ttl: 0)
+
+          expect(result.fallback?).to be(true)
+          expect(result.cache_status).to eq(:bypass)
+        end
+
         it "raises error when no fallback provided" do
           expect do
             client.get_prompt("missing")

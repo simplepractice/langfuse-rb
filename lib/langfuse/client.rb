@@ -114,7 +114,7 @@ module Langfuse
 
       # Log warning and return fallback
       config.logger.warn("Langfuse API error for prompt '#{name}': #{e.message}. Using fallback.")
-      build_fallback_prompt_result(name, version, label, fallback, type, cache_ttl: cache_ttl, error: e)
+      build_fallback_prompt_result(name, version, label, fallback, type, { cache_ttl: cache_ttl, error: e })
     end
 
     # Refresh a prompt from the API, optionally writing through to cache.
@@ -859,17 +859,19 @@ module Langfuse
     end
 
     def build_fallback_prompt_result(name, version, label, fallback, type, fetch_context)
+      cache_ttl = fetch_context.fetch(:cache_ttl)
+      error = fetch_context.fetch(:error)
       prompt_client = build_fallback_prompt_client(name, fallback, type)
       key = api_client.prompt_cache_key(name, version: version, label: label)
       api_client.emit_prompt_cache_event(
         :fallback,
-        fallback_event_payload(key, fetch_context, fetch_context.fetch(:error))
+        fallback_event_payload(key, cache_ttl, error)
       )
       PromptFetchResult.new(
         prompt: prompt_client,
         logical_key: key.logical_key,
         storage_key: key.storage_key,
-        cache_status: fallback_cache_status(fetch_context.fetch(:cache_ttl)),
+        cache_status: fallback_cache_status(cache_ttl),
         source: :fallback,
         name: name,
         version: version || prompt_client.version,
@@ -877,10 +879,10 @@ module Langfuse
       )
     end
 
-    def fallback_event_payload(key, fetch_context, error)
+    def fallback_event_payload(key, cache_ttl, error)
       api_client.prompt_event_payload(
         key,
-        fallback_cache_status(fetch_context.fetch(:cache_ttl)),
+        fallback_cache_status(cache_ttl),
         :fallback,
         error_class: error.class.name,
         error_message: error.message

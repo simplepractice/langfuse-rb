@@ -181,7 +181,7 @@ module Langfuse
       return false unless acquire_lock(lock_key)
 
       @thread_pool.post do
-        value = yield block
+        value = block.call
         set_cache_entry(key, value, ttl: ttl, stale_ttl: stale_ttl)
         on_success&.call(value)
       rescue StandardError => e
@@ -201,7 +201,7 @@ module Langfuse
     # @yield Block to execute to fetch fresh data
     # @return [Object] Freshly fetched value
     def fetch_and_cache(key, ttl: nil, stale_ttl: nil, &block)
-      value = yield block
+      value = block.call
       set_cache_entry(key, value, ttl: ttl, stale_ttl: stale_ttl)
     end
 
