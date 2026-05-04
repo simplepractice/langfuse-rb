@@ -873,23 +873,18 @@ module Langfuse
         source: :fallback,
         name: name,
         version: version || prompt_client.version,
-        label: key.label || (key.version ? nil : "production")
+        label: key.resolved_label
       )
     end
 
     def fallback_event_payload(key, fetch_context, error)
-      {
-        name: key.name,
-        version: key.version,
-        label: key.label || (key.version ? nil : "production"),
-        logical_key: key.logical_key,
-        storage_key: key.storage_key,
-        backend: api_client.prompt_cache_stats.fetch(:backend),
-        cache_status: fallback_cache_status(fetch_context.fetch(:cache_ttl)),
-        source: :fallback,
+      api_client.prompt_event_payload(
+        key,
+        fallback_cache_status(fetch_context.fetch(:cache_ttl)),
+        :fallback,
         error_class: error.class.name,
         error_message: error.message
-      }
+      )
     end
 
     def fallback_cache_status(cache_ttl)

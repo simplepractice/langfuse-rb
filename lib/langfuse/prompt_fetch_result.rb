@@ -41,8 +41,8 @@ module Langfuse
       @prompt = prompt
       @logical_key = logical_key
       @storage_key = storage_key
-      @cache_status = cache_status.to_sym
-      @source = source.to_sym
+      @cache_status = cache_status
+      @source = source
       @name = name
       @version = version
       @label = label
@@ -105,6 +105,14 @@ module Langfuse
       @label = label
       @logical_key = logical_key
       @storage_key = storage_key
+    end
+
+    # Resolve the effective label, defaulting to "production" when neither
+    # an explicit label nor a version was specified.
+    #
+    # @return [String, nil] Effective label
+    def resolved_label
+      label || (version ? nil : "production")
     end
 
     # @return [Hash] Cache key data as a hash

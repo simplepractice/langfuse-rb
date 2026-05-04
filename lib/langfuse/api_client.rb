@@ -63,6 +63,8 @@ module Langfuse
       @logger = logger || Logger.new($stdout, level: Logger::WARN)
       @cache = cache
       @cache_observer = cache_observer
+      @cache_backend_name = compute_cache_backend_name
+      @active_support_notifications = defined?(ActiveSupport::Notifications) ? ActiveSupport::Notifications : nil
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -237,9 +239,23 @@ module Langfuse
     # @param payload [Hash] Event payload
     # @return [void]
     def emit_prompt_cache_event(event, payload)
+      return if @cache_observer.nil? && @active_support_notifications.nil?
+
       normalized_payload = payload.merge(event: event.to_sym)
       notify_cache_observer(event, normalized_payload)
       notify_active_support(normalized_payload)
+    end
+
+    # Build a prompt cache event payload for one logical key.
+    #
+    # @api private
+    # @param key [PromptCacheKey] Logical and storage cache key
+    # @param cache_status [Symbol] Cache status (:hit, :miss, :stale, :refresh, :bypass, :disabled)
+    # @param source [Symbol] Prompt source (:cache, :api, :fallback)
+    # @param extra [Hash] Extra fields to merge into the payload
+    # @return [Hash] Event payload
+    def prompt_event_payload(key, cache_status, source, extra = {})
+      event_payload(key, cache_status, source, extra)
     end
 
     # Create a new prompt (or new version if prompt with same name exists)
@@ -887,7 +903,7 @@ module Langfuse
         source: source,
         name: prompt_data["name"] || key.name,
         version: prompt_data["version"] || key.version,
-        label: key.label || (key.version ? nil : "production")
+        label: key.resolved_label
       )
     end
 
@@ -895,7 +911,7 @@ module Langfuse
       {
         name: key.name,
         version: key.version,
-        label: key.label || (key.version ? nil : "production"),
+        label: key.resolved_label,
         logical_key: key.logical_key,
         storage_key: key.storage_key,
         backend: cache_backend_name,
@@ -904,7 +920,9 @@ module Langfuse
       }.merge(extra)
     end
 
-    def cache_backend_name
+    attr_reader :cache_backend_name
+
+    def compute_cache_backend_name
       return "disabled" unless cache
       return "rails" if cache.is_a?(RailsCacheAdapter)
       return "memory" if cache.is_a?(PromptCache)
@@ -943,28 +961,11 @@ module Langfuse
     end
 
     def notify_active_support(payload)
-      return unless defined?(ActiveSupport::Notifications)
+      return unless @active_support_notifications
 
-      ActiveSupport::Notifications.instrument("prompt_cache.langfuse", payload)
+      @active_support_notifications.instrument("prompt_cache.langfuse", payload)
     rescue StandardError => e
       logger.warn("Langfuse ActiveSupport cache notification failed: #{e.class} - #{e.message}")
-    end
-
-    # Fetch prompt using the most appropriate caching strategy available
-    #
-    # @param cache_key [String] The cache key for this prompt
-    # @param name [String] The name of the prompt
-    # @param version [Integer, nil] Optional specific version number
-    # @param label [String, nil] Optional label
-    # @return [Hash] The prompt data
-    def fetch_with_appropriate_caching_strategy(cache_key, name, version, label)
-      if swr_cache_available?
-        fetch_with_swr_cache(cache_key, name, version, label)
-      elsif distributed_cache_available?
-        fetch_with_distributed_cache(cache_key, name, version, label)
-      else
-        fetch_with_simple_cache(cache_key, name, version, label)
-      end
     end
 
     # Check if SWR cache is available
@@ -1060,16 +1061,6 @@ module Langfuse
       cache.fetch_with_lock(cache_key) do
         fetch_prompt_from_api(name, version: version, label: label)
       end
-    end
-
-    # Fetch with simple cache (in-memory cache)
-    def fetch_with_simple_cache(cache_key, name, version, label)
-      cached_data = cache.get(cache_key)
-      return cached_data if cached_data
-
-      prompt_data = fetch_prompt_from_api(name, version: version, label: label)
-      cache.set(cache_key, prompt_data)
-      prompt_data
     end
 
     # Fetch a prompt from the API (without caching)
