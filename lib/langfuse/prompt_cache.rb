@@ -127,8 +127,12 @@ module Langfuse
       @monitor.synchronize do
         # Evict oldest entry if at max size
         evict_oldest if @cache.size >= max_size
-        window = compute_window(ttl: ttl, stale_ttl: stale_ttl)
-        @cache[key] = CacheEntry.new(value, window.fresh_until, window.stale_until)
+        # TTL math is inlined (not extracted to a helper) to keep this hot path
+        # allocation-free apart from the CacheEntry below.
+        effective_ttl = ttl.nil? ? self.ttl : ttl
+        effective_stale_ttl = stale_ttl.nil? ? self.stale_ttl : stale_ttl
+        fresh_until = Time.now + effective_ttl
+        @cache[key] = CacheEntry.new(value, fresh_until, fresh_until + effective_stale_ttl)
         value
       end
     end
