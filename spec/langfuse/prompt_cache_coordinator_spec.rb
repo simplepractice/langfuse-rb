@@ -27,11 +27,7 @@ RSpec.describe Langfuse::PromptCacheCoordinator do
   end
 
   def build_coordinator(cache)
-    described_class.new(
-      cache_capabilities: Langfuse::PromptCacheCapabilities.new(cache),
-      event_emitter: emitter,
-      fetch_prompt: fetch_prompt
-    )
+    described_class.new(cache: cache, event_emitter: emitter, fetch_prompt: fetch_prompt)
   end
 
   it "returns disabled and bypass statuses without writing cache" do

@@ -6,12 +6,9 @@ require "base64"
 require "json"
 require "uri"
 require_relative "prompt_fetch_result"
-require_relative "prompt_cache_capabilities"
 require_relative "prompt_cache_coordinator"
-require_relative "resources/batches"
 require_relative "resources/datasets"
 require_relative "resources/prompts"
-require_relative "resources/traces"
 
 module Langfuse
   # HTTP client for Langfuse API
@@ -30,8 +27,6 @@ module Langfuse
   #
   class ApiClient # rubocop:disable Metrics/ClassLength
     include PromptCacheEvents
-
-    PromptFetchOptions = PromptCacheCoordinator::FetchOptions
 
     # @return [String] Langfuse public API key
     attr_reader :public_key
@@ -69,11 +64,9 @@ module Langfuse
       @timeout = timeout
       @logger = logger || Logger.new($stdout, level: Logger::WARN)
       @cache = cache
-      @cache_capabilities = PromptCacheCapabilities.new(cache)
-      @cache_backend_name = @cache_capabilities.backend_name
       setup_prompt_cache_events(cache_observer: cache_observer)
       @prompt_cache_coordinator = PromptCacheCoordinator.new(
-        cache_capabilities: @cache_capabilities,
+        cache: cache,
         event_emitter: self,
         fetch_prompt: ->(name, version:, label:) { fetch_prompt_from_api(name, version: version, label: label) }
       )
@@ -214,9 +207,12 @@ module Langfuse
     #
     # @return [Boolean] true when the configured backend is usable
     # @raise [ConfigurationError] if the backend is invalid
+    # rubocop:disable Naming/PredicateMethod
     def validate_prompt_cache_backend!
-      @cache_capabilities.validate!
+      @cache&.validate!
+      true
     end
+    # rubocop:enable Naming/PredicateMethod
 
     # Create a new prompt (or new version if prompt with same name exists)
     #
@@ -297,7 +293,17 @@ module Langfuse
     #   ]
     #   api_client.send_batch(events)
     def send_batch(events)
-      @batch_resource.send_batch(events)
+      raise ArgumentError, "events must be an array" unless events.is_a?(Array)
+      raise ArgumentError, "events array cannot be empty" if events.empty?
+
+      response = connection.post("/api/public/ingestion", { batch: events })
+      handle_batch_response(response)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Langfuse batch send failed: Retries exhausted - #{e.response.status}")
+      handle_batch_response(e.response)
+    rescue Faraday::Error => e
+      logger.error("Langfuse batch send failed: #{e.message}")
+      raise ApiError, "Batch send failed: #{e.message}"
     end
 
     # Create a dataset run item (link a trace to a dataset item within a run)
@@ -389,11 +395,11 @@ module Langfuse
 
     # Shut down the API client and release resources
     #
-    # Shuts down the cache if it supports shutdown (e.g., SWR thread pool).
+    # Shuts down the cache backend's SWR thread pool when present.
     #
     # @return [void]
     def shutdown
-      @cache_capabilities.shutdown
+      @cache&.shutdown
     end
 
     # List traces in the project
@@ -418,39 +424,20 @@ module Langfuse
     #
     # @example
     #   traces = api_client.list_traces(page: 1, limit: 10, name: "my-trace")
-    # rubocop:disable Metrics/ParameterLists
-    def list_traces(page: nil, limit: nil, user_id: nil, name: nil, session_id: nil,
-                    from_timestamp: nil, to_timestamp: nil, order_by: nil,
-                    tags: nil, version: nil, release: nil, environment: nil,
-                    fields: nil, filter: nil)
-      @trace_resource.list(
-        page: page, limit: limit, user_id: user_id, name: name,
-        session_id: session_id, from_timestamp: from_timestamp,
-        to_timestamp: to_timestamp, order_by: order_by, tags: tags,
-        version: version, release: release, environment: environment,
-        fields: fields, filter: filter
-      )
+    def list_traces(**)
+      list_traces_paginated(**)["data"] || []
     end
-    # rubocop:enable Metrics/ParameterLists
 
     # Full paginated response including "meta" for internal pagination use
     #
     # @api private
     # @return [Hash] Full response hash with "data" array and "meta" pagination info
-    # rubocop:disable Metrics/ParameterLists
-    def list_traces_paginated(page: nil, limit: nil, user_id: nil, name: nil, session_id: nil,
-                              from_timestamp: nil, to_timestamp: nil, order_by: nil,
-                              tags: nil, version: nil, release: nil, environment: nil,
-                              fields: nil, filter: nil)
-      @trace_resource.list_paginated(
-        page: page, limit: limit, user_id: user_id, name: name,
-        session_id: session_id, from_timestamp: from_timestamp,
-        to_timestamp: to_timestamp, order_by: order_by, tags: tags,
-        version: version, release: release, environment: environment,
-        fields: fields, filter: filter
-      )
+    def list_traces_paginated(**options)
+      with_faraday_error_handling do
+        response = connection.get("/api/public/traces", build_traces_params(**options))
+        handle_response(response)
+      end
     end
-    # rubocop:enable Metrics/ParameterLists
 
     # Fetch a trace by ID
     #
@@ -463,7 +450,10 @@ module Langfuse
     # @example
     #   trace = api_client.get_trace("trace-uuid-123")
     def get_trace(id)
-      @trace_resource.get(id)
+      with_faraday_error_handling do
+        response = connection.get("/api/public/traces/#{URI.encode_uri_component(id)}")
+        handle_response(response)
+      end
     end
 
     # List all datasets in the project
@@ -609,60 +599,39 @@ module Langfuse
 
     private
 
-    attr_reader :cache_backend_name
-
-    def initialize_resources
-      dependencies = resource_dependencies
-      @prompt_resource = build_prompt_resource(dependencies)
-      @batch_resource = build_batch_resource(dependencies)
-      @dataset_resource = build_dataset_resource(dependencies)
-      @trace_resource = build_trace_resource(dependencies)
+    def cache_backend_name
+      @prompt_cache_coordinator.backend_name
     end
 
-    def resource_dependencies
+    def initialize_resources
       response_handler = ->(response) { handle_response(response) }
       error_handler = ->(&block) { with_faraday_error_handling(&block) }
       connection_factory = -> { connection }
-      {
+      @prompt_resource = Resources::Prompts.new(
         connection: connection_factory,
-        response_handler: response_handler,
-        error_handler: error_handler
-      }
-    end
-
-    def build_prompt_resource(dependencies)
-      Resources::Prompts.new(
-        connection: dependencies.fetch(:connection),
-        handle_response: dependencies.fetch(:response_handler),
-        with_error_handling: dependencies.fetch(:error_handler),
+        handle_response: response_handler,
+        with_error_handling: error_handler,
         invalidate_cache: ->(name) { @prompt_cache_coordinator.invalidate_after_mutation(name) }
       )
-    end
-
-    def build_batch_resource(dependencies)
-      Resources::Batches.new(
-        connection: dependencies.fetch(:connection),
-        handle_batch_response: ->(response) { handle_batch_response(response) },
-        logger: logger
-      )
-    end
-
-    def build_dataset_resource(dependencies)
-      Resources::Datasets.new(
-        connection: dependencies.fetch(:connection),
-        handle_response: dependencies.fetch(:response_handler),
+      @dataset_resource = Resources::Datasets.new(
+        connection: connection_factory,
+        handle_response: response_handler,
         handle_delete_dataset_item_response: ->(response, id) { handle_delete_dataset_item_response(response, id) },
-        with_error_handling: dependencies.fetch(:error_handler),
+        with_error_handling: error_handler,
         logger: logger
       )
     end
 
-    def build_trace_resource(dependencies)
-      Resources::Traces.new(
-        connection: dependencies.fetch(:connection),
-        handle_response: dependencies.fetch(:response_handler),
-        with_error_handling: dependencies.fetch(:error_handler)
-      )
+    def build_traces_params(**options)
+      {
+        page: options[:page], limit: options[:limit], userId: options[:user_id], name: options[:name],
+        sessionId: options[:session_id],
+        fromTimestamp: options[:from_timestamp]&.iso8601,
+        toTimestamp: options[:to_timestamp]&.iso8601,
+        orderBy: options[:order_by], tags: options[:tags], version: options[:version],
+        release: options[:release], environment: options[:environment], fields: options[:fields],
+        filter: options[:filter]
+      }.compact
     end
 
     # Fetch a prompt from the API (without caching)

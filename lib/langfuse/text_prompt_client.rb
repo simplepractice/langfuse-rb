@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require_relative "prompt_renderer"
-require_relative "prompt_client_metadata"
 
 module Langfuse
   # Text prompt client for compiling text prompts with variable substitution
@@ -21,7 +20,32 @@ module Langfuse
   #   text_prompt.labels    # => ["production"]
   #
   class TextPromptClient
-    include PromptClientMetadata
+    # @return [String] Prompt name
+    attr_reader :name
+
+    # @return [Integer] Prompt version number
+    attr_reader :version
+
+    # @return [Array<String>] Labels assigned to this prompt
+    attr_reader :labels
+
+    # @return [Array<String>] Tags assigned to this prompt
+    attr_reader :tags
+
+    # @return [Hash] Prompt configuration
+    attr_reader :config
+
+    # @return [String] Raw prompt template
+    attr_reader :prompt
+
+    # @return [String, nil] Optional commit message for this prompt version
+    attr_reader :commit_message
+
+    # @return [Hash, nil] Optional dependency resolution graph for composed prompts
+    attr_reader :resolution_graph
+
+    # @return [Boolean] Whether this client uses caller-provided fallback content
+    attr_reader :is_fallback
 
     # Initialize a new text prompt client
     #
@@ -29,7 +53,17 @@ module Langfuse
     # @param is_fallback [Boolean] Whether this client wraps caller-provided fallback content
     # @raise [ArgumentError] if prompt data is invalid
     def initialize(prompt_data, is_fallback: false)
-      initialize_prompt_metadata(prompt_data, is_fallback: is_fallback)
+      validate_prompt_data!(prompt_data)
+
+      @name = prompt_data["name"]
+      @version = prompt_data["version"]
+      @prompt = prompt_data["prompt"]
+      @labels = prompt_data["labels"] || []
+      @tags = prompt_data["tags"] || []
+      @config = prompt_data["config"] || {}
+      @commit_message = prompt_data["commitMessage"]
+      @resolution_graph = prompt_data["resolutionGraph"]
+      @is_fallback = is_fallback
     end
 
     # @return [String] Prompt type ("text")
@@ -50,6 +84,15 @@ module Langfuse
       return prompt if kwargs.empty?
 
       PromptRenderer.render(prompt, kwargs)
+    end
+
+    private
+
+    def validate_prompt_data!(prompt_data)
+      raise ArgumentError, "prompt_data must be a Hash" unless prompt_data.is_a?(Hash)
+      raise ArgumentError, "prompt_data must include 'prompt' field" unless prompt_data.key?("prompt")
+      raise ArgumentError, "prompt_data must include 'name' field" unless prompt_data.key?("name")
+      raise ArgumentError, "prompt_data must include 'version' field" unless prompt_data.key?("version")
     end
   end
 end

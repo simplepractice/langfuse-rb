@@ -10,6 +10,29 @@ module Langfuse
     # ActiveSupport::Notifications event name used for prompt cache events.
     PROMPT_CACHE_NOTIFICATION = "prompt_cache.langfuse"
 
+    # Build a prompt cache event payload from a key, status, source, and backend.
+    # Shared by the ApiClient mixin and PromptCacheCoordinator so a payload-shape
+    # change can't drift between the two emitters.
+    #
+    # @param key [PromptCacheKey] Logical and storage cache key
+    # @param cache_status [Symbol] Cache status
+    # @param source [Symbol] Event source
+    # @param backend [String] Backend identifier
+    # @param extra [Hash] Additional payload fields
+    # @return [Hash] Event payload
+    def self.build_payload(key, cache_status:, source:, backend:, extra: {})
+      {
+        name: key.name,
+        version: key.version,
+        label: key.resolved_label,
+        logical_key: key.logical_key,
+        storage_key: key.storage_key,
+        backend: backend,
+        cache_status: cache_status,
+        source: source
+      }.merge(extra)
+    end
+
     # Configure prompt cache event dispatch. Wraps the observer once into a
     # 1-arg callable so the per-event hot path never re-checks arity.
     #
@@ -56,16 +79,13 @@ module Langfuse
 
     # @api private
     def event_payload(key, cache_status, source, extra = {})
-      {
-        name: key.name,
-        version: key.version,
-        label: key.resolved_label,
-        logical_key: key.logical_key,
-        storage_key: key.storage_key,
-        backend: cache_backend_name,
+      PromptCacheEvents.build_payload(
+        key,
         cache_status: cache_status,
-        source: source
-      }.merge(extra)
+        source: source,
+        backend: cache_backend_name,
+        extra: extra
+      )
     end
 
     # @api private

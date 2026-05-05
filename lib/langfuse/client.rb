@@ -929,13 +929,23 @@ module Langfuse
       )
     end
 
+    VALID_PROMPT_TYPES = %i[text chat].freeze
+    private_constant :VALID_PROMPT_TYPES
+
     # Build the appropriate prompt client based on prompt type
     #
     # @param prompt_data [Hash] The prompt data from API
     # @return [TextPromptClient, ChatPromptClient]
     # @raise [ApiError] if prompt type is unknown
-    def build_prompt_client(prompt_data)
-      PromptClientFactory.build(prompt_data)
+    def build_prompt_client(prompt_data, is_fallback: false)
+      case prompt_data["type"]
+      when "text"
+        TextPromptClient.new(prompt_data, is_fallback: is_fallback)
+      when "chat"
+        ChatPromptClient.new(prompt_data, is_fallback: is_fallback)
+      else
+        raise ApiError, "Unknown prompt type: #{prompt_data['type']}"
+      end
     end
 
     # Build a fallback prompt client from fallback data
@@ -946,7 +956,19 @@ module Langfuse
     # @return [TextPromptClient, ChatPromptClient]
     # @raise [ArgumentError] if type is invalid
     def build_fallback_prompt_client(name, fallback, type)
-      PromptClientFactory.build_fallback(name, fallback, type)
+      validate_prompt_type!(type)
+      build_prompt_client(
+        {
+          "name" => name,
+          "version" => 0,
+          "type" => type.to_s,
+          "prompt" => fallback,
+          "labels" => [],
+          "tags" => ["fallback"],
+          "config" => {}
+        },
+        is_fallback: true
+      )
     end
 
     # Validate prompt type parameter
@@ -954,7 +976,9 @@ module Langfuse
     # @param type [Symbol] The type to validate
     # @raise [ArgumentError] if type is invalid
     def validate_prompt_type!(type)
-      PromptClientFactory.validate_type!(type)
+      return if VALID_PROMPT_TYPES.include?(type)
+
+      raise ArgumentError, "Invalid type: #{type}. Must be :text or :chat"
     end
 
     # Validate prompt content matches the declared type
@@ -963,7 +987,12 @@ module Langfuse
     # @param type [Symbol] The declared type
     # @raise [ArgumentError] if content doesn't match type
     def validate_prompt_content!(prompt, type)
-      PromptClientFactory.validate_content!(prompt, type)
+      case type
+      when :text
+        raise ArgumentError, "Text prompt must be a String" unless prompt.is_a?(String)
+      when :chat
+        raise ArgumentError, "Chat prompt must be an Array" unless prompt.is_a?(Array)
+      end
     end
 
     # Normalize prompt content for API request
@@ -975,17 +1004,16 @@ module Langfuse
     # @param type [Symbol] The prompt type
     # @return [String, Array] Normalized content
     def normalize_prompt_content(prompt, type)
-      PromptClientFactory.normalize_content(prompt, type)
-    end
+      return prompt if type == :text
 
-    # @api private
-    def placeholder_prompt_content(message)
-      PromptClientFactory.send(:placeholder_prompt_content, message)
-    end
-
-    # @api private
-    def normalize_chat_message_content(message)
-      PromptClientFactory.send(:normalize_chat_message_content, message)
+      prompt.map do |message|
+        normalized = message.transform_keys(&:to_s)
+        if normalized["type"] == ChatPromptClient::PLACEHOLDER_TYPE
+          { "type" => ChatPromptClient::PLACEHOLDER_TYPE, "name" => normalized["name"].to_s }
+        else
+          normalized.merge("role" => normalized["role"]&.to_s, "content" => normalized["content"])
+        end
+      end
     end
   end
   # rubocop:enable Metrics/ClassLength
