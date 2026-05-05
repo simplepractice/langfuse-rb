@@ -148,25 +148,22 @@ module Langfuse
     #
     # @return [Boolean]
     def cache_enabled?
-      cache = client.api_client.cache
-      return false if cache.nil?
-
-      cache.ttl&.positive? || false
+      client.prompt_cache_stats[:enabled] == true
     end
 
     # Get cache statistics (if supported by backend)
     #
     # @return [Hash, nil] Cache stats or nil if not supported
     def cache_stats
-      cache = client.api_client.cache
-      return nil unless cache
+      stats = client.prompt_cache_stats
+      return nil unless stats[:enabled]
 
-      stats = {}
-      stats[:backend] = cache.class.name.split("::").last
-      stats[:ttl] = cache.ttl if cache.respond_to?(:ttl)
-      stats[:size] = cache.size if cache.respond_to?(:size)
-      stats[:max_size] = cache.max_size if cache.respond_to?(:max_size)
-      stats
+      {
+        backend: public_backend_name(stats[:backend]),
+        ttl: stats[:ttl],
+        size: stats[:size],
+        max_size: stats[:max_size]
+      }
     end
 
     private
@@ -212,6 +209,17 @@ module Langfuse
     # @return [void]
     def record_failure(results, name, error)
       results[:failed] << { name: name, error: error }
+    end
+
+    def public_backend_name(backend)
+      case backend
+      when CacheBackend::MEMORY
+        "PromptCache"
+      when CacheBackend::RAILS
+        "RailsCacheAdapter"
+      else
+        backend.to_s
+      end
     end
   end
 

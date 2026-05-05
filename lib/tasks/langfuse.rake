@@ -141,21 +141,17 @@ namespace :langfuse do
   task clear_cache: :environment do
     require "langfuse"
 
-    cache = Langfuse.client.api_client.cache
+    stats = Langfuse.client.prompt_cache_stats
 
-    if cache.nil?
+    unless stats[:enabled]
       puts "Cache is disabled (cache_ttl = 0)"
       exit 0
     end
 
-    if cache.respond_to?(:clear)
-      cache.clear
-      puts "Cache cleared successfully! ✓"
-      puts "Backend: #{Langfuse.configuration.cache_backend}"
-    else
-      puts "Cache backend does not support clearing"
-      exit 1
-    end
+    generation = Langfuse.client.clear_prompt_cache
+    puts "Cache cleared successfully! ✓"
+    puts "Backend: #{Langfuse.configuration.cache_backend}"
+    puts "Generation: #{generation}" unless generation.nil?
   end
 
   # Helper method to display warming results

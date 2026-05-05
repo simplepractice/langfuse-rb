@@ -1051,6 +1051,22 @@ RSpec.describe Langfuse::ApiClient do
       expect(observer.payloads.first).to include(logical_key: "greeting:production")
     end
 
+    it "supports one-argument proc cache observers" do
+      payloads = []
+      client = described_class.new(
+        public_key: public_key,
+        secret_key: secret_key,
+        base_url: base_url,
+        cache: cache,
+        cache_observer: ->(payload) { payloads << payload }
+      )
+      stub_prompt(prompt_response)
+
+      client.get_prompt_result(prompt_name)
+
+      expect(payloads.map { |payload| payload.fetch(:event) }).to include(:miss, :write)
+    end
+
     it "does not build cache event payloads when no listeners are active" do
       client = described_class.new(
         public_key: public_key,

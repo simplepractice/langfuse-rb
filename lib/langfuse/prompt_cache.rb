@@ -209,6 +209,9 @@ module Langfuse
           current_generation_entries: counts.fetch(:current),
           orphaned_entries: counts.fetch(:orphaned),
           total_entries: @cache.size,
+          ttl: ttl,
+          size: @cache.size,
+          max_size: max_size,
           global_generation: @global_generation,
           unsupported_counts: []
         }

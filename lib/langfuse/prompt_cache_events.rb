@@ -100,7 +100,8 @@ module Langfuse
     def wrap_cache_observer(observer)
       return nil if observer.nil?
 
-      if observer.method(:call).arity == 1
+      arity = observer.respond_to?(:arity) ? observer.arity : observer.method(:call).arity
+      if arity == 1
         ->(payload) { observer.call(payload) }
       else
         ->(payload) { observer.call(payload[:event], payload) }

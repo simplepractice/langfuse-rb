@@ -52,8 +52,8 @@ Block receives a `Langfuse::Config` object with these properties:
 | `flush_interval`               | Integer | No       | `10`                           | Score + trace export interval (s) |
 | `sample_rate`                  | Float   | No       | `1.0`                          | Trace + trace-linked score sampling rate (`0.0..1.0`) |
 | `logger`                       | Logger  | No       | Auto-detected                  | Logger instance                   |
-| `tracing_async`                | Boolean | No       | `true`                         | ⚠️ Experimental (OTel export mode) |
-| `job_queue`                    | Symbol  | No       | `:default`                     | ⚠️ Experimental (not implemented) |
+| `tracing_async`                | Boolean | No       | `true`                         | ⚠️ Experimental (OTel batch scheduling) |
+| `job_queue`                    | Symbol  | No       | `:default`                     | Reserved/no-op for future job integration |
 | `environment`                  | String  | No       | `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]`) | Default trace environment          |
 | `release`                      | String  | No       | `nil` (or `ENV["LANGFUSE_RELEASE"]` / common CI commit SHA env) | Default release identifier         |
 | `should_export_span`           | `#call` | No       | `nil`                          | Span export filter callback        |

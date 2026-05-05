@@ -162,7 +162,10 @@ module Langfuse
         current_generation_entries: nil,
         orphaned_entries: nil,
         total_entries: nil,
-        global_generation: generation_value(global_generation_key),
+        ttl: ttl,
+        size: size,
+        max_size: nil,
+        global_generation: safe_generation_value(global_generation_key),
         unsupported_counts: CacheBackend::UNSUPPORTED_COUNT_KEYS
       }
     end
@@ -349,6 +352,12 @@ module Langfuse
       Rails.cache.read(key).to_i.tap do |value|
         memoize_generation_value(key, value, now)
       end
+    end
+
+    def safe_generation_value(key)
+      return nil unless Rails.cache.respond_to?(:read)
+
+      generation_value(key)
     end
 
     def bump_generation(key)

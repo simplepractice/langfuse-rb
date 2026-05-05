@@ -301,8 +301,8 @@ config.logger = Logger.new(IO::NULL)
 
 - **Type:** Boolean
 - **Default:** `true`
-- **Status:** Implemented for OpenTelemetry batching; ActiveJob integration is not implemented
-- **Description:** Controls OpenTelemetry export behavior. When `true`, spans are exported in the background on a schedule. When `false`, spans are still batched with a longer schedule delay and are typically flushed explicitly at lifecycle boundaries.
+- **Status:** Implemented for OpenTelemetry batch scheduling; ActiveJob integration is not implemented
+- **Description:** Controls OpenTelemetry export scheduling. When `true`, spans use the configured `flush_interval` schedule. When `false`, spans still use OpenTelemetry's batch processor with a long schedule delay and are typically flushed explicitly at lifecycle boundaries.
 
 ```ruby
 config.tracing_async = true
@@ -314,11 +314,11 @@ config.tracing_async = true
 
 - **Type:** Symbol
 - **Default:** `:default`
-- **Status:** Not yet implemented (placeholder)
-- **Description:** Future: ActiveJob queue name for async tracing
+- **Status:** Reserved/no-op
+- **Description:** Reserved for a future ActiveJob integration. It is kept for configuration compatibility and has no runtime effect today.
 
 ```ruby
-config.job_queue = :langfuse  # Placeholder - no effect currently
+config.job_queue = :langfuse  # Reserved/no-op today
 ```
 
 **Current Behavior:** No ActiveJob integration yet. Reserved for future implementation.

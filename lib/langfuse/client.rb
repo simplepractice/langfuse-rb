@@ -180,12 +180,9 @@ module Langfuse
     #
     # @return [Boolean] true when the configured backend is usable
     # @raise [ConfigurationError] if the backend is invalid
-    # rubocop:disable Naming/PredicateMethod
     def validate_prompt_cache_backend!
-      api_client.cache&.validate! if api_client.cache.respond_to?(:validate!)
-      true
+      api_client.validate_prompt_cache_backend!
     end
-    # rubocop:enable Naming/PredicateMethod
 
     # List all prompts in the Langfuse project
     #
@@ -877,7 +874,7 @@ module Langfuse
 
     def fallback_cache_status(cache_ttl)
       return CacheStatus::BYPASS if cache_ttl&.zero?
-      return CacheStatus::DISABLED unless api_client.cache
+      return CacheStatus::DISABLED unless api_client.prompt_cache_stats[:enabled]
 
       CacheStatus::MISS
     end
@@ -938,16 +935,7 @@ module Langfuse
     # @return [TextPromptClient, ChatPromptClient]
     # @raise [ApiError] if prompt type is unknown
     def build_prompt_client(prompt_data)
-      type = prompt_data["type"]
-
-      case type
-      when "text"
-        TextPromptClient.new(prompt_data)
-      when "chat"
-        ChatPromptClient.new(prompt_data)
-      else
-        raise ApiError, "Unknown prompt type: #{type}"
-      end
+      PromptClientFactory.build(prompt_data)
     end
 
     # Build a fallback prompt client from fallback data
@@ -958,25 +946,7 @@ module Langfuse
     # @return [TextPromptClient, ChatPromptClient]
     # @raise [ArgumentError] if type is invalid
     def build_fallback_prompt_client(name, fallback, type)
-      validate_prompt_type!(type)
-
-      # Create minimal prompt data structure
-      prompt_data = {
-        "name" => name,
-        "version" => 0,
-        "type" => type.to_s,
-        "prompt" => fallback,
-        "labels" => [],
-        "tags" => ["fallback"],
-        "config" => {}
-      }
-
-      case type
-      when :text
-        TextPromptClient.new(prompt_data, is_fallback: true)
-      when :chat
-        ChatPromptClient.new(prompt_data, is_fallback: true)
-      end
+      PromptClientFactory.build_fallback(name, fallback, type)
     end
 
     # Validate prompt type parameter
@@ -984,10 +954,7 @@ module Langfuse
     # @param type [Symbol] The type to validate
     # @raise [ArgumentError] if type is invalid
     def validate_prompt_type!(type)
-      valid_types = %i[text chat]
-      return if valid_types.include?(type)
-
-      raise ArgumentError, "Invalid type: #{type}. Must be :text or :chat"
+      PromptClientFactory.validate_type!(type)
     end
 
     # Validate prompt content matches the declared type
@@ -996,12 +963,7 @@ module Langfuse
     # @param type [Symbol] The declared type
     # @raise [ArgumentError] if content doesn't match type
     def validate_prompt_content!(prompt, type)
-      case type
-      when :text
-        raise ArgumentError, "Text prompt must be a String" unless prompt.is_a?(String)
-      when :chat
-        raise ArgumentError, "Chat prompt must be an Array" unless prompt.is_a?(Array)
-      end
+      PromptClientFactory.validate_content!(prompt, type)
     end
 
     # Normalize prompt content for API request
@@ -1013,31 +975,17 @@ module Langfuse
     # @param type [Symbol] The prompt type
     # @return [String, Array] Normalized content
     def normalize_prompt_content(prompt, type)
-      return prompt if type == :text
-
-      # Normalize chat messages to use string keys
-      prompt.map do |message|
-        normalized = message.transform_keys(&:to_s)
-        next placeholder_prompt_content(normalized) if normalized["type"] == ChatPromptClient::PLACEHOLDER_TYPE
-
-        normalize_chat_message_content(normalized)
-      end
+      PromptClientFactory.normalize_content(prompt, type)
     end
 
     # @api private
     def placeholder_prompt_content(message)
-      {
-        "type" => ChatPromptClient::PLACEHOLDER_TYPE,
-        "name" => message["name"].to_s
-      }
+      PromptClientFactory.send(:placeholder_prompt_content, message)
     end
 
     # @api private
     def normalize_chat_message_content(message)
-      message.merge(
-        "role" => message["role"]&.to_s,
-        "content" => message["content"]
-      )
+      PromptClientFactory.send(:normalize_chat_message_content, message)
     end
   end
   # rubocop:enable Metrics/ClassLength

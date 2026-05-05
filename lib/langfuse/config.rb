@@ -60,7 +60,7 @@ module Langfuse
     # @return [#call, nil] Observer called for prompt cache events
     attr_accessor :prompt_cache_observer
 
-    # @return [Boolean] Use async processing for traces (requires ActiveJob)
+    # @return [Boolean] Use OpenTelemetry batch scheduling for trace export
     attr_accessor :tracing_async
 
     # @return [Integer] Number of events to batch before sending
@@ -69,7 +69,7 @@ module Langfuse
     # @return [Integer] Interval in seconds to flush buffered events
     attr_accessor :flush_interval
 
-    # @return [Symbol] ActiveJob queue name for async processing
+    # @return [Symbol] Reserved no-op queue name for future async job integration
     attr_accessor :job_queue
 
     # @return [String, nil] Default tracing environment applied to new traces/observations
