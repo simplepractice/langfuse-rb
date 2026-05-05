@@ -149,7 +149,9 @@ namespace :langfuse do
     end
 
     generation = Langfuse.client.clear_prompt_cache
-    puts "Cache cleared successfully! ✓"
+    puts "Prompt cache logically cleared ✓"
+    puts "Existing backend entries remain until their TTL expires;"
+    puts "subsequent fetches will miss the old generation and re-populate."
     puts "Backend: #{Langfuse.configuration.cache_backend}"
     puts "Generation: #{generation}" unless generation.nil?
   end

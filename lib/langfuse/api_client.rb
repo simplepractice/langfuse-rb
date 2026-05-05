@@ -420,17 +420,40 @@ module Langfuse
     #
     # @example
     #   traces = api_client.list_traces(page: 1, limit: 10, name: "my-trace")
-    def list_traces(**)
-      list_traces_paginated(**)["data"] || []
+    # rubocop:disable Metrics/ParameterLists
+    def list_traces(page: nil, limit: nil, user_id: nil, name: nil, session_id: nil,
+                    from_timestamp: nil, to_timestamp: nil, order_by: nil,
+                    tags: nil, version: nil, release: nil, environment: nil,
+                    fields: nil, filter: nil)
+      list_traces_paginated(
+        page: page, limit: limit, user_id: user_id, name: name,
+        session_id: session_id, from_timestamp: from_timestamp,
+        to_timestamp: to_timestamp, order_by: order_by, tags: tags,
+        version: version, release: release, environment: environment,
+        fields: fields, filter: filter
+      )["data"] || []
     end
+    # rubocop:enable Metrics/ParameterLists
 
     # Full paginated response including "meta" for internal pagination use
     #
     # @api private
     # @return [Hash] Full response hash with "data" array and "meta" pagination info
-    def list_traces_paginated(**)
-      request(:get, "/api/public/traces", params: build_traces_params(**))
+    # rubocop:disable Metrics/ParameterLists
+    def list_traces_paginated(page: nil, limit: nil, user_id: nil, name: nil, session_id: nil,
+                              from_timestamp: nil, to_timestamp: nil, order_by: nil,
+                              tags: nil, version: nil, release: nil, environment: nil,
+                              fields: nil, filter: nil)
+      params = build_traces_params(
+        page: page, limit: limit, user_id: user_id, name: name,
+        session_id: session_id, from_timestamp: from_timestamp,
+        to_timestamp: to_timestamp, order_by: order_by, tags: tags,
+        version: version, release: release, environment: environment,
+        fields: fields, filter: filter
+      )
+      request(:get, "/api/public/traces", params: params)
     end
+    # rubocop:enable Metrics/ParameterLists
 
     # Fetch a trace by ID
     #
