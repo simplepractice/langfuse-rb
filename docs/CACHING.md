@@ -566,10 +566,13 @@ RUN bundle exec rake langfuse:warm_cache_all
 
 See [CONFIGURATION.md](CONFIGURATION.md) for all cache-related configuration options:
 
-- `cache_backend` - `:memory` or `:rails`
+- `cache_backend` - `:memory`, `:rails`, or `:auto`
 - `cache_ttl` - Time-to-live in seconds
 - `cache_max_size` - Max prompts (in-memory only)
 - `cache_lock_timeout` - Lock timeout (Rails.cache only)
+- `cache_stale_ttl` - Stale serving window; `> 0` enables SWR
+- `cache_refresh_threads` - Background refresh worker count
+- `prompt_cache_observer` - Optional cache event hook
 
 ## Performance Considerations
 
@@ -626,12 +629,11 @@ config.cache_backend = :rails
 ### 2. Enable SWR for Production
 
 ```ruby
-# Development: disabled for predictable behavior
-config.cache_stale_while_revalidate = !Rails.env.development?
-
-# Production: enabled for best performance
 if Rails.env.production?
+  config.cache_stale_while_revalidate = true  # Advisory intent flag
   config.cache_stale_ttl = config.cache_ttl  # Set explicitly (common default)
+else
+  config.cache_stale_ttl = 0  # Disabled for predictable prompt iteration
 end
 ```
 
@@ -655,8 +657,14 @@ bundle exec rake langfuse:warm_cache_all
 ### 5. Monitor Cache Performance
 
 ```ruby
-# Log cache hits/misses
-Rails.logger.info "Fetching prompt: #{name} (cache: #{cache_hit? ? 'HIT' : 'MISS'})"
+config.prompt_cache_observer = lambda do |event, payload|
+  Rails.logger.info(
+    event: event,
+    prompt: payload[:name],
+    status: payload[:cache_status],
+    source: payload[:source]
+  )
+end
 ```
 
 ### 6. Handle Cache Failures Gracefully
@@ -674,9 +682,11 @@ prompt = Langfuse.client.get_prompt(
 
 ```ruby
 # Rails console
-Langfuse.client.api_client.cache&.clear
+Langfuse.client.invalidate_prompt_cache("greeting", label: "production")
+Langfuse.client.invalidate_prompt_cache_by_name("greeting")
+Langfuse.client.clear_prompt_cache
 
-# Or use rake task
+# Or use the rake task
 rake langfuse:clear_cache
 ```
 
@@ -725,8 +735,10 @@ end
 **Solutions**:
 
 1. Wait for TTL to expire
-2. Clear cache manually: `rake langfuse:clear_cache`
-3. Reduce `cache_ttl` in development
+2. Refresh one prompt now: `Langfuse.client.refresh_prompt("greeting")`
+3. Invalidate cached prompt entries: `Langfuse.client.invalidate_prompt_cache_by_name("greeting")`
+4. Clear the prompt cache namespace: `Langfuse.client.clear_prompt_cache`
+5. Reduce `cache_ttl` in development
 
 ### Stampede Protection Not Working
 

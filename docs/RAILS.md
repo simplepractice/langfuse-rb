@@ -253,7 +253,7 @@ Useful console checks:
 
 ```ruby
 Langfuse.configuration
-Langfuse.client.api_client.cache
+Langfuse.client.prompt_cache_stats
 ```
 
 ## Troubleshooting
@@ -263,11 +263,14 @@ Langfuse.client.api_client.cache
 The usual problem is stale cache, not a broken prompt API.
 
 1. Wait for `cache_ttl` to expire.
-2. Clear the cache entry store directly if you need to inspect fresh state now.
-3. Lower `cache_ttl` in development if you are iterating quickly.
+2. Refresh the specific prompt if you need fresh state now.
+3. Invalidate the prompt name or clear the prompt cache namespace.
+4. Lower `cache_ttl` in development if you are iterating quickly.
 
 ```ruby
-Langfuse.client.api_client.cache&.clear
+Langfuse.client.refresh_prompt("greeting", label: "production")
+Langfuse.client.invalidate_prompt_cache_by_name("greeting")
+Langfuse.client.clear_prompt_cache
 ```
 
 ### Traces Missing Entirely

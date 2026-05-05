@@ -42,11 +42,12 @@ Block receives a `Langfuse::Config` object with these properties:
 | `timeout`                      | Integer | No       | `5`                            | HTTP timeout (seconds)            |
 | `cache_ttl`                    | Integer | No       | `60`                           | Prompt cache TTL (seconds)        |
 | `cache_max_size`               | Integer | No       | `1000`                         | Max cached prompts                |
-| `cache_backend`                | Symbol  | No       | `:memory`                      | `:memory` or `:rails`             |
+| `cache_backend`                | Symbol  | No       | `:memory`                      | `:memory`, `:rails`, or `:auto`   |
 | `cache_lock_timeout`           | Integer | No       | `10`                           | Lock timeout (seconds)            |
 | `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Advisory SWR intent flag (effective activation depends on `cache_stale_ttl`) |
 | `cache_stale_ttl`              | Integer or `:indefinite` | No | `0`                  | Stale TTL (seconds, `>0` enables SWR) |
 | `cache_refresh_threads`        | Integer | No       | `5`                            | Background refresh threads        |
+| `prompt_cache_observer`        | Callable | No      | `nil`                          | Prompt cache event hook           |
 | `batch_size`                   | Integer | No       | `50`                           | Score + trace export batch size   |
 | `flush_interval`               | Integer | No       | `10`                           | Score + trace export interval (s) |
 | `sample_rate`                  | Float   | No       | `1.0`                          | Trace + trace-linked score sampling rate (`0.0..1.0`) |

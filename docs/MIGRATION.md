@@ -685,8 +685,8 @@ prompts:
 ```ruby
 # In Rails console
 Langfuse.reset!  # Clears everything
-# Or just clear cache
-Langfuse.client.api_client.cache&.clear
+# Or just clear the prompt cache namespace
+Langfuse.client.clear_prompt_cache
 ```
 
 ### Problem: Variables not substituting correctly

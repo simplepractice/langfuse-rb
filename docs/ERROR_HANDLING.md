@@ -50,8 +50,8 @@ end
 **Validation checklist:**
 - `public_key` present and starts with `pk-lf-`
 - `secret_key` present and starts with `sk-lf-`
-- `cache_backend` is `:memory` or `:rails`
-- If `:rails`, Rails is defined
+- `cache_backend` is `:memory`, `:rails`, or `:auto`
+- If `:rails` is selected, or `:auto` resolves to `:rails`, Rails and `Rails.cache` are available
 
 ### `Langfuse::UnauthorizedError`
 
@@ -432,8 +432,9 @@ puts config.inspect
 ### Check Cache State
 
 ```ruby
-cache = Langfuse.client.api_client.cache
-puts "Cache backend: #{cache&.class || 'disabled'}"
+stats = Langfuse.client.prompt_cache_stats
+puts "Cache backend: #{stats[:backend]}"
+puts "Cache enabled: #{stats[:enabled]}"
 ```
 
 ### Test Credentials

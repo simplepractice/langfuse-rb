@@ -618,8 +618,9 @@ Validation rules:
 
 - `public_key` must be present
 - `secret_key` must be present
-- `cache_backend` must be `:memory` or `:rails`
-- If `:rails`, Rails must be defined
+- `cache_backend` must be `:memory`, `:rails`, or `:auto`
+- If `:rails` is selected, or `:auto` resolves to `:rails`, Rails and `Rails.cache` must be available
+- `prompt_cache_observer` must respond to `#call` (if set)
 - `should_export_span` must respond to `#call` (if set)
 - `mask` must respond to `#call` (if set)
 
