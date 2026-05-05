@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-05
+
+### Added
+- Expose prompt cache operations on the client (#89)
+
+### Changed
+- Tighten cache event dispatch and generation safety for prompt caching (#90)
+
+### Documentation
+- Align README with sibling Langfuse SDKs (#88)
+
 ## [0.9.0] - 2026-04-28
 
 ### Added
@@ -113,7 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from legacy ingestion API to OTLP endpoint
 - Removed `tracing_enabled` configuration flag (#2)
 
-[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.6.0...v0.7.0
