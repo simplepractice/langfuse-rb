@@ -216,24 +216,23 @@ module Langfuse
     # @param environment [String, nil] Environment
     # @param data_type [String] Data type string (NUMERIC, BOOLEAN, CATEGORICAL)
     # @return [Hash] Event hash
-    # rubocop:disable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    # rubocop:disable Metrics/ParameterLists
     def build_score_event(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
                           environment:, data_type:, dataset_run_id: nil, config_id: nil)
       body = {
         id: id || SecureRandom.uuid,
         name: name,
         value: value,
-        dataType: data_type
-      }
-      body[:traceId] = trace_id if trace_id
-      body[:sessionId] = session_id if session_id
-      body[:observationId] = observation_id if observation_id
-      body[:comment] = comment if comment
-      body[:metadata] = metadata if metadata
-      body[:environment] = environment if environment
-      body[:datasetRunId] = dataset_run_id if dataset_run_id
-      body[:configId] = config_id if config_id
-
+        dataType: data_type,
+        traceId: trace_id,
+        sessionId: session_id,
+        observationId: observation_id,
+        comment: comment,
+        metadata: metadata,
+        environment: environment,
+        datasetRunId: dataset_run_id,
+        configId: config_id
+      }.compact
       {
         id: SecureRandom.uuid,
         type: "score-create",
@@ -241,7 +240,7 @@ module Langfuse
         body: body
       }
     end
-    # rubocop:enable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    # rubocop:enable Metrics/ParameterLists
 
     # Normalize and validate score value based on data type
     #

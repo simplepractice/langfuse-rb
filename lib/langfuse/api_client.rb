@@ -7,8 +7,6 @@ require "json"
 require "uri"
 require_relative "prompt_fetch_result"
 require_relative "prompt_cache_coordinator"
-require_relative "resources/datasets"
-require_relative "resources/prompts"
 
 module Langfuse
   # HTTP client for Langfuse API
@@ -70,7 +68,6 @@ module Langfuse
         event_emitter: self,
         fetch_prompt: ->(name, version:, label:) { fetch_prompt_from_api(name, version: version, label: label) }
       )
-      initialize_resources
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -105,7 +102,7 @@ module Langfuse
     #     puts "#{prompt['name']} (v#{prompt['version']})"
     #   end
     def list_prompts(page: nil, limit: nil)
-      @prompt_resource.list(page: page, limit: limit)
+      request(:get, "/api/public/v2/prompts", params: { page: page, limit: limit }.compact)["data"] || []
     end
 
     # Fetch a prompt from the Langfuse API
@@ -237,15 +234,12 @@ module Langfuse
     #
     # rubocop:disable Metrics/ParameterLists
     def create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_message: nil)
-      @prompt_resource.create(
-        name: name,
-        prompt: prompt,
-        type: type,
-        config: config,
-        labels: labels,
-        tags: tags,
-        commit_message: commit_message
-      )
+      payload = {
+        name: name, prompt: prompt, type: type, config: config,
+        labels: labels, tags: tags, commitMessage: commit_message
+      }.compact
+      request(:post, "/api/public/v2/prompts", body: payload)
+        .tap { @prompt_cache_coordinator.invalidate_after_mutation(name) }
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -267,7 +261,11 @@ module Langfuse
     #     labels: ["production"]
     #   )
     def update_prompt(name:, version:, labels:)
-      @prompt_resource.update(name: name, version: version, labels: labels)
+      raise ArgumentError, "labels must be an array" unless labels.is_a?(Array)
+
+      path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}/versions/#{version}"
+      request(:patch, path, body: { newLabels: labels })
+        .tap { @prompt_cache_coordinator.invalidate_after_mutation(name) }
     end
 
     # Send a batch of events to the Langfuse ingestion API
@@ -322,14 +320,12 @@ module Langfuse
     #   api_client.create_dataset_run_item(dataset_item_id: "item-123", run_name: "eval-v1", trace_id: "trace-abc")
     def create_dataset_run_item(dataset_item_id:, run_name:, trace_id: nil,
                                 observation_id: nil, metadata: nil, run_description: nil)
-      @dataset_resource.create_dataset_run_item(
-        dataset_item_id: dataset_item_id,
-        run_name: run_name,
-        trace_id: trace_id,
-        observation_id: observation_id,
-        metadata: metadata,
-        run_description: run_description
-      )
+      payload = {
+        datasetItemId: dataset_item_id, runName: run_name,
+        traceId: trace_id, observationId: observation_id,
+        metadata: metadata, runDescription: run_description
+      }.compact
+      request(:post, "/api/public/dataset-run-items", body: payload)
     end
 
     # Fetch a dataset run by dataset and run name
@@ -341,7 +337,7 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
     def get_dataset_run(dataset_name:, run_name:)
-      @dataset_resource.get_dataset_run(dataset_name: dataset_name, run_name: run_name)
+      request(:get, dataset_run_path(dataset_name: dataset_name, run_name: run_name))
     end
 
     # List dataset runs in a dataset
@@ -353,7 +349,7 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
     def list_dataset_runs(dataset_name:, page: nil, limit: nil)
-      @dataset_resource.list_dataset_runs(dataset_name: dataset_name, page: page, limit: limit)
+      list_dataset_runs_paginated(dataset_name: dataset_name, page: page, limit: limit)["data"] || []
     end
 
     # Full paginated response including "meta" for internal pagination use
@@ -361,7 +357,7 @@ module Langfuse
     # @api private
     # @return [Hash] Full response hash with "data" array and "meta" pagination info
     def list_dataset_runs_paginated(dataset_name:, page: nil, limit: nil)
-      @dataset_resource.list_dataset_runs_paginated(dataset_name: dataset_name, page: page, limit: limit)
+      request(:get, dataset_runs_path(dataset_name), params: { page: page, limit: limit }.compact)
     end
 
     # Delete a dataset run by name
@@ -374,7 +370,10 @@ module Langfuse
     # @raise [ApiError] for other API errors
     # @note 404 responses raise NotFoundError to preserve strict delete semantics
     def delete_dataset_run(dataset_name:, run_name:)
-      @dataset_resource.delete_dataset_run(dataset_name: dataset_name, run_name: run_name)
+      with_faraday_error_handling do
+        response = connection.delete(dataset_run_path(dataset_name: dataset_name, run_name: run_name))
+        response.status == 204 ? nil : handle_response(response)
+      end
     end
 
     # Fetch projects accessible with the current API keys
@@ -387,10 +386,7 @@ module Langfuse
     #   data = api_client.get_projects
     #   project_id = data["data"][0]["id"]
     def get_projects # rubocop:disable Naming/AccessorMethodName
-      with_faraday_error_handling do
-        response = connection.get("/api/public/projects")
-        handle_response(response)
-      end
+      request(:get, "/api/public/projects")
     end
 
     # Shut down the API client and release resources
@@ -432,11 +428,8 @@ module Langfuse
     #
     # @api private
     # @return [Hash] Full response hash with "data" array and "meta" pagination info
-    def list_traces_paginated(**options)
-      with_faraday_error_handling do
-        response = connection.get("/api/public/traces", build_traces_params(**options))
-        handle_response(response)
-      end
+    def list_traces_paginated(**)
+      request(:get, "/api/public/traces", params: build_traces_params(**))
     end
 
     # Fetch a trace by ID
@@ -450,10 +443,7 @@ module Langfuse
     # @example
     #   trace = api_client.get_trace("trace-uuid-123")
     def get_trace(id)
-      with_faraday_error_handling do
-        response = connection.get("/api/public/traces/#{URI.encode_uri_component(id)}")
-        handle_response(response)
-      end
+      request(:get, "/api/public/traces/#{URI.encode_uri_component(id)}")
     end
 
     # List all datasets in the project
@@ -467,7 +457,7 @@ module Langfuse
     # @example
     #   datasets = api_client.list_datasets(page: 1, limit: 10)
     def list_datasets(page: nil, limit: nil)
-      @dataset_resource.list_datasets(page: page, limit: limit)
+      request(:get, "/api/public/v2/datasets", params: { page: page, limit: limit }.compact)["data"] || []
     end
 
     # Fetch a dataset by name
@@ -481,7 +471,7 @@ module Langfuse
     # @example
     #   data = api_client.get_dataset("my-dataset")
     def get_dataset(name)
-      @dataset_resource.get_dataset(name)
+      request(:get, "/api/public/v2/datasets/#{URI.encode_uri_component(name)}")
     end
 
     # Create a new dataset
@@ -496,7 +486,8 @@ module Langfuse
     # @example
     #   data = api_client.create_dataset(name: "my-dataset", description: "QA evaluation set")
     def create_dataset(name:, description: nil, metadata: nil)
-      @dataset_resource.create_dataset(name: name, description: description, metadata: metadata)
+      request(:post, "/api/public/v2/datasets",
+              body: { name: name, description: description, metadata: metadata }.compact)
     end
 
     # Create a new dataset item (or upsert if id is provided)
@@ -523,16 +514,13 @@ module Langfuse
     def create_dataset_item(dataset_name:, input: nil, expected_output: nil,
                             metadata: nil, id: nil, source_trace_id: nil,
                             source_observation_id: nil, status: nil)
-      @dataset_resource.create_dataset_item(
-        dataset_name: dataset_name,
-        input: input,
-        expected_output: expected_output,
-        metadata: metadata,
-        id: id,
-        source_trace_id: source_trace_id,
-        source_observation_id: source_observation_id,
-        status: status
-      )
+      payload = {
+        datasetName: dataset_name, id: id, input: input,
+        expectedOutput: expected_output, metadata: metadata,
+        sourceTraceId: source_trace_id, sourceObservationId: source_observation_id,
+        status: status&.to_s&.upcase
+      }.compact
+      request(:post, "/api/public/dataset-items", body: payload)
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -547,7 +535,7 @@ module Langfuse
     # @example
     #   data = api_client.get_dataset_item("item-uuid-123")
     def get_dataset_item(id)
-      @dataset_resource.get_dataset_item(id)
+      request(:get, "/api/public/dataset-items/#{URI.encode_uri_component(id)}")
     end
 
     # List items in a dataset with optional filters
@@ -563,12 +551,8 @@ module Langfuse
     #
     # @example
     #   items = api_client.list_dataset_items(dataset_name: "my-dataset", limit: 50)
-    def list_dataset_items(dataset_name:, page: nil, limit: nil,
-                           source_trace_id: nil, source_observation_id: nil)
-      @dataset_resource.list_dataset_items(
-        dataset_name: dataset_name, page: page, limit: limit,
-        source_trace_id: source_trace_id, source_observation_id: source_observation_id
-      )
+    def list_dataset_items(**)
+      list_dataset_items_paginated(**)["data"] || []
     end
 
     # Full paginated response including "meta" for internal pagination use
@@ -577,10 +561,11 @@ module Langfuse
     # @return [Hash] Full response hash with "data" array and "meta" pagination info
     def list_dataset_items_paginated(dataset_name:, page: nil, limit: nil,
                                      source_trace_id: nil, source_observation_id: nil)
-      @dataset_resource.list_dataset_items_paginated(
-        dataset_name: dataset_name, page: page, limit: limit,
-        source_trace_id: source_trace_id, source_observation_id: source_observation_id
-      )
+      params = {
+        datasetName: dataset_name, page: page, limit: limit,
+        sourceTraceId: source_trace_id, sourceObservationId: source_observation_id
+      }.compact
+      request(:get, "/api/public/dataset-items", params: params)
     end
 
     # Delete a dataset item by ID
@@ -594,7 +579,14 @@ module Langfuse
     # @example
     #   api_client.delete_dataset_item("item-uuid-123")
     def delete_dataset_item(id)
-      @dataset_resource.delete_dataset_item(id)
+      response = connection.delete("/api/public/dataset-items/#{URI.encode_uri_component(id)}")
+      handle_delete_dataset_item_response(response, id)
+    rescue Faraday::RetriableResponse => e
+      logger.error("Faraday error: Retries exhausted - #{e.response.status}")
+      handle_delete_dataset_item_response(e.response, id)
+    rescue Faraday::Error => e
+      logger.error("Faraday error: #{e.message}")
+      raise ApiError, "HTTP request failed: #{e.message}"
     end
 
     private
@@ -603,23 +595,18 @@ module Langfuse
       @prompt_cache_coordinator.backend_name
     end
 
-    def initialize_resources
-      response_handler = ->(response) { handle_response(response) }
-      error_handler = ->(&block) { with_faraday_error_handling(&block) }
-      connection_factory = -> { connection }
-      @prompt_resource = Resources::Prompts.new(
-        connection: connection_factory,
-        handle_response: response_handler,
-        with_error_handling: error_handler,
-        invalidate_cache: ->(name) { @prompt_cache_coordinator.invalidate_after_mutation(name) }
-      )
-      @dataset_resource = Resources::Datasets.new(
-        connection: connection_factory,
-        handle_response: response_handler,
-        handle_delete_dataset_item_response: ->(response, id) { handle_delete_dataset_item_response(response, id) },
-        with_error_handling: error_handler,
-        logger: logger
-      )
+    # Issue an HTTP request, raise on Faraday errors, parse the response.
+    #
+    # @api private
+    # @param verb [Symbol] HTTP verb (:get, :post, :patch, :delete)
+    # @param path [String] Request path
+    # @param params [Hash, nil] Query string params (GET/DELETE)
+    # @param body [Hash, nil] JSON body (POST/PATCH)
+    # @return [Hash] Parsed response body
+    def request(verb, path, params: nil, body: nil)
+      with_faraday_error_handling do
+        handle_response(connection.public_send(verb, path, body || params))
+      end
     end
 
     def build_traces_params(**options)
@@ -634,6 +621,14 @@ module Langfuse
       }.compact
     end
 
+    def dataset_runs_path(dataset_name)
+      "/api/public/datasets/#{URI.encode_uri_component(dataset_name)}/runs"
+    end
+
+    def dataset_run_path(dataset_name:, run_name:)
+      "#{dataset_runs_path(dataset_name)}/#{URI.encode_uri_component(run_name)}"
+    end
+
     # Fetch a prompt from the API (without caching)
     #
     # @param name [String] The name of the prompt
@@ -644,7 +639,8 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] for other API errors
     def fetch_prompt_from_api(name, version: nil, label: nil)
-      @prompt_resource.fetch(name, version: version, label: label)
+      path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}"
+      request(:get, path, params: { version: version, label: label }.compact)
     end
 
     # Build a new Faraday connection

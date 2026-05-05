@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "forwardable"
+
 module Langfuse
   # Main client for Langfuse SDK
   #
@@ -19,6 +21,8 @@ module Langfuse
   #
   # rubocop:disable Metrics/ClassLength
   class Client
+    extend Forwardable
+
     # @return [Integer] Default page size when fetching all dataset items
     DATASET_ITEMS_PAGE_SIZE = 50
 
@@ -27,6 +31,35 @@ module Langfuse
 
     # @return [ApiClient] The underlying API client
     attr_reader :api_client
+
+    # Pure pass-throughs to {ApiClient}. See {ApiClient} for parameter and
+    # return-value documentation; the public surface here is identical.
+    #
+    # @!method list_prompts(page: nil, limit: nil)
+    # @!method invalidate_prompt_cache(name, version: nil, label: nil)
+    # @!method invalidate_prompt_cache_by_name(name)
+    # @!method clear_prompt_cache
+    # @!method prompt_cache_stats
+    # @!method prompt_cache_key(name, version: nil, label: nil)
+    # @!method validate_prompt_cache_backend!
+    # @!method list_traces(**options)
+    # @!method get_trace(id)
+    # @!method list_datasets(page: nil, limit: nil)
+    # @!method get_dataset_run(dataset_name:, run_name:)
+    # @!method create_dataset_run_item(**)
+    def_delegators :api_client,
+                   :list_prompts,
+                   :invalidate_prompt_cache,
+                   :invalidate_prompt_cache_by_name,
+                   :clear_prompt_cache,
+                   :prompt_cache_stats,
+                   :prompt_cache_key,
+                   :validate_prompt_cache_backend!,
+                   :list_traces,
+                   :get_trace,
+                   :list_datasets,
+                   :get_dataset_run,
+                   :create_dataset_run_item
 
     # Initialize a new Langfuse client
     #
@@ -132,76 +165,6 @@ module Langfuse
     def refresh_prompt(name, version: nil, label: nil, cache_ttl: nil)
       api_result = api_client.refresh_prompt(name, version: version, label: label, cache_ttl: cache_ttl)
       build_client_fetch_result(api_result, build_prompt_client(api_result.prompt))
-    end
-
-    # Invalidate one exact logical prompt cache key.
-    #
-    # @param name [String] The prompt name
-    # @param version [Integer, nil] Optional specific version number
-    # @param label [String, nil] Optional label
-    # @return [PromptCacheKey] The invalidated key
-    def invalidate_prompt_cache(name, version: nil, label: nil)
-      api_client.invalidate_prompt_cache(name, version: version, label: label)
-    end
-
-    # Invalidate all cached variants for one prompt name.
-    #
-    # @param name [String] The prompt name
-    # @return [Integer, nil] New generation, or nil when cache is disabled
-    def invalidate_prompt_cache_by_name(name)
-      api_client.invalidate_prompt_cache_by_name(name)
-    end
-
-    # Logically clear the whole Langfuse prompt cache namespace.
-    #
-    # @return [Integer, nil] New global generation, or nil when cache is disabled
-    def clear_prompt_cache
-      api_client.clear_prompt_cache
-    end
-
-    # Return prompt cache statistics.
-    #
-    # @return [Hash] Cache statistics
-    def prompt_cache_stats
-      api_client.prompt_cache_stats
-    end
-
-    # Inspect the logical and generated cache keys for a prompt.
-    #
-    # @param name [String] The prompt name
-    # @param version [Integer, nil] Optional specific version number
-    # @param label [String, nil] Optional label
-    # @return [PromptCacheKey] Logical and generated cache keys
-    def prompt_cache_key(name, version: nil, label: nil)
-      api_client.prompt_cache_key(name, version: version, label: label)
-    end
-
-    # Validate the configured prompt cache backend before first prompt fetch.
-    #
-    # @return [Boolean] true when the configured backend is usable
-    # @raise [ConfigurationError] if the backend is invalid
-    def validate_prompt_cache_backend!
-      api_client.validate_prompt_cache_backend!
-    end
-
-    # List all prompts in the Langfuse project
-    #
-    # Fetches a list of all prompt names available in your project.
-    # Returns metadata only, not full prompt content.
-    #
-    # @param page [Integer, nil] Optional page number for pagination
-    # @param limit [Integer, nil] Optional limit per page
-    # @return [Array<Hash>] Array of prompt metadata hashes
-    # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] for other API errors
-    #
-    # @example
-    #   prompts = client.list_prompts
-    #   prompts.each do |prompt|
-    #     puts "#{prompt['name']} (v#{prompt['version']})"
-    #   end
-    def list_prompts(page: nil, limit: nil)
-      api_client.list_prompts(page: page, limit: limit)
     end
 
     # Convenience method: fetch and compile a prompt in one call
@@ -530,49 +493,6 @@ module Langfuse
       DatasetClient.new(data, client: self)
     end
 
-    # List all datasets in the project
-    #
-    # @param page [Integer, nil] Optional page number for pagination
-    # @param limit [Integer, nil] Optional limit per page
-    # @return [Array<Hash>] Array of dataset metadata hashes
-    # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] for other API errors
-    #
-    # @example
-    #   datasets = client.list_datasets(page: 1, limit: 10)
-    def list_datasets(page: nil, limit: nil)
-      api_client.list_datasets(page: page, limit: limit)
-    end
-
-    # List traces in the project
-    #
-    # @param page [Integer, nil] Optional page number for pagination
-    # @param limit [Integer, nil] Optional limit per page
-    # @param filters [Hash] Additional filters (user_id, name, session_id, etc.)
-    # @return [Array<Hash>] Array of trace hashes
-    # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] for other API errors
-    #
-    # @example
-    #   traces = client.list_traces(page: 1, limit: 10, name: "my-trace")
-    def list_traces(page: nil, limit: nil, **filters)
-      api_client.list_traces(page: page, limit: limit, **filters)
-    end
-
-    # Fetch a trace by ID
-    #
-    # @param id [String] Trace ID
-    # @return [Hash] The trace data
-    # @raise [NotFoundError] if the trace is not found
-    # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] for other API errors
-    #
-    # @example
-    #   trace = client.get_trace("trace-uuid-123")
-    def get_trace(id)
-      api_client.get_trace(id)
-    end
-
     # Create a new dataset item
     #
     # @param dataset_name [String] Name of the dataset to add item to (required)
@@ -664,39 +584,6 @@ module Langfuse
     def delete_dataset_item(id)
       api_client.delete_dataset_item(id)
       nil
-    end
-
-    # Create a dataset run item (link a trace to a dataset item)
-    #
-    # @param dataset_item_id [String] Dataset item ID (required)
-    # @param run_name [String] Run name (required)
-    # @param trace_id [String, nil] Trace ID
-    # @param observation_id [String, nil] Observation ID
-    # @param metadata [Hash, nil] Optional metadata
-    # @param run_description [String, nil] Optional run description
-    # @return [Hash] The created dataset run item data
-    def create_dataset_run_item(dataset_item_id:, run_name:, trace_id: nil,
-                                observation_id: nil, metadata: nil, run_description: nil)
-      api_client.create_dataset_run_item(
-        dataset_item_id: dataset_item_id,
-        run_name: run_name,
-        trace_id: trace_id,
-        observation_id: observation_id,
-        metadata: metadata,
-        run_description: run_description
-      )
-    end
-
-    # Fetch a dataset run by dataset and run name
-    #
-    # @param dataset_name [String] Dataset name (required)
-    # @param run_name [String] Run name (required)
-    # @return [Hash] The dataset run data, including linked run items
-    # @raise [NotFoundError] if the dataset run is not found
-    # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] for other API errors
-    def get_dataset_run(dataset_name:, run_name:)
-      api_client.get_dataset_run(dataset_name: dataset_name, run_name: run_name)
     end
 
     # List dataset runs for a dataset
