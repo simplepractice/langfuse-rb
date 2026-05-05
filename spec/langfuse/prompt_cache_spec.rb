@@ -274,6 +274,47 @@ RSpec.describe Langfuse::PromptCache do
       )
     end
 
+    it "evicts least-recently-invalidated names once the generation map is full" do
+      stub_const("#{described_class}::MAX_NAME_GENERATIONS", 2)
+
+      cache.invalidate_name("oldest")  # counter -> 1
+      cache.invalidate_name("middle")  # counter -> 2
+      cache.invalidate_name("newest")  # counter -> 3, evicts "oldest"
+
+      logical = described_class.build_key("oldest")
+      generation_in_key = cache.storage_key(logical, name: "oldest").split(":")[2].to_i
+      expect(generation_in_key).to eq(0) # missing from map after eviction -> default 0
+
+      cache.invalidate_name("middle")       # counter -> 4, refreshes "middle" (LRU)
+      cache.invalidate_name("newer-still")  # counter -> 5, evicts "newest"
+
+      preserved = cache.storage_key(described_class.build_key("middle"), name: "middle").split(":")[2].to_i
+      expect(preserved).to eq(4) # middle's last invalidation, not collidable with any past generation
+    end
+
+    it "never reuses a generation value across an evict/re-introduce cycle for the same name" do
+      stub_const("#{described_class}::MAX_NAME_GENERATIONS", 2)
+
+      cache.invalidate_name("X") # counter -> 1
+      orphan_key = cache.storage_key(described_class.build_key("X"), name: "X")
+      cache.set(orphan_key, { "stale" => true })
+
+      # Evict X by inserting two more names past the cap.
+      cache.invalidate_name("filler1") # counter -> 2
+      cache.invalidate_name("filler2") # counter -> 3, evicts "X"
+
+      # Re-introduce X. With a per-name counter this would reset to gen 1 and
+      # collide with the orphan; the global counter guarantees a fresh value.
+      cache.invalidate_name("X") # counter -> 4
+      fresh_key = cache.storage_key(described_class.build_key("X"), name: "X")
+
+      expect(fresh_key).not_to eq(orphan_key)
+      expect(cache.get(fresh_key)).to be_nil
+      # Orphan is unreachable through the current key; it lingers under its old
+      # storage key only until TTL/eviction reclaims it.
+      expect(fresh_key.split(":")[2].to_i).to eq(4)
+    end
+
     it "deletes one generated storage key without touching sibling names" do
       greeting_key = cache.storage_key(described_class.build_key("greeting"), name: "greeting")
       sibling_key = cache.storage_key(described_class.build_key("greeting-extra"), name: "greeting-extra")

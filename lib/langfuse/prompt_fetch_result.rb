@@ -49,16 +49,9 @@ module Langfuse
     end
     # rubocop:enable Metrics/ParameterLists
 
-    # Compatibility alias for callers that already use "cache key" language.
-    #
-    # @return [String] Stable logical cache identity
-    def cache_key
-      logical_key
-    end
-
     # @return [Boolean] Whether this result used caller-provided fallback content
     def fallback?
-      source == :fallback || (prompt.respond_to?(:is_fallback) && prompt.is_fallback)
+      source == CacheSource::FALLBACK
     end
 
     # @return [Hash] Result metadata as a hash

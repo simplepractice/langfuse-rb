@@ -40,10 +40,12 @@ module Langfuse
 end
 
 require_relative "langfuse/config"
+require_relative "langfuse/cache_constants"
 require_relative "langfuse/prompt_cache"
 require_relative "langfuse/prompt_fetch_result"
 require_relative "langfuse/rails_cache_adapter"
 require_relative "langfuse/cache_warmer"
+require_relative "langfuse/prompt_cache_events"
 require_relative "langfuse/api_client"
 require_relative "langfuse/span_filter"
 require_relative "langfuse/sampling"

@@ -19,6 +19,11 @@ module Langfuse
   class PromptCache
     include StaleWhileRevalidate
 
+    # Caps the per-name generation map. Without a cap, long-lived processes
+    # that invalidate across many distinct prompts grow it unboundedly; LRU
+    # eviction keeps the working set live and lets cold names go.
+    MAX_NAME_GENERATIONS = 1024
+
     # Cache entry with data and expiration time
     #
     # Supports stale-while-revalidate pattern:
@@ -82,7 +87,8 @@ module Langfuse
       @logger = logger
       @cache = {}
       @global_generation = 0
-      @name_generations = Hash.new(0)
+      @name_generations = {}
+      @name_generation_counter = 0
       @monitor = Monitor.new
       @locks = {} # Track locks for in-memory locking
       initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
@@ -121,13 +127,8 @@ module Langfuse
       @monitor.synchronize do
         # Evict oldest entry if at max size
         evict_oldest if @cache.size >= max_size
-
-        now = Time.now
-        effective_ttl = ttl.nil? ? self.ttl : ttl
-        effective_stale_ttl = stale_ttl.nil? ? self.stale_ttl : stale_ttl
-        fresh_until = now + effective_ttl
-        stale_until = fresh_until + effective_stale_ttl
-        @cache[key] = CacheEntry.new(value, fresh_until, stale_until)
+        window = compute_window(ttl: ttl, stale_ttl: stale_ttl)
+        @cache[key] = CacheEntry.new(value, window.fresh_until, window.stale_until)
         value
       end
     end
@@ -162,11 +163,19 @@ module Langfuse
 
     # Logically invalidate every cache variant for one prompt name.
     #
+    # Generations come from a monotonic global counter, not a per-name counter,
+    # so an evicted name re-entering the map can't reuse a generation value
+    # that's still embedded in a stale @cache entry.
+    #
     # @param name [String] Prompt name
     # @return [Integer] New name generation
     def invalidate_name(name)
       @monitor.synchronize do
-        @name_generations[name.to_s] += 1
+        name_str = name.to_s
+        @name_generations.delete(name_str)
+        @name_generations.shift if @name_generations.size >= MAX_NAME_GENERATIONS
+        @name_generation_counter += 1
+        @name_generations[name_str] = @name_generation_counter
       end
     end
 
@@ -181,7 +190,7 @@ module Langfuse
           logical_key,
           name: name,
           global_generation: @global_generation,
-          name_generation: @name_generations[name.to_s]
+          name_generation: @name_generations.fetch(name.to_s, 0)
         )
       end
     end
@@ -191,7 +200,7 @@ module Langfuse
       @monitor.synchronize do
         counts = count_entries_by_generation
         {
-          backend: "memory",
+          backend: CacheBackend::MEMORY,
           enabled: true,
           current_generation_entries: counts.fetch(:current),
           orphaned_entries: counts.fetch(:orphaned),
@@ -346,7 +355,7 @@ module Langfuse
       global = Integer(parts[0][1..])
       name = Base64.urlsafe_decode64(parts[1][1..])
       name_generation = Integer(parts[2])
-      global == @global_generation && name_generation == @name_generations[name]
+      global == @global_generation && name_generation == @name_generations.fetch(name, 0)
     rescue ArgumentError
       false
     end

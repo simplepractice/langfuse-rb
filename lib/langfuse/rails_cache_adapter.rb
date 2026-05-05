@@ -85,10 +85,9 @@ module Langfuse
     # @param value [Object] Value to cache
     # @return [Object] The cached value
     def set(key, value, ttl: nil, stale_ttl: nil)
-      # Calculate expiration: use total_ttl if SWR enabled, otherwise just ttl
-      effective_ttl = ttl.nil? ? self.ttl : ttl
-      effective_stale_ttl = stale_ttl.nil? ? self.stale_ttl : stale_ttl
-      expires_in = swr_enabled? ? effective_ttl + effective_stale_ttl : effective_ttl
+      # Use total_ttl if SWR enabled, otherwise just ttl
+      window = compute_window(ttl: ttl, stale_ttl: stale_ttl)
+      expires_in = swr_enabled? ? window.total_ttl : window.ttl
       Rails.cache.write(namespaced_key(key), value, expires_in:)
       value
     end
@@ -156,13 +155,13 @@ module Langfuse
     # @return [Hash] Prompt cache statistics
     def stats
       {
-        backend: "rails",
+        backend: CacheBackend::RAILS,
         enabled: true,
         current_generation_entries: nil,
         orphaned_entries: nil,
         total_entries: nil,
         global_generation: generation_value(global_generation_key),
-        unsupported_counts: %i[current_generation_entries orphaned_entries total_entries]
+        unsupported_counts: CacheBackend::UNSUPPORTED_COUNT_KEYS
       }
     end
 

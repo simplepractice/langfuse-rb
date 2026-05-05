@@ -23,6 +23,16 @@ module Langfuse
   #   )
   #
   class ApiClient # rubocop:disable Metrics/ClassLength
+    include PromptCacheEvents
+
+    # Bundles the resolved cache key with the per-call TTL override so private
+    # prompt-fetch helpers take one arg instead of four.
+    PromptFetchOptions = Struct.new(:key, :cache_ttl, keyword_init: true) do
+      def name = key.name
+      def version = key.version
+      def label = key.label
+    end
+
     # @return [String] Langfuse public API key
     attr_reader :public_key
 
@@ -40,9 +50,6 @@ module Langfuse
 
     # @return [PromptCache, RailsCacheAdapter, nil] Optional cache for prompt responses
     attr_reader :cache
-
-    # @return [#call, nil] Optional observer for prompt cache events
-    attr_reader :cache_observer
 
     # Initialize a new API client
     #
@@ -62,10 +69,8 @@ module Langfuse
       @timeout = timeout
       @logger = logger || Logger.new($stdout, level: Logger::WARN)
       @cache = cache
-      @cache_observer = cache_observer
-      @cache_observer_arity = cache_observer&.method(:call)&.arity
       @cache_backend_name = compute_cache_backend_name
-      @active_support_notifications = defined?(ActiveSupport::Notifications) ? ActiveSupport::Notifications : nil
+      setup_prompt_cache_events(cache_observer: cache_observer)
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -145,11 +150,14 @@ module Langfuse
     def get_prompt_result(name, version: nil, label: nil, cache_ttl: nil)
       validate_prompt_fetch_options!(version, label, cache_ttl)
 
-      key = prompt_cache_key(name, version: version, label: label)
-      return fetch_uncached_prompt_result(key, version, label, :disabled) if cache.nil?
-      return fetch_uncached_prompt_result(key, version, label, :bypass) if cache_ttl&.zero?
+      options = PromptFetchOptions.new(
+        key: prompt_cache_key(name, version: version, label: label),
+        cache_ttl: cache_ttl
+      )
+      return fetch_uncached_prompt_result(options, CacheStatus::DISABLED) if cache.nil?
+      return fetch_uncached_prompt_result(options, CacheStatus::BYPASS) if cache_ttl&.zero?
 
-      fetch_cached_prompt_result(key, version, label, cache_ttl)
+      fetch_cached_prompt_result(options)
     end
 
     # Refresh a prompt from the API, optionally writing through to cache.
@@ -167,8 +175,12 @@ module Langfuse
     def refresh_prompt(name, version: nil, label: nil, cache_ttl: nil)
       validate_prompt_fetch_options!(version, label, cache_ttl)
 
-      key = prompt_cache_key(name, version: version, label: label)
-      refresh_prompt_result(key, version, label, cache_ttl)
+      refresh_prompt_result(
+        PromptFetchOptions.new(
+          key: prompt_cache_key(name, version: version, label: label),
+          cache_ttl: cache_ttl
+        )
+      )
     end
 
     # Inspect the logical and generated cache keys for a prompt.
@@ -200,8 +212,10 @@ module Langfuse
     def invalidate_prompt_cache(name, version: nil, label: nil)
       key = prompt_cache_key(name, version: version, label: label)
       deleted = cache&.delete(key.storage_key) || false
-      emit_prompt_cache_event(:delete) { event_payload(key, :miss, :cache, deleted: deleted) }
-      emit_prompt_cache_event(:invalidate) { event_payload(key, :miss, :cache, scope: :exact) }
+      emit_prompt_cache_event(:delete) { event_payload(key, CacheStatus::MISS, CacheSource::CACHE, deleted: deleted) }
+      emit_prompt_cache_event(:invalidate) do
+        event_payload(key, CacheStatus::MISS, CacheSource::CACHE, scope: :exact)
+      end
       key
     end
 
@@ -232,48 +246,6 @@ module Langfuse
       return disabled_prompt_cache_stats unless cache
 
       cache.stats
-    end
-
-    # Emit a prompt cache event to configured hooks. Accepts an eager payload
-    # hash or a block that builds one. The block is only evaluated when at
-    # least one listener is active, avoiding hash allocations on the hot path.
-    #
-    # @param event [Symbol] Event name
-    # @param payload [Hash, nil] Event payload (omit when passing a block)
-    # @yieldreturn [Hash] Lazily constructed payload
-    # @return [void]
-    def emit_prompt_cache_event(event, payload = nil)
-      return unless prompt_cache_listeners_active?
-
-      payload = yield if payload.nil? && block_given?
-      payload ||= {}
-      normalized_payload = payload.merge(event: event.to_sym)
-      notify_cache_observer(event, normalized_payload)
-      notify_active_support(normalized_payload)
-    end
-
-    # Build a prompt cache event payload for one logical key.
-    #
-    # @api private
-    # @param key [PromptCacheKey] Logical and storage cache key
-    # @param cache_status [Symbol] Cache status (:hit, :miss, :stale, :refresh, :bypass, :disabled)
-    # @param source [Symbol] Prompt source (:cache, :api, :fallback)
-    # @param extra [Hash] Extra fields to merge into the payload
-    # @return [Hash] Event payload
-    def prompt_event_payload(key, cache_status, source, extra = {})
-      event_payload(key, cache_status, source, extra)
-    end
-
-    # Emit a fallback event for a prompt fetch that fell back to caller-provided content.
-    #
-    # @param key [PromptCacheKey] Logical and storage cache key
-    # @param cache_status [Symbol] Cache status to report
-    # @param error [StandardError] The error that triggered the fallback
-    # @return [void]
-    def emit_prompt_fallback_event(key, cache_status:, error:)
-      emit_prompt_cache_event(:fallback) do
-        event_payload(key, cache_status, :fallback, error_class: error.class.name, error_message: error.message)
-      end
     end
 
     # Create a new prompt (or new version if prompt with same name exists)
@@ -751,135 +723,140 @@ module Langfuse
 
     def validate_prompt_fetch_options!(version, label, cache_ttl)
       raise ArgumentError, "Cannot specify both version and label" if version && label
-      return if cache_ttl.nil? || (cache_ttl.respond_to?(:negative?) && !cache_ttl.negative?)
-
-      raise ArgumentError, "cache_ttl must be non-negative"
+      return if cache_ttl.nil?
+      raise ArgumentError, "cache_ttl must be a non-negative Integer" unless cache_ttl.is_a?(Integer)
+      raise ArgumentError, "cache_ttl must be non-negative" if cache_ttl.negative?
     end
 
-    def fetch_uncached_prompt_result(key, version, label, cache_status)
-      prompt_data = fetch_prompt_from_api(key.name, version: version, label: label)
-      build_prompt_result(key, prompt_data, cache_status, :api)
+    def fetch_uncached_prompt_result(options, cache_status)
+      prompt_data = fetch_prompt_for_options(options)
+      build_prompt_result(options.key, prompt_data, cache_status, CacheSource::API)
     end
 
-    def fetch_cached_prompt_result(key, version, label, cache_ttl)
-      swr_enabled = swr_cache_available?
-      return fetch_swr_prompt_result(key, version, label, cache_ttl) if swr_enabled
+    def fetch_cached_prompt_result(options)
+      return fetch_swr_prompt_result(options) if swr_cache_available?
 
-      fetch_non_swr_prompt_result(key, version, label, cache_ttl)
+      fetch_non_swr_prompt_result(options)
     end
 
-    def fetch_swr_prompt_result(key, version, label, cache_ttl)
+    def fetch_swr_prompt_result(options)
       unless generated_storage_key_cache?
-        prompt_data = fetch_with_swr_cache(key.storage_key, key.name, version, label)
-        return cache_hit_prompt_result(key, prompt_data)
+        prompt_data = fetch_with_swr_cache(options.key.storage_key, options.name, options.version, options.label)
+        return cache_hit_prompt_result(options.key, prompt_data)
       end
 
-      result = fetch_swr_cached_prompt_result(key, version, label, cache_ttl)
+      result = fetch_swr_cached_prompt_result(options)
       return result if result
 
-      fetch_cache_miss_prompt_result(key, version, label, cache_ttl, swr_enabled: true, distributed_enabled: false)
+      fetch_cache_miss_prompt_result(options, swr_enabled: true, distributed_enabled: false)
     end
 
-    def fetch_non_swr_prompt_result(key, version, label, cache_ttl)
+    def fetch_non_swr_prompt_result(options)
       distributed_enabled = distributed_cache_available?
 
       if !generated_storage_key_cache? && distributed_enabled
-        prompt_data = fetch_with_distributed_cache(key.storage_key, key.name, version, label)
-        return cache_hit_prompt_result(key, prompt_data)
+        prompt_data = fetch_with_distributed_cache(options.key.storage_key, options.name, options.version,
+                                                   options.label)
+        return cache_hit_prompt_result(options.key, prompt_data)
       end
 
-      cached_data = cache.get(key.storage_key)
-      return cache_hit_prompt_result(key, cached_data) if cached_data
+      cached_data = cache.get(options.key.storage_key)
+      return cache_hit_prompt_result(options.key, cached_data) if cached_data
 
-      fetch_cache_miss_prompt_result(
-        key,
-        version,
-        label,
-        cache_ttl,
-        swr_enabled: false,
-        distributed_enabled: distributed_enabled
-      )
+      fetch_cache_miss_prompt_result(options, swr_enabled: false, distributed_enabled: distributed_enabled)
     end
 
-    def fetch_swr_cached_prompt_result(key, version, label, cache_ttl)
+    def fetch_swr_cached_prompt_result(options)
+      key = options.key
       entry = cache.entry(key.storage_key) if cache.respond_to?(:entry)
       return nil unless entry.respond_to?(:fresh?)
       return cache_hit_prompt_result(key, entry.data) if entry.fresh?
-
       return nil unless entry.stale?
 
-      emit_prompt_cache_event(:stale_serve) { event_payload(key, :stale, :cache) }
-      schedule_prompt_cache_refresh(key, version, label, cache_ttl)
-      build_prompt_result(key, entry.data, :stale, :cache)
+      emit_prompt_cache_event(:stale_serve) { event_payload(key, CacheStatus::STALE, CacheSource::CACHE) }
+      schedule_prompt_cache_refresh(options)
+      build_prompt_result(key, entry.data, CacheStatus::STALE, CacheSource::CACHE)
     end
 
     def cache_hit_prompt_result(key, prompt_data)
-      emit_prompt_cache_event(:hit) { event_payload(key, :hit, :cache) }
-      build_prompt_result(key, prompt_data, :hit, :cache)
+      emit_prompt_cache_event(:hit) { event_payload(key, CacheStatus::HIT, CacheSource::CACHE) }
+      build_prompt_result(key, prompt_data, CacheStatus::HIT, CacheSource::CACHE)
     end
 
-    def fetch_cache_miss_prompt_result(key, version, label, cache_ttl, swr_enabled: false, distributed_enabled: nil)
-      emit_prompt_cache_event(:miss) { event_payload(key, :miss, :api) }
+    def fetch_cache_miss_prompt_result(options, swr_enabled: false, distributed_enabled: nil)
+      emit_prompt_cache_event(:miss) { event_payload(options.key, CacheStatus::MISS, CacheSource::API) }
       distributed_enabled = distributed_cache_available? if distributed_enabled.nil?
 
       if !swr_enabled && distributed_enabled
-        fetch_cache_miss_with_lock(key, version, label, cache_ttl)
+        fetch_cache_miss_with_lock(options)
       else
-        fetch_cache_miss_directly(key, version, label, cache_ttl, swr_enabled: swr_enabled)
+        fetch_cache_miss_directly(options, swr_enabled: swr_enabled)
       end
     end
 
-    def fetch_cache_miss_with_lock(key, version, label, cache_ttl)
+    def fetch_cache_miss_with_lock(options)
+      key = options.key
       fetched = false
-      prompt_data = cache_fetch_with_lock(key.storage_key, cache_ttl) do
+      prompt_data = cache_fetch_with_lock(key.storage_key, options.cache_ttl) do
         fetched = true
-        fetch_prompt_from_api(key.name, version: version, label: label)
+        fetch_prompt_for_options(options)
       end
-      emit_prompt_cache_event(:write) { event_payload(key, :miss, :api) } if fetched
-      status = fetched ? :miss : :hit
-      source = fetched ? :api : :cache
+      emit_prompt_cache_event(:write) { event_payload(key, CacheStatus::MISS, CacheSource::API) } if fetched
+      status = fetched ? CacheStatus::MISS : CacheStatus::HIT
+      source = fetched ? CacheSource::API : CacheSource::CACHE
       build_prompt_result(key, prompt_data, status, source)
     end
 
-    def fetch_cache_miss_directly(key, version, label, cache_ttl, swr_enabled: false)
-      prompt_data = fetch_prompt_from_api(key.name, version: version, label: label)
-      write_prompt_cache(key, prompt_data, cache_ttl, swr_enabled: swr_enabled)
-      build_prompt_result(key, prompt_data, :miss, :api)
+    def fetch_cache_miss_directly(options, swr_enabled: false)
+      prompt_data = fetch_prompt_for_options(options)
+      write_prompt_cache(options.key, prompt_data, options.cache_ttl, swr_enabled: swr_enabled)
+      build_prompt_result(options.key, prompt_data, CacheStatus::MISS, CacheSource::API)
     end
 
-    def refresh_prompt_result(key, version, label, cache_ttl)
-      emit_prompt_cache_event(:refresh_start) { event_payload(key, :refresh, :api) }
-      prompt_data = fetch_prompt_from_api(key.name, version: version, label: label)
-      write_refresh_prompt_cache(key, prompt_data, cache_ttl)
-      emit_prompt_cache_event(:refresh_success) { event_payload(key, refresh_cache_status(cache_ttl), :api) }
-      build_prompt_result(key, prompt_data, refresh_cache_status(cache_ttl), :api)
+    def refresh_prompt_result(options)
+      key = options.key
+      emit_prompt_cache_event(:refresh_start) { event_payload(key, CacheStatus::REFRESH, CacheSource::API) }
+      prompt_data = fetch_prompt_for_options(options)
+      write_refresh_prompt_cache(key, prompt_data, options.cache_ttl)
+      status = refresh_cache_status(options.cache_ttl)
+      emit_prompt_cache_event(:refresh_success) { event_payload(key, status, CacheSource::API) }
+      build_prompt_result(key, prompt_data, status, CacheSource::API)
     rescue StandardError => e
       emit_prompt_cache_event(:refresh_failure) do
-        event_payload(key, :refresh, :api, error_class: e.class.name, error_message: e.message)
+        event_payload(key, CacheStatus::REFRESH, CacheSource::API,
+                      error_class: e.class.name, error_message: e.message)
       end
       raise
     end
 
-    def schedule_prompt_cache_refresh(key, version, label, cache_ttl)
+    def schedule_prompt_cache_refresh(options)
       return unless cache.respond_to?(:refresh_async)
 
+      key = options.key
       scheduled = cache.refresh_async(
         key.storage_key,
-        ttl: cache_ttl,
+        ttl: options.cache_ttl,
         on_success: ->(_value) { emit_refresh_success_events(key) },
         on_failure: ->(error) { emit_refresh_failure_event(key, error) }
-      ) { fetch_prompt_from_api(key.name, version: version, label: label) }
-      emit_prompt_cache_event(:refresh_start) { event_payload(key, :stale, :cache) } if scheduled
+      ) { fetch_prompt_for_options(options) }
+      return unless scheduled
+
+      emit_prompt_cache_event(:refresh_start) { event_payload(key, CacheStatus::STALE, CacheSource::CACHE) }
+    end
+
+    def fetch_prompt_for_options(options)
+      fetch_prompt_from_api(options.name, version: options.version, label: options.label)
     end
 
     def emit_refresh_success_events(key)
-      emit_prompt_cache_event(:refresh_success) { event_payload(key, :refresh, :api) }
-      emit_prompt_cache_event(:write) { event_payload(key, :refresh, :api) }
+      emit_prompt_cache_event(:refresh_success) { event_payload(key, CacheStatus::REFRESH, CacheSource::API) }
+      emit_prompt_cache_event(:write) { event_payload(key, CacheStatus::REFRESH, CacheSource::API) }
     end
 
     def emit_refresh_failure_event(key, error)
       emit_prompt_cache_event(:refresh_failure) do
-        event_payload(key, :stale, :cache, error_class: error.class.name, error_message: error.message)
+        event_payload(key, CacheStatus::STALE, CacheSource::CACHE,
+                      error_class: error.class.name, error_message: error.message)
       end
     end
 
@@ -887,10 +864,11 @@ module Langfuse
       return unless cache
       return if cache_ttl&.zero?
 
-      write_prompt_cache(key, prompt_data, cache_ttl, cache_status: :refresh, swr_enabled: swr_cache_available?)
+      write_prompt_cache(key, prompt_data, cache_ttl,
+                         cache_status: CacheStatus::REFRESH, swr_enabled: swr_cache_available?)
     end
 
-    def write_prompt_cache(key, prompt_data, cache_ttl, cache_status: :miss, swr_enabled: false)
+    def write_prompt_cache(key, prompt_data, cache_ttl, cache_status: CacheStatus::MISS, swr_enabled: false)
       if swr_enabled && cache.respond_to?(:write_with_stale_while_revalidate)
         cache.write_with_stale_while_revalidate(key.storage_key, prompt_data, ttl: cache_ttl)
       elsif cache_ttl.nil?
@@ -898,7 +876,7 @@ module Langfuse
       else
         cache.set(key.storage_key, prompt_data, ttl: cache_ttl)
       end
-      emit_prompt_cache_event(:write) { event_payload(key, cache_status, :api) }
+      emit_prompt_cache_event(:write) { event_payload(key, cache_status, CacheSource::API) }
     end
 
     def cache_fetch_with_lock(storage_key, cache_ttl, &)
@@ -908,10 +886,10 @@ module Langfuse
     end
 
     def refresh_cache_status(cache_ttl)
-      return :disabled unless cache
-      return :bypass if cache_ttl&.zero?
+      return CacheStatus::DISABLED unless cache
+      return CacheStatus::BYPASS if cache_ttl&.zero?
 
-      :refresh
+      CacheStatus::REFRESH
     end
 
     def build_prompt_result(key, prompt_data, cache_status, source)
@@ -927,37 +905,24 @@ module Langfuse
       )
     end
 
-    def event_payload(key, cache_status, source, extra = {})
-      {
-        name: key.name,
-        version: key.version,
-        label: key.resolved_label,
-        logical_key: key.logical_key,
-        storage_key: key.storage_key,
-        backend: cache_backend_name,
-        cache_status: cache_status,
-        source: source
-      }.merge(extra)
-    end
-
     attr_reader :cache_backend_name
 
     def compute_cache_backend_name
-      return "disabled" unless cache
-      return "rails" if cache.is_a?(RailsCacheAdapter)
-      return "memory" if cache.is_a?(PromptCache)
+      return CacheBackend::DISABLED unless cache
+      return CacheBackend::RAILS if cache.is_a?(RailsCacheAdapter)
+      return CacheBackend::MEMORY if cache.is_a?(PromptCache)
 
       cache.class.name
     end
 
     def disabled_prompt_cache_stats
       {
-        backend: "disabled",
+        backend: CacheBackend::DISABLED,
         enabled: false,
         current_generation_entries: nil,
         orphaned_entries: nil,
         total_entries: nil,
-        unsupported_counts: %i[current_generation_entries orphaned_entries total_entries]
+        unsupported_counts: CacheBackend::UNSUPPORTED_COUNT_KEYS
       }
     end
 
@@ -969,33 +934,6 @@ module Langfuse
       generation = cache&.invalidate_name(name)
       payload = { name: name, backend: cache_backend_name, generation: generation, scope: :name, mutation: true }
       emit_prompt_cache_event(:invalidate, payload)
-    end
-
-    def prompt_cache_listeners_active?
-      !cache_observer.nil? || active_support_listening?
-    end
-
-    def notify_cache_observer(event, payload)
-      return unless cache_observer
-
-      @cache_observer_arity == 1 ? cache_observer.call(payload) : cache_observer.call(event, payload)
-    rescue StandardError => e
-      logger.warn("Langfuse prompt cache observer failed: #{e.class} - #{e.message}")
-    end
-
-    def active_support_listening?
-      return false unless @active_support_notifications
-
-      notifier = @active_support_notifications.notifier
-      notifier.respond_to?(:listening?) ? notifier.listening?("prompt_cache.langfuse") : true
-    end
-
-    def notify_active_support(payload)
-      return unless @active_support_notifications
-
-      @active_support_notifications.instrument("prompt_cache.langfuse", payload)
-    rescue StandardError => e
-      logger.warn("Langfuse ActiveSupport cache notification failed: #{e.class} - #{e.message}")
     end
 
     # Check if SWR cache is available

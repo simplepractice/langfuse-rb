@@ -114,7 +114,8 @@ module Langfuse
 
       # Log warning and return fallback
       config.logger.warn("Langfuse API error for prompt '#{name}': #{e.message}. Using fallback.")
-      build_fallback_prompt_result(name, version, label, fallback, type, cache_ttl: cache_ttl, error: e)
+      key = api_client.prompt_cache_key(name, version: version, label: label)
+      build_fallback_prompt_result(key, fallback: fallback, type: type, cache_ttl: cache_ttl, error: e)
     end
 
     # Refresh a prompt from the API, optionally writing through to cache.
@@ -858,10 +859,8 @@ module Langfuse
       )
     end
 
-    # rubocop:disable Metrics/ParameterLists
-    def build_fallback_prompt_result(name, version, label, fallback, type, cache_ttl:, error:)
-      prompt_client = build_fallback_prompt_client(name, fallback, type)
-      key = api_client.prompt_cache_key(name, version: version, label: label)
+    def build_fallback_prompt_result(key, fallback:, type:, cache_ttl:, error:)
+      prompt_client = build_fallback_prompt_client(key.name, fallback, type)
       cache_status = fallback_cache_status(cache_ttl)
       api_client.emit_prompt_fallback_event(key, cache_status: cache_status, error: error)
       PromptFetchResult.new(
@@ -869,19 +868,18 @@ module Langfuse
         logical_key: key.logical_key,
         storage_key: key.storage_key,
         cache_status: cache_status,
-        source: :fallback,
-        name: name,
-        version: version || prompt_client.version,
+        source: CacheSource::FALLBACK,
+        name: key.name,
+        version: key.version || prompt_client.version,
         label: key.resolved_label
       )
     end
-    # rubocop:enable Metrics/ParameterLists
 
     def fallback_cache_status(cache_ttl)
-      return :bypass if cache_ttl&.zero?
-      return :disabled unless api_client.cache
+      return CacheStatus::BYPASS if cache_ttl&.zero?
+      return CacheStatus::DISABLED unless api_client.cache
 
-      :miss
+      CacheStatus::MISS
     end
 
     # Check if caching is enabled in configuration
