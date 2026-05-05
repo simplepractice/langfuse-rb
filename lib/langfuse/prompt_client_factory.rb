@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "../chat_prompt_client"
-require_relative "../text_prompt_client"
+require_relative "chat_prompt_client"
+require_relative "text_prompt_client"
 
 module Langfuse
   # Internal factory for constructing prompt clients while preserving the flat

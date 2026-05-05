@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "prompts/prompt_cache"
+require_relative "prompt_cache"
 require_relative "stale_while_revalidate"
 
 module Langfuse
