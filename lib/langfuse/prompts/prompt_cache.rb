@@ -2,7 +2,7 @@
 
 require "monitor"
 require "base64"
-require_relative "stale_while_revalidate"
+require_relative "../stale_while_revalidate"
 
 module Langfuse
   # Simple in-memory cache for prompt data with TTL

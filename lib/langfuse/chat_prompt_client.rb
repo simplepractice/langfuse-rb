@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "prompt_renderer"
-require_relative "prompt_client_metadata"
+require_relative "prompts/prompt_renderer"
+require_relative "prompts/prompt_client_metadata"
 
 module Langfuse
   # Chat prompt client for compiling chat prompts with variable substitution
