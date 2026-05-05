@@ -63,6 +63,7 @@ module Langfuse
       @logger = logger || Logger.new($stdout, level: Logger::WARN)
       @cache = cache
       @cache_observer = cache_observer
+      @cache_observer_arity = cache_observer&.method(:call)&.arity
       @cache_backend_name = compute_cache_backend_name
       @active_support_notifications = defined?(ActiveSupport::Notifications) ? ActiveSupport::Notifications : nil
     end
@@ -199,8 +200,8 @@ module Langfuse
     def invalidate_prompt_cache(name, version: nil, label: nil)
       key = prompt_cache_key(name, version: version, label: label)
       deleted = cache&.delete(key.storage_key) || false
-      emit_prompt_cache_event(:delete, event_payload(key, :miss, :cache, deleted: deleted))
-      emit_prompt_cache_event(:invalidate, event_payload(key, :miss, :cache, scope: :exact))
+      emit_prompt_cache_event(:delete) { event_payload(key, :miss, :cache, deleted: deleted) }
+      emit_prompt_cache_event(:invalidate) { event_payload(key, :miss, :cache, scope: :exact) }
       key
     end
 
@@ -233,14 +234,19 @@ module Langfuse
       cache.stats
     end
 
-    # Emit a prompt cache event to configured hooks.
+    # Emit a prompt cache event to configured hooks. Accepts an eager payload
+    # hash or a block that builds one. The block is only evaluated when at
+    # least one listener is active, avoiding hash allocations on the hot path.
     #
     # @param event [Symbol] Event name
-    # @param payload [Hash] Event payload
+    # @param payload [Hash, nil] Event payload (omit when passing a block)
+    # @yieldreturn [Hash] Lazily constructed payload
     # @return [void]
-    def emit_prompt_cache_event(event, payload)
-      return if @cache_observer.nil? && @active_support_notifications.nil?
+    def emit_prompt_cache_event(event, payload = nil)
+      return unless prompt_cache_listeners_active?
 
+      payload = yield if payload.nil? && block_given?
+      payload ||= {}
       normalized_payload = payload.merge(event: event.to_sym)
       notify_cache_observer(event, normalized_payload)
       notify_active_support(normalized_payload)
@@ -256,6 +262,18 @@ module Langfuse
     # @return [Hash] Event payload
     def prompt_event_payload(key, cache_status, source, extra = {})
       event_payload(key, cache_status, source, extra)
+    end
+
+    # Emit a fallback event for a prompt fetch that fell back to caller-provided content.
+    #
+    # @param key [PromptCacheKey] Logical and storage cache key
+    # @param cache_status [Symbol] Cache status to report
+    # @param error [StandardError] The error that triggered the fallback
+    # @return [void]
+    def emit_prompt_fallback_event(key, cache_status:, error:)
+      emit_prompt_cache_event(:fallback) do
+        event_payload(key, cache_status, :fallback, error_class: error.class.name, error_message: error.message)
+      end
     end
 
     # Create a new prompt (or new version if prompt with same name exists)
@@ -790,18 +808,18 @@ module Langfuse
 
       return nil unless entry.stale?
 
-      emit_prompt_cache_event(:stale_serve, event_payload(key, :stale, :cache))
+      emit_prompt_cache_event(:stale_serve) { event_payload(key, :stale, :cache) }
       schedule_prompt_cache_refresh(key, version, label, cache_ttl)
       build_prompt_result(key, entry.data, :stale, :cache)
     end
 
     def cache_hit_prompt_result(key, prompt_data)
-      emit_prompt_cache_event(:hit, event_payload(key, :hit, :cache))
+      emit_prompt_cache_event(:hit) { event_payload(key, :hit, :cache) }
       build_prompt_result(key, prompt_data, :hit, :cache)
     end
 
     def fetch_cache_miss_prompt_result(key, version, label, cache_ttl, swr_enabled: false, distributed_enabled: nil)
-      emit_prompt_cache_event(:miss, event_payload(key, :miss, :api))
+      emit_prompt_cache_event(:miss) { event_payload(key, :miss, :api) }
       distributed_enabled = distributed_cache_available? if distributed_enabled.nil?
 
       if !swr_enabled && distributed_enabled
@@ -817,7 +835,7 @@ module Langfuse
         fetched = true
         fetch_prompt_from_api(key.name, version: version, label: label)
       end
-      emit_prompt_cache_event(:write, event_payload(key, :miss, :api)) if fetched
+      emit_prompt_cache_event(:write) { event_payload(key, :miss, :api) } if fetched
       status = fetched ? :miss : :hit
       source = fetched ? :api : :cache
       build_prompt_result(key, prompt_data, status, source)
@@ -830,14 +848,15 @@ module Langfuse
     end
 
     def refresh_prompt_result(key, version, label, cache_ttl)
-      emit_prompt_cache_event(:refresh_start, event_payload(key, :refresh, :api))
+      emit_prompt_cache_event(:refresh_start) { event_payload(key, :refresh, :api) }
       prompt_data = fetch_prompt_from_api(key.name, version: version, label: label)
       write_refresh_prompt_cache(key, prompt_data, cache_ttl)
-      emit_prompt_cache_event(:refresh_success, event_payload(key, refresh_cache_status(cache_ttl), :api))
+      emit_prompt_cache_event(:refresh_success) { event_payload(key, refresh_cache_status(cache_ttl), :api) }
       build_prompt_result(key, prompt_data, refresh_cache_status(cache_ttl), :api)
     rescue StandardError => e
-      payload = event_payload(key, :refresh, :api, error_class: e.class.name, error_message: e.message)
-      emit_prompt_cache_event(:refresh_failure, payload)
+      emit_prompt_cache_event(:refresh_failure) do
+        event_payload(key, :refresh, :api, error_class: e.class.name, error_message: e.message)
+      end
       raise
     end
 
@@ -850,17 +869,18 @@ module Langfuse
         on_success: ->(_value) { emit_refresh_success_events(key) },
         on_failure: ->(error) { emit_refresh_failure_event(key, error) }
       ) { fetch_prompt_from_api(key.name, version: version, label: label) }
-      emit_prompt_cache_event(:refresh_start, event_payload(key, :stale, :cache)) if scheduled
+      emit_prompt_cache_event(:refresh_start) { event_payload(key, :stale, :cache) } if scheduled
     end
 
     def emit_refresh_success_events(key)
-      emit_prompt_cache_event(:refresh_success, event_payload(key, :refresh, :api))
-      emit_prompt_cache_event(:write, event_payload(key, :refresh, :api))
+      emit_prompt_cache_event(:refresh_success) { event_payload(key, :refresh, :api) }
+      emit_prompt_cache_event(:write) { event_payload(key, :refresh, :api) }
     end
 
     def emit_refresh_failure_event(key, error)
-      payload = event_payload(key, :stale, :cache, error_class: error.class.name, error_message: error.message)
-      emit_prompt_cache_event(:refresh_failure, payload)
+      emit_prompt_cache_event(:refresh_failure) do
+        event_payload(key, :stale, :cache, error_class: error.class.name, error_message: error.message)
+      end
     end
 
     def write_refresh_prompt_cache(key, prompt_data, cache_ttl)
@@ -878,7 +898,7 @@ module Langfuse
       else
         cache.set(key.storage_key, prompt_data, ttl: cache_ttl)
       end
-      emit_prompt_cache_event(:write, event_payload(key, cache_status, :api))
+      emit_prompt_cache_event(:write) { event_payload(key, cache_status, :api) }
     end
 
     def cache_fetch_with_lock(storage_key, cache_ttl, &)
@@ -951,13 +971,23 @@ module Langfuse
       emit_prompt_cache_event(:invalidate, payload)
     end
 
+    def prompt_cache_listeners_active?
+      !cache_observer.nil? || active_support_listening?
+    end
+
     def notify_cache_observer(event, payload)
       return unless cache_observer
 
-      observer_arity = cache_observer.respond_to?(:arity) ? cache_observer.arity : 2
-      observer_arity == 1 ? cache_observer.call(payload) : cache_observer.call(event, payload)
+      @cache_observer_arity == 1 ? cache_observer.call(payload) : cache_observer.call(event, payload)
     rescue StandardError => e
       logger.warn("Langfuse prompt cache observer failed: #{e.class} - #{e.message}")
+    end
+
+    def active_support_listening?
+      return false unless @active_support_notifications
+
+      notifier = @active_support_notifications.notifier
+      notifier.respond_to?(:listening?) ? notifier.listening?("prompt_cache.langfuse") : true
     end
 
     def notify_active_support(payload)

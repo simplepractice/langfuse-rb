@@ -54,6 +54,7 @@ module Langfuse
 
       @ttl = ttl
       @namespace = namespace
+      @namespace_prefix = "#{namespace}:"
       @lock_timeout = lock_timeout
       @stale_ttl = stale_ttl
       @logger = logger
@@ -327,7 +328,7 @@ module Langfuse
     # @param key [String] Original cache key
     # @return [String] Namespaced cache key
     def namespaced_key(key)
-      key.start_with?("#{namespace}:") ? key : "#{namespace}:#{key}"
+      key.start_with?(@namespace_prefix) ? key : "#{@namespace_prefix}#{key}"
     end
 
     def global_generation_key

@@ -862,15 +862,13 @@ module Langfuse
     def build_fallback_prompt_result(name, version, label, fallback, type, cache_ttl:, error:)
       prompt_client = build_fallback_prompt_client(name, fallback, type)
       key = api_client.prompt_cache_key(name, version: version, label: label)
-      api_client.emit_prompt_cache_event(
-        :fallback,
-        fallback_event_payload(key, cache_ttl, error)
-      )
+      cache_status = fallback_cache_status(cache_ttl)
+      api_client.emit_prompt_fallback_event(key, cache_status: cache_status, error: error)
       PromptFetchResult.new(
         prompt: prompt_client,
         logical_key: key.logical_key,
         storage_key: key.storage_key,
-        cache_status: fallback_cache_status(cache_ttl),
+        cache_status: cache_status,
         source: :fallback,
         name: name,
         version: version || prompt_client.version,
@@ -878,16 +876,6 @@ module Langfuse
       )
     end
     # rubocop:enable Metrics/ParameterLists
-
-    def fallback_event_payload(key, cache_ttl, error)
-      api_client.prompt_event_payload(
-        key,
-        fallback_cache_status(cache_ttl),
-        :fallback,
-        error_class: error.class.name,
-        error_message: error.message
-      )
-    end
 
     def fallback_cache_status(cache_ttl)
       return :bypass if cache_ttl&.zero?
