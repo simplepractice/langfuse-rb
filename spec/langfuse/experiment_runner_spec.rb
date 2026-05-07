@@ -2,15 +2,26 @@
 
 RSpec.describe Langfuse::ExperimentRunner do
   let(:mock_client) { instance_double(Langfuse::Client) }
+  let(:config) { instance_double(Langfuse::Config, logger: logger) }
   let(:logger) { instance_double(Logger, warn: nil, error: nil, info: nil, debug: nil) }
+  let(:span) do
+    instance_double(
+      Langfuse::Span,
+      trace_id: "a" * 32,
+      id: "b" * 16,
+      update_trace: nil,
+      update: nil
+    )
+  end
 
   before do
+    allow(mock_client).to receive(:config).and_return(config)
     allow(mock_client).to receive(:create_dataset_run_item)
     allow(mock_client).to receive(:create_score)
     allow(mock_client).to receive(:flush_scores)
+    allow(mock_client).to receive(:force_flush)
     allow(mock_client).to receive(:dataset_run_url)
-    allow(Langfuse).to receive(:force_flush)
-    allow(Langfuse.configuration).to receive(:logger).and_return(logger)
+    allow(mock_client).to receive(:observe).and_yield(span)
   end
 
   describe "#execute" do
@@ -813,7 +824,7 @@ RSpec.describe Langfuse::ExperimentRunner do
         runner.execute
 
         # Only the final flush_all call, not once per item
-        expect(Langfuse).to have_received(:force_flush).once
+        expect(mock_client).to have_received(:force_flush).once
       end
 
       it "flushes again after run evaluators produce results" do
@@ -827,7 +838,7 @@ RSpec.describe Langfuse::ExperimentRunner do
 
         # Once for post-items flush_all, once for post-run-evaluators flush_all
         expect(mock_client).to have_received(:flush_scores).twice
-        expect(Langfuse).to have_received(:force_flush).twice
+        expect(mock_client).to have_received(:force_flush).twice
       end
     end
 

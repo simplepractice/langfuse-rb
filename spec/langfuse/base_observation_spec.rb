@@ -722,8 +722,11 @@ RSpec.describe Langfuse::BaseObservation do
   end
 
   describe "#score_trace" do
-    it "delegates to Langfuse.create_score with trace_id" do
-      expect(Langfuse).to receive(:create_score).with(
+    it "delegates to the observation client with trace_id" do
+      mock_client = instance_double(Langfuse::Client)
+      allow(Langfuse).to receive(:client).and_return(mock_client)
+
+      expect(mock_client).to receive(:create_score).with(
         name: "quality",
         value: 0.9,
         trace_id: observation.trace_id,
@@ -738,7 +741,10 @@ RSpec.describe Langfuse::BaseObservation do
     end
 
     it "defaults data_type to :numeric" do
-      expect(Langfuse).to receive(:create_score).with(
+      mock_client = instance_double(Langfuse::Client)
+      allow(Langfuse).to receive(:client).and_return(mock_client)
+
+      expect(mock_client).to receive(:create_score).with(
         hash_including(data_type: :numeric)
       )
       observation.score_trace(name: "score", value: 1.0)

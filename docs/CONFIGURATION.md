@@ -16,6 +16,53 @@ end
 
 Call this once at application startup (Rails initializer, boot script, etc.).
 
+## Multiple Clients
+
+For most applications, the singleton client is the simplest option:
+
+```ruby
+Langfuse.configure do |config|
+  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+end
+
+client = Langfuse.client
+```
+
+If the singleton is not enough, create independent `Langfuse::Client` instances with their own `Langfuse::Config` objects. This is useful when one process has multiple application components that should report to different Langfuse projects, such as a "Meeting Transcription" project and a "Note Summarization" project.
+
+```ruby
+meeting_transcription_config = Langfuse::Config.new do |config|
+  config.public_key = ENV["LANGFUSE_MEETING_TRANSCRIPTION_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_MEETING_TRANSCRIPTION_SECRET_KEY"]
+  config.base_url = ENV["LANGFUSE_MEETING_TRANSCRIPTION_BASE_URL"]
+end
+
+note_summarization_config = Langfuse::Config.new do |config|
+  config.public_key = ENV["LANGFUSE_NOTE_SUMMARIZATION_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_NOTE_SUMMARIZATION_SECRET_KEY"]
+  config.base_url = ENV["LANGFUSE_NOTE_SUMMARIZATION_BASE_URL"]
+end
+
+meeting_transcription_client = Langfuse::Client.new(meeting_transcription_config)
+note_summarization_client = Langfuse::Client.new(note_summarization_config)
+```
+
+Use the client instance for client-specific work:
+
+```ruby
+meeting_transcription_client.observe("meeting-transcription") do |obs|
+  prompt = meeting_transcription_client.get_prompt("transcribe-meeting")
+  obs.update(input: prompt.compile(meeting_id: meeting.id))
+end
+
+note_summarization_client.create_score(
+  name: "manual-review",
+  value: 1,
+  trace_id: "0123456789abcdef0123456789abcdef"
+)
+```
+
 ## Tracing Ownership
 
 This is the part people get wrong.

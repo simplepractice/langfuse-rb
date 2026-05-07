@@ -197,10 +197,20 @@ RSpec.describe Langfuse::DatasetItemClient do
   describe "#run" do
     let(:mock_client) { instance_double(Langfuse::Client) }
     let(:item_client) { described_class.new(item_data, client: mock_client) }
+    let(:span) do
+      instance_double(
+        Langfuse::Span,
+        trace_id: "a" * 32,
+        id: "b" * 16,
+        update_trace: nil,
+        update: nil
+      )
+    end
 
     before do
       allow(mock_client).to receive(:create_dataset_run_item)
-      allow(Langfuse).to receive(:force_flush)
+      allow(mock_client).to receive(:force_flush)
+      allow(mock_client).to receive(:observe).and_yield(span)
     end
 
     it "raises ArgumentError when no block given" do
@@ -220,7 +230,7 @@ RSpec.describe Langfuse::DatasetItemClient do
         yielded_span = span
         "output"
       end
-      expect(yielded_span).to be_a(Langfuse::BaseObservation)
+      expect(yielded_span).to eq(span)
     end
 
     it "returns the block output" do
@@ -241,7 +251,7 @@ RSpec.describe Langfuse::DatasetItemClient do
     it "passes observation_id in link call" do
       expect(mock_client).to receive(:create_dataset_run_item).with(
         hash_including(
-          observation_id: a_string_matching(/\A[0-9a-f]{16}\z/)
+          observation_id: "b" * 16
         )
       )
       item_client.run(run_name: "test") { "output" }
@@ -249,7 +259,7 @@ RSpec.describe Langfuse::DatasetItemClient do
 
     it "calls force_flush before linking" do
       call_order = []
-      allow(Langfuse).to receive(:force_flush) { call_order << :flush }
+      allow(mock_client).to receive(:force_flush) { call_order << :flush }
       allow(mock_client).to receive(:create_dataset_run_item) { call_order << :link }
       item_client.run(run_name: "test") { "output" }
       expect(call_order).to eq(%i[flush link])

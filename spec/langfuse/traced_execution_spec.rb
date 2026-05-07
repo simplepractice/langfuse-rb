@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe Langfuse::TracedExecution do
+  let(:client) { Langfuse }
+
   before do
     allow(Langfuse).to receive(:force_flush)
   end
@@ -8,6 +10,7 @@ RSpec.describe Langfuse::TracedExecution do
   describe ".call" do
     it "returns output, trace_id, observation_id, and nil error on success" do
       output, trace_id, observation_id, error = described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: { q: "hello" },
         task: ->(_span) { "result" }
@@ -23,6 +26,7 @@ RSpec.describe Langfuse::TracedExecution do
 
     it "captures task errors without re-raising" do
       output, trace_id, observation_id, error = described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: {},
         task: ->(_span) { raise StandardError, "boom" }
@@ -38,6 +42,7 @@ RSpec.describe Langfuse::TracedExecution do
     it "marks the span with error state on task failure" do
       span_captured = nil
       described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: {},
         task: lambda { |span|
@@ -52,6 +57,7 @@ RSpec.describe Langfuse::TracedExecution do
     it "passes the span to the task" do
       received_span = nil
       described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: {},
         task: ->(span) { received_span = span }
@@ -63,6 +69,7 @@ RSpec.describe Langfuse::TracedExecution do
     it "sets input and metadata on the trace" do
       span_captured = nil
       described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: { question: "What?" },
         metadata: { run: "v1" },
@@ -75,6 +82,7 @@ RSpec.describe Langfuse::TracedExecution do
     it "defaults metadata to empty hash" do
       # Should not raise when metadata is omitted
       output, _trace_id, _observation_id, error = described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: {},
         task: ->(_span) { "ok" }
@@ -89,6 +97,7 @@ RSpec.describe Langfuse::TracedExecution do
       yielded_trace_id = nil
 
       described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: {},
         task: ->(_span) { "result" }
@@ -106,6 +115,7 @@ RSpec.describe Langfuse::TracedExecution do
       call_order = []
 
       described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: {},
         task: lambda { |_span|
@@ -121,6 +131,7 @@ RSpec.describe Langfuse::TracedExecution do
 
     it "still captures task error when pre-task hook is given" do
       _output, _trace_id, _observation_id, error = described_class.call(
+        client: client,
         trace_name: "test-trace",
         input: {},
         task: ->(_span) { raise StandardError, "task failed" }

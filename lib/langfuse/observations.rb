@@ -67,6 +67,9 @@ module Langfuse
     # @return [String] Observation type (e.g., "span", "generation", "event")
     attr_reader :type
 
+    # @return [Client, nil] Client that created this observation
+    attr_accessor :client
+
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, Types::GenerationAttributes, nil] Optional initial attributes
@@ -99,7 +102,7 @@ module Langfuse
     #     puts "View trace: #{obs.trace_url}"
     #   end
     def trace_url
-      Langfuse.client.trace_url(trace_id)
+      observation_client.trace_url(trace_id)
     end
 
     # Ends the observation span.
@@ -118,7 +121,7 @@ module Langfuse
     def update_trace(attrs)
       return self unless @otel_span.recording?
 
-      otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h, mask: Langfuse.configuration.mask)
+      otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h, mask: observation_config.mask)
       otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
       self
     end
@@ -134,7 +137,7 @@ module Langfuse
     # @return [BaseObservation, Object] The child observation (or block return value if block given)
     def start_observation(name, attrs = {}, as_type: :span, &block)
       # Skip validation so unknown types fall back to Span in the factory.
-      child = Langfuse.start_observation(
+      child = observation_client.start_observation(
         name,
         attrs,
         as_type: as_type,
@@ -181,7 +184,7 @@ module Langfuse
     # @param level [String] Log level (debug, default, warning, error)
     # @return [void]
     def event(name:, input: nil, level: "default")
-      masked_input = Masking.apply(input, mask: Langfuse.configuration.mask)
+      masked_input = Masking.apply(input, mask: observation_config.mask)
       attributes = {
         OtelAttributes::OBSERVATION_INPUT => masked_input&.to_json,
         OtelAttributes::OBSERVATION_LEVEL => level
@@ -204,7 +207,7 @@ module Langfuse
     # @param data_type [Symbol] one of :numeric, :boolean, :categorical
     # @return [Hash] created score data from the API
     def score_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      Langfuse.create_score(
+      observation_client.create_score(
         name: name,
         value: value,
         trace_id: trace_id,
@@ -228,7 +231,7 @@ module Langfuse
       attrs_hash = attrs.to_h.merge(kwargs)
 
       # Use @type instance variable set during initialization
-      otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash, mask: Langfuse.configuration.mask)
+      otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash, mask: observation_config.mask)
       otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
     end
 
@@ -247,6 +250,14 @@ module Langfuse
     end
 
     private
+
+    def observation_client
+      @client || Langfuse.client
+    end
+
+    def observation_config
+      @client&.config || Langfuse.configuration
+    end
 
     # Runs the block with this observation as the active OTel span,
     # then ends the span in ensure (events excluded — they auto-end).

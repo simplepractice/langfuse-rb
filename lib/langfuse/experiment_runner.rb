@@ -32,7 +32,7 @@ module Langfuse
       @metadata = metadata || {}
       @description = description
       @run_name = run_name || "#{name} - #{Time.now.utc.iso8601}"
-      @logger = Langfuse.configuration.logger
+      @logger = client.config.logger
       @dataset_run_id = nil
       @dataset_id = nil
     end
@@ -75,6 +75,7 @@ module Langfuse
 
     def run_task_in_trace(item)
       TracedExecution.call(
+        client: @client,
         trace_name: "experiment-#{@name}",
         input: item.input,
         metadata: @metadata,
@@ -156,7 +157,7 @@ module Langfuse
 
     def flush_all
       @client.flush_scores
-      Langfuse.force_flush(timeout: FLUSH_TIMEOUT)
+      @client.force_flush(timeout: FLUSH_TIMEOUT)
     end
 
     # Wraps raw hashes into ExperimentItem; passes DatasetItemClient through unchanged.

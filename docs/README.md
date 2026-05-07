@@ -26,7 +26,7 @@ This is the consumer hub. Start here unless you are already looking for a specif
 
 ### Production Hardening
 
-- **[Configuration](CONFIGURATION.md)** — Config surface, tracing ownership, export filtering, environment defaults
+- **[Configuration](CONFIGURATION.md)** — Config surface, multiple clients, tracing ownership, export filtering, environment defaults
 - **[Caching](CACHING.md)** — Prompt cache backends, stale-while-revalidate, cache warming
 - **[Error Handling](ERROR_HANDLING.md)** — Failure modes, retry boundaries, debugging
 - **[Migration Guide](MIGRATION.md)** — Move hardcoded prompts into Langfuse-managed prompts without breaking runtime behavior

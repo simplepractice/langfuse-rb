@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "forwardable"
+require_relative "tracer_provider_factory"
 
 module Langfuse
   # Main client for Langfuse SDK
@@ -22,6 +23,7 @@ module Langfuse
   # rubocop:disable Metrics/ClassLength
   class Client
     extend Forwardable
+    include ObservationMethods
 
     # @return [Integer] Default page size when fetching all dataset items
     DATASET_ITEMS_PAGE_SIZE = 50
@@ -452,14 +454,34 @@ module Langfuse
       @score_client.flush
     end
 
+    # Return this client's tracer provider without mutating global OpenTelemetry state
+    #
+    # @return [OpenTelemetry::SDK::Trace::TracerProvider]
+    def tracer_provider
+      @tracer_provider ||= TracerProviderFactory.build(config)
+    end
+
     # Shutdown the client and flush any pending scores
     #
     # Also shuts down the cache if it supports shutdown (e.g., SWR thread pool).
     #
+    # @param timeout [Integer] Timeout in seconds
     # @return [void]
-    def shutdown
+    def shutdown(timeout: 30)
+      provider = @tracer_provider
+      @tracer_provider = nil
+
       @score_client.shutdown
       @api_client.shutdown
+      provider&.shutdown(timeout: timeout)
+    end
+
+    # Force flush all pending traces for this client
+    #
+    # @param timeout [Integer] Timeout in seconds
+    # @return [void]
+    def force_flush(timeout: 30)
+      @tracer_provider&.force_flush(timeout: timeout)
     end
 
     # Create a new dataset
@@ -661,6 +683,18 @@ module Langfuse
     private
 
     attr_reader :score_client
+
+    def observation_tracer
+      tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION)
+    end
+
+    def observation_mask
+      config.mask
+    end
+
+    def observation_client
+      self
+    end
 
     # Build a project-scoped URL, returning nil if project ID is unavailable
     def project_url(path)

@@ -19,7 +19,7 @@ RSpec.describe Langfuse::OtelSetup do
 
   before do
     described_class.shutdown(timeout: 1) if described_class.initialized?
-    allow(described_class).to receive(:build_exporter).and_return(exporter)
+    allow(Langfuse::TracerProviderFactory).to receive(:build_exporter).and_return(exporter)
   end
 
   after do
@@ -70,10 +70,10 @@ RSpec.describe Langfuse::OtelSetup do
       existing_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider)
 
       allow(described_class).to receive_messages(
-        build_tracer_provider: candidate_provider,
         publish_provider: [existing_provider, false],
         existing_provider_for: existing_provider
       )
+      allow(Langfuse::TracerProviderFactory).to receive(:build).and_return(candidate_provider)
 
       expect(candidate_provider).to receive(:shutdown).with(timeout: 30)
       expect(described_class.setup(config)).to equal(existing_provider)

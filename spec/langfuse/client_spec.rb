@@ -240,6 +240,79 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "#observe" do
+    let(:client) { described_class.new(valid_config) }
+
+    it "creates observations using a client-owned tracer provider" do
+      original_global_provider = OpenTelemetry.tracer_provider
+
+      observation = client.observe("client-span", input: { data: "test" })
+
+      expect(observation).to be_a(Langfuse::Span)
+      expect(observation.client).to eq(client)
+      expect(client.tracer_provider).not_to be_nil
+      expect(OpenTelemetry.tracer_provider).to eq(original_global_provider)
+    end
+
+    it "creates children on the same client" do
+      root = client.observe("root")
+      child = root.start_observation("child")
+
+      expect(child.client).to eq(client)
+      expect(child.trace_id).to eq(root.trace_id)
+    end
+
+    it "uses the client config mask for observation updates" do
+      valid_config.mask = ->(data:) { data.is_a?(Hash) ? { masked: true } : data }
+      observation = client.observe("masked")
+
+      observation.update(input: { secret: "value" })
+
+      input = observation.otel_span.to_span_data.attributes["langfuse.observation.input"]
+      expect(JSON.parse(input)).to eq({ "masked" => true })
+    end
+
+    it "supports custom trace IDs" do
+      trace_id = Langfuse.create_trace_id(seed: "client-trace")
+      captured = nil
+
+      client.observe("root", trace_id: trace_id) { |obs| captured = obs.trace_id }
+
+      expect(captured).to eq(trace_id)
+    end
+  end
+
+  describe "client-owned tracing" do
+    def tracing_config(base_url, public_key)
+      Langfuse::Config.new do |config|
+        config.public_key = public_key
+        config.secret_key = "sk_test"
+        config.base_url = base_url
+        config.tracing_async = false
+        config.batch_size = 10
+        config.flush_interval = 1
+      end
+    end
+
+    it "exports separate clients to their own Langfuse endpoints" do
+      first_url = "https://first.langfuse.test"
+      second_url = "https://second.langfuse.test"
+      first_client = described_class.new(tracing_config(first_url, "pk_first"))
+      second_client = described_class.new(tracing_config(second_url, "pk_second"))
+
+      first_client.observe("first") { |span| span.update(output: "ok") }
+      second_client.observe("second") { |span| span.update(output: "ok") }
+      first_client.force_flush(timeout: 1)
+      second_client.force_flush(timeout: 1)
+
+      expect(WebMock).to have_requested(:post, "#{first_url}/api/public/otel/v1/traces").at_least_once
+      expect(WebMock).to have_requested(:post, "#{second_url}/api/public/otel/v1/traces").at_least_once
+    ensure
+      first_client&.shutdown(timeout: 1)
+      second_client&.shutdown(timeout: 1)
+    end
+  end
+
   describe "#get_prompt" do
     let(:client) { described_class.new(valid_config) }
     let(:base_url) { valid_config.base_url }
