@@ -2523,4 +2523,27 @@ RSpec.describe Langfuse::Client do
       end
     end
   end
+
+  describe "#resolve_media_references" do
+    let(:client) { described_class.new(valid_config) }
+    let(:base_url) { valid_config.base_url }
+    let(:reference_string) { "@@@langfuseMedia:type=text/plain|id=media-123|source=bytes@@@" }
+
+    before do
+      stub_request(:get, "#{base_url}/api/public/media/media-123")
+        .to_return(status: 200, body: {
+          mediaId: "media-123",
+          contentType: "text/plain",
+          url: "https://media.langfuse.test/media-123"
+        }.to_json, headers: { "Content-Type" => "application/json" })
+      stub_request(:get, "https://media.langfuse.test/media-123")
+        .to_return(status: 200, body: "hello")
+    end
+
+    it "resolves references through the client flat API" do
+      result = client.resolve_media_references(obj: { "file" => reference_string })
+
+      expect(result).to eq({ "file" => "data:text/plain;base64,aGVsbG8=" })
+    end
+  end
 end

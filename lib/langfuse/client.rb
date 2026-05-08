@@ -42,6 +42,26 @@ module Langfuse
     # @!method prompt_cache_stats
     # @!method prompt_cache_key(name, version: nil, label: nil)
     # @!method validate_prompt_cache_backend!
+    # @!method delete_prompt(name, version: nil, label: nil)
+    # @!method get_media(media_id)
+    # @!method upload_media(media, trace_id:, field:, observation_id: nil, timeout: nil)
+    # @!method get_media_upload_url(trace_id:, content_type:, content_length:, sha256_hash:, field:, observation_id: nil)
+    # @!method patch_media(media_id:, uploaded_at:, upload_http_status:, upload_http_error: nil, upload_time_ms: nil)
+    # @!method health
+    # @!method list_sessions(**filters)
+    # @!method get_session(session_id)
+    # @!method list_observations(**filters)
+    # @!method list_scores(**filters)
+    # @!method get_score(score_id)
+    # @!method create_score_config(**attributes)
+    # @!method list_score_configs(page: nil, limit: nil)
+    # @!method get_score_config(config_id)
+    # @!method update_score_config(config_id:, **attributes)
+    # @!method create_model(**attributes)
+    # @!method list_models(page: nil, limit: nil)
+    # @!method get_model(id)
+    # @!method delete_model(id)
+    # @!method query_metrics(query:)
     # @!method list_traces(**options)
     # @!method get_trace(id)
     # @!method list_datasets(page: nil, limit: nil)
@@ -55,6 +75,26 @@ module Langfuse
                    :prompt_cache_stats,
                    :prompt_cache_key,
                    :validate_prompt_cache_backend!,
+                   :delete_prompt,
+                   :get_media,
+                   :upload_media,
+                   :get_media_upload_url,
+                   :patch_media,
+                   :health,
+                   :list_sessions,
+                   :get_session,
+                   :list_observations,
+                   :list_scores,
+                   :get_score,
+                   :create_score_config,
+                   :list_score_configs,
+                   :get_score_config,
+                   :update_score_config,
+                   :create_model,
+                   :list_models,
+                   :get_model,
+                   :delete_model,
+                   :query_metrics,
                    :list_traces,
                    :get_trace,
                    :list_datasets,
@@ -300,6 +340,24 @@ module Langfuse
       )
 
       build_prompt_client(prompt_data)
+    end
+
+    # Resolve Langfuse media reference tokens in a nested object.
+    #
+    # @param obj [Object] Object to traverse
+    # @param resolve_with [Symbol, String] Only :base64_data_uri is supported
+    # @param max_depth [Integer] Maximum nested traversal depth
+    # @param content_fetch_timeout [Integer] Media download timeout in seconds
+    # @return [Object] Copy of obj with resolvable media references replaced
+    # @raise [ArgumentError] when resolve_with is unsupported
+    def resolve_media_references(obj:, resolve_with: :base64_data_uri, max_depth: 10, content_fetch_timeout: 10)
+      Media.resolve_references(
+        obj,
+        client: self,
+        resolve_with: resolve_with,
+        max_depth: max_depth,
+        content_fetch_timeout: content_fetch_timeout
+      )
     end
 
     # Lazily-fetched project ID for URL generation

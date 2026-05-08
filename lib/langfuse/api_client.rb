@@ -4,7 +4,9 @@ require "faraday"
 require "faraday/retry"
 require "base64"
 require "json"
+require "time"
 require "uri"
+require_relative "sdk_headers"
 require_relative "prompt_fetch_result"
 require_relative "prompt_cache_coordinator"
 
@@ -268,6 +270,88 @@ module Langfuse
         .tap { @prompt_cache_coordinator.invalidate_after_mutation(name) }
     end
 
+    # Delete prompt versions.
+    #
+    # @param name [String] Prompt name
+    # @param version [Integer, nil] Optional version to delete
+    # @param label [String, nil] Optional label filter for deletion
+    # @return [nil]
+    # @raise [NotFoundError] if the prompt is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def delete_prompt(name, version: nil, label: nil)
+      path = "/api/public/v2/prompts/#{URI.encode_uri_component(name)}"
+      request(:delete, path, params: { version: version, label: label }.compact)
+      @prompt_cache_coordinator.invalidate_after_mutation(name)
+      nil
+    end
+
+    # Fetch a media record and its temporary download URL.
+    #
+    # @param media_id [String] Langfuse media ID
+    # @return [Hash] Media record
+    # @raise [NotFoundError] if the media record is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_media(media_id)
+      request(:get, "/api/public/media/#{URI.encode_uri_component(media_id)}")
+    end
+
+    # Get a presigned upload URL for a media record.
+    #
+    # @param trace_id [String] Associated trace ID
+    # @param content_type [String] MIME type
+    # @param content_length [Integer] Media byte length
+    # @param sha256_hash [String] Base64-encoded SHA256 digest
+    # @param field [String, Symbol] Trace/observation field: input, output, or metadata
+    # @param observation_id [String, nil] Associated observation ID
+    # @return [Hash] Upload URL response
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_media_upload_url(trace_id:, content_type:, content_length:, sha256_hash:, field:, observation_id: nil)
+      request(:post, "/api/public/media", body: {
+        traceId: trace_id, observationId: observation_id, contentType: content_type,
+        contentLength: content_length, sha256Hash: sha256_hash, field: field
+      }.compact)
+    end
+
+    # Patch media upload status after uploading to the presigned URL.
+    #
+    # @param media_id [String] Langfuse media ID
+    # @param uploaded_at [Time, String] Upload completion timestamp
+    # @param upload_http_status [Integer] HTTP status returned by object storage
+    # @param upload_http_error [String, nil] Upload error message
+    # @param upload_time_ms [Integer, nil] Upload duration in milliseconds
+    # @return [Hash] Patched media record
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def patch_media(media_id:, uploaded_at:, upload_http_status:, upload_http_error: nil, upload_time_ms: nil)
+      request(:patch, "/api/public/media/#{URI.encode_uri_component(media_id)}", body: {
+        uploadedAt: format_timestamp(uploaded_at), uploadHttpStatus: upload_http_status,
+        uploadHttpError: upload_http_error, uploadTimeMs: upload_time_ms
+      }.compact)
+    end
+
+    # Upload media bytes through Langfuse's presigned media flow.
+    #
+    # @param media [Media] Media wrapper
+    # @param trace_id [String] Associated trace ID
+    # @param field [String, Symbol] Trace/observation field: input, output, or metadata
+    # @param observation_id [String, nil] Associated observation ID
+    # @param timeout [Integer, nil] Upload timeout override
+    # @return [String] Langfuse media reference token
+    # @raise [ArgumentError] if media is invalid
+    # @raise [ApiError] if the upload fails
+    def upload_media(media, trace_id:, field:, observation_id: nil, timeout: nil)
+      validate_media_upload!(media)
+      upload = get_media_upload_url(
+        trace_id: trace_id, content_type: media.content_type, content_length: media.content_length,
+        sha256_hash: media.content_sha256_hash, field: field, observation_id: observation_id
+      )
+      upload_media_to_presigned_url(media, upload, timeout: timeout)
+      media.reference_string
+    end
+
     # Send a batch of events to the Langfuse ingestion API
     #
     # Sends events (scores, traces, observations) to the ingestion endpoint.
@@ -387,6 +471,196 @@ module Langfuse
     #   project_id = data["data"][0]["id"]
     def get_projects # rubocop:disable Naming/AccessorMethodName
       request(:get, "/api/public/projects")
+    end
+
+    # Check Langfuse API health.
+    #
+    # @return [Hash] Health response
+    # @raise [ApiError] for API errors
+    def health
+      request(:get, "/api/public/health")
+    end
+
+    # List sessions.
+    #
+    # @param filters [Hash] Optional filters: page, limit, from_timestamp, to_timestamp, environment
+    # @return [Array<Hash>] Session records
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_sessions(**filters)
+      list_sessions_paginated(**filters)["data"] || []
+    end
+
+    # Fetch one session including traces.
+    #
+    # @param session_id [String] Session ID
+    # @return [Hash] Session record
+    # @raise [NotFoundError] if the session is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_session(session_id)
+      request(:get, "/api/public/sessions/#{URI.encode_uri_component(session_id)}")
+    end
+
+    # Full paginated sessions response including "meta".
+    #
+    # @api private
+    # @param filters [Hash] Optional filters
+    # @return [Hash] Full response hash
+    def list_sessions_paginated(**filters)
+      request(:get, "/api/public/sessions", params: transform_query_options(filters))
+    end
+
+    # List observations through the v2 read API.
+    #
+    # @param filters [Hash] Optional v2 filters using snake_case keys
+    # @return [Array<Hash>] Observation records
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_observations(**filters)
+      list_observations_paginated(**filters)["data"] || []
+    end
+
+    # Full v2 observations response including cursor metadata.
+    #
+    # @api private
+    # @param filters [Hash] Optional v2 filters using snake_case keys
+    # @return [Hash] Full response hash
+    def list_observations_paginated(**filters)
+      request(:get, "/api/public/v2/observations", params: transform_query_options(filters))
+    end
+
+    # List scores through the v2 read API.
+    #
+    # @param filters [Hash] Optional v2 filters using snake_case keys
+    # @return [Array<Hash>] Score records
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_scores(**filters)
+      list_scores_paginated(**filters)["data"] || []
+    end
+
+    # Fetch one score through the v2 read API.
+    #
+    # @param score_id [String] Score ID
+    # @return [Hash] Score record
+    # @raise [NotFoundError] if the score is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_score(score_id)
+      request(:get, "/api/public/v2/scores/#{URI.encode_uri_component(score_id)}")
+    end
+
+    # Full v2 scores response including "meta".
+    #
+    # @api private
+    # @param filters [Hash] Optional v2 filters using snake_case keys
+    # @return [Hash] Full response hash
+    def list_scores_paginated(**filters)
+      request(:get, "/api/public/v2/scores", params: transform_query_options(filters))
+    end
+
+    # Create a score config.
+    #
+    # @param attributes [Hash] Score config attributes using snake_case keys
+    # @return [Hash] Score config record
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def create_score_config(**attributes)
+      request(:post, "/api/public/score-configs", body: transform_body_options(attributes))
+    end
+
+    # List score configs.
+    #
+    # @param page [Integer, nil] Page number
+    # @param limit [Integer, nil] Page size
+    # @return [Array<Hash>] Score config records
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_score_configs(page: nil, limit: nil)
+      request(:get, "/api/public/score-configs", params: { page: page, limit: limit }.compact)["data"] || []
+    end
+
+    # Fetch one score config.
+    #
+    # @param config_id [String] Score config ID
+    # @return [Hash] Score config record
+    # @raise [NotFoundError] if the score config is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_score_config(config_id)
+      request(:get, "/api/public/score-configs/#{URI.encode_uri_component(config_id)}")
+    end
+
+    # Update a score config.
+    #
+    # @param config_id [String] Score config ID
+    # @param attributes [Hash] Score config attributes using snake_case keys
+    # @return [Hash] Score config record
+    # @raise [NotFoundError] if the score config is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def update_score_config(config_id:, **attributes)
+      request(:patch, "/api/public/score-configs/#{URI.encode_uri_component(config_id)}",
+              body: transform_body_options(attributes))
+    end
+
+    # Create a model.
+    #
+    # @param attributes [Hash] Model attributes using snake_case keys
+    # @return [Hash] Model record
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def create_model(**attributes)
+      request(:post, "/api/public/models", body: transform_body_options(attributes))
+    end
+
+    # List models.
+    #
+    # @param page [Integer, nil] Page number
+    # @param limit [Integer, nil] Page size
+    # @return [Array<Hash>] Model records
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def list_models(page: nil, limit: nil)
+      request(:get, "/api/public/models", params: { page: page, limit: limit }.compact)["data"] || []
+    end
+
+    # Fetch one model.
+    #
+    # @param id [String] Model ID
+    # @return [Hash] Model record
+    # @raise [NotFoundError] if the model is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def get_model(id)
+      request(:get, "/api/public/models/#{URI.encode_uri_component(id)}")
+    end
+
+    # Delete one model.
+    #
+    # @param id [String] Model ID
+    # @return [nil]
+    # @raise [NotFoundError] if the model is not found
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def delete_model(id)
+      request(:delete, "/api/public/models/#{URI.encode_uri_component(id)}")
+      nil
+    end
+
+    # Query metrics through the v2 metrics API.
+    #
+    # @param query [Hash, String] Metrics query hash or JSON string
+    # @return [Hash] Metrics response
+    # @raise [ArgumentError] if query is empty
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] for other API errors
+    def query_metrics(query:)
+      raise ArgumentError, "query is required" if query.nil? || query == ""
+
+      encoded_query = query.is_a?(String) ? query : JSON.generate(query)
+      request(:get, "/api/public/v2/metrics", params: { query: encoded_query })
     end
 
     # Shut down the API client and release resources
@@ -618,6 +892,122 @@ module Langfuse
       @prompt_cache_coordinator.backend_name
     end
 
+    def validate_media_upload!(media)
+      return if media.respond_to?(:valid?) && media.valid? && media.respond_to?(:reference_string)
+
+      raise ArgumentError, "media must be a valid Langfuse::Media"
+    end
+
+    def upload_media_to_presigned_url(media, upload, timeout:)
+      upload_url = upload["uploadUrl"]
+      return if upload_url.nil? || upload_url.empty?
+
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      response = perform_media_put(upload_url, media, timeout)
+      patch_uploaded_media(media, response, started)
+      raise ApiError, "Media upload failed (#{response.status})" unless response.status.between?(200, 299)
+    rescue Faraday::Error => e
+      patch_failed_media(media, e, started)
+      raise ApiError, "Media upload failed: #{e.message}"
+    end
+
+    def perform_media_put(upload_url, media, timeout)
+      media_upload_connection(upload_url, timeout).put do |request|
+        media_upload_headers(upload_url, media).each { |key, value| request.headers[key] = value }
+        request.body = media.content_bytes
+      end
+    end
+
+    def patch_uploaded_media(media, response, started)
+      patch_media(
+        media_id: media.media_id,
+        uploaded_at: Time.now.utc,
+        upload_http_status: response.status,
+        upload_http_error: response.status.between?(200, 299) ? nil : response.body.to_s,
+        upload_time_ms: elapsed_ms(started)
+      )
+    end
+
+    def patch_failed_media(media, error, started)
+      patch_media(
+        media_id: media.media_id,
+        uploaded_at: Time.now.utc,
+        upload_http_status: 0,
+        upload_http_error: error.message,
+        upload_time_ms: elapsed_ms(started)
+      )
+    rescue ApiError
+      nil
+    end
+
+    def media_upload_connection(upload_url, timeout)
+      Faraday.new(url: upload_url) do |conn|
+        conn.options.timeout = timeout || @timeout
+        conn.adapter Faraday.default_adapter
+      end
+    end
+
+    def media_upload_headers(upload_url, media)
+      headers = { "Content-Type" => media.content_type }
+      return headers if gcs_upload_url?(upload_url)
+
+      headers.merge(
+        "x-amz-checksum-sha256" => media.content_sha256_hash,
+        "x-ms-blob-type" => "BlockBlob"
+      )
+    end
+
+    def gcs_upload_url?(upload_url)
+      host = URI.parse(upload_url).host.to_s
+      host == "storage.googleapis.com" || host.end_with?(".storage.googleapis.com")
+    rescue URI::InvalidURIError
+      false
+    end
+
+    def elapsed_ms(started)
+      ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
+    end
+
+    def transform_query_options(options)
+      transform_options(options) { |value| format_query_value(value) }
+    end
+
+    def transform_body_options(options)
+      transform_options(options) { |value| transform_body_value(value) }
+    end
+
+    def transform_body_value(value)
+      case value
+      when Hash
+        transform_body_options(value)
+      when Array
+        value.map { |item| transform_body_value(item) }
+      else
+        value
+      end
+    end
+
+    def transform_options(options)
+      options.each_with_object({}) do |(key, value), params|
+        next if value.nil?
+
+        params[camelize_key(key)] = yield(value)
+      end
+    end
+
+    def camelize_key(key)
+      parts = key.to_s.split("_")
+      ([parts.first] + parts[1..].map(&:capitalize)).join.to_sym
+    end
+
+    def format_query_value(value)
+      value.respond_to?(:iso8601) ? value.iso8601 : value
+    end
+
+    def format_timestamp(value)
+      value.respond_to?(:iso8601) ? value.iso8601 : value
+    end
+
     # Issue an HTTP request, raise on Faraday errors, parse the response.
     #
     # @api private
@@ -714,7 +1104,7 @@ module Langfuse
         "Authorization" => authorization_header,
         "User-Agent" => user_agent,
         "Content-Type" => "application/json"
-      }
+      }.merge(SdkHeaders.rest(public_key: public_key))
     end
 
     # Generate Basic Auth header
@@ -761,6 +1151,8 @@ module Langfuse
       case response.status
       when 200, 201
         response.body
+      when 204
+        nil
       when 401
         raise UnauthorizedError, "Authentication failed. Check your API keys."
       when 404

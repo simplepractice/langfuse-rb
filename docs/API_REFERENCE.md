@@ -10,6 +10,8 @@ Complete method reference for the Langfuse Ruby SDK.
 - [Trace ID Generation](#trace-id-generation)
 - [Tracing & Observability](#tracing--observability)
 - [Traces](#traces)
+- [Media References](#media-references)
+- [Read/Admin APIs](#readadmin-apis)
 - [Scoring](#scoring)
 - [Datasets](#datasets)
 - [Experiments](#experiments)
@@ -421,6 +423,47 @@ prompt = client.update_prompt(
   labels: ["production"]
 )
 ```
+
+### `Client#delete_prompt`
+
+Delete prompt versions and invalidate cached variants for the prompt name.
+
+**Signature:**
+
+```ruby
+delete_prompt(name, version: nil, label: nil) # => nil
+```
+
+**Parameters:**
+
+| Parameter | Type    | Required | Description |
+| --------- | ------- | -------- | ----------- |
+| `name`    | String  | Yes      | Prompt name |
+| `version` | Integer | No       | Specific prompt version to delete |
+| `label`   | String  | No       | Delete versions matching this label |
+
+**Returns:** `nil`
+
+**Raises:**
+
+- `NotFoundError` if prompt/version/label is not found
+- `UnauthorizedError` if credentials invalid
+- `ApiError` on network/server errors
+
+**Example:**
+
+```ruby
+# Delete all versions for a prompt
+client.delete_prompt("support-assistant")
+
+# Delete only one version
+client.delete_prompt("support-assistant", version: 3)
+
+# Delete versions carrying a label
+client.delete_prompt("support-assistant", label: "staging")
+```
+
+After a successful delete, `delete_prompt` invalidates all cached variants for that prompt name. Edits made outside this SDK still become visible through TTL expiry, `refresh_prompt`, or explicit invalidation.
 
 ### `Client#list_prompts`
 
@@ -907,6 +950,215 @@ get_trace(id) # => Hash
 ```ruby
 trace = client.get_trace("trace-uuid-123")
 puts trace["name"]
+```
+
+## Media References
+
+Media references let trace input, output, and metadata carry large media content by reference instead of embedding raw bytes directly in every payload.
+
+### `Langfuse::Media`
+
+Wrap bytes, a file, or a base64 data URI and expose the same deterministic reference-string shape used by the JS and Python SDKs.
+
+**Signatures:**
+
+```ruby
+Langfuse::Media.new(content_bytes:, content_type:)
+Langfuse::Media.new(file_path:, content_type:)
+Langfuse::Media.new(base64_data_uri:)
+```
+
+**Properties:**
+
+| Property | Type | Description |
+| -------- | ---- | ----------- |
+| `content_type` | String | MIME type |
+| `content_bytes` | String | Raw bytes |
+| `content_length` | Integer | Byte length |
+| `content_sha256_hash` | String | Base64 SHA256 digest |
+| `media_id` | String | Deterministic Langfuse media ID derived from the SHA256 digest |
+| `reference_string` | String | `@@@langfuseMedia:...@@@` reference token |
+| `tag` | String | Alias for `reference_string` |
+| `base64_data_uri` | String | Inline `data:` URI representation |
+
+**Example:**
+
+```ruby
+media = Langfuse::Media.new(
+  content_bytes: File.binread("receipt.png"),
+  content_type: "image/png"
+)
+
+media.reference_string
+# => "@@@langfuseMedia:type=image/png|id=...|source=bytes@@@"
+```
+
+`Langfuse::LangfuseMedia` is an alias for compatibility with the upstream SDK naming.
+
+### `Langfuse::Media.parse_reference_string`
+
+Parse a reference token.
+
+```ruby
+reference = Langfuse::Media.parse_reference_string(media.reference_string)
+reference.media_id
+reference.content_type
+reference.source
+```
+
+### `Client#upload_media`
+
+Create a media record, upload bytes to the returned presigned URL when one is provided, patch upload status, and return the media reference string.
+
+**Signature:**
+
+```ruby
+upload_media(media, trace_id:, field:, observation_id: nil, timeout: nil) # => String
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `media` | Langfuse::Media | Yes | Media wrapper |
+| `trace_id` | String | Yes | Associated trace ID |
+| `field` | String or Symbol | Yes | `input`, `output`, or `metadata` |
+| `observation_id` | String | No | Associated observation ID |
+| `timeout` | Integer | No | Upload timeout override |
+
+**Example:**
+
+```ruby
+trace_id = Langfuse.create_trace_id(seed: "receipt-42")
+reference = media.reference_string
+
+Langfuse.observe("receipt-review", { input: { image: reference } }, trace_id: trace_id) do |obs|
+  obs.update(output: "accepted")
+end
+
+client.upload_media(media, trace_id: trace_id, field: :input)
+```
+
+### Media REST Helpers
+
+Flat helpers expose the underlying platform media API without introducing a nested manager:
+
+```ruby
+client.get_media(media_id)
+client.get_media_upload_url(
+  trace_id: trace_id,
+  content_type: media.content_type,
+  content_length: media.content_length,
+  sha256_hash: media.content_sha256_hash,
+  field: :input
+)
+client.patch_media(
+  media_id: media.media_id,
+  uploaded_at: Time.now.utc,
+  upload_http_status: 200
+)
+```
+
+### `Client#resolve_media_references`
+
+Resolve reference strings in a nested object to base64 data URIs.
+
+**Signature:**
+
+```ruby
+resolve_media_references(obj:, resolve_with: :base64_data_uri,
+                         max_depth: 10, content_fetch_timeout: 10)
+```
+
+**Example:**
+
+```ruby
+payload = { input: { image: media.reference_string } }
+resolved = client.resolve_media_references(obj: payload)
+resolved[:input][:image] # => "data:image/png;base64,..."
+```
+
+Resolution is best-effort per reference: failed downloads are logged and left as reference strings so one broken media item does not destroy the whole payload.
+
+## Read/Admin APIs
+
+These are thin flat wrappers over high-value Langfuse read/admin endpoints. They return parsed response hashes or arrays and intentionally avoid nested generated-client managers.
+
+### Sessions
+
+```ruby
+client.list_sessions(page: 1, limit: 20, environment: "production")
+client.get_session("session-id")
+```
+
+`list_sessions` accepts optional API filters as Ruby snake_case keys.
+
+### Observations v2
+
+```ruby
+client.list_observations(
+  trace_id: "trace-id",
+  from_start_time: Time.utc(2026, 1, 1),
+  limit: 50
+)
+```
+
+Snake_case query keys are converted to API camelCase, and Time-like values are formatted as ISO8601.
+
+### Scores v2
+
+```ruby
+client.list_scores(trace_id: "trace-id", data_type: "NUMERIC")
+client.get_score("score-id")
+```
+
+Creation still uses the existing score APIs documented in [Scoring](#scoring); these v2 methods are for readback.
+
+### Score Configs
+
+```ruby
+config = client.create_score_config(
+  name: "quality",
+  data_type: "NUMERIC",
+  min_value: 0,
+  max_value: 1
+)
+
+client.list_score_configs(limit: 20)
+client.get_score_config(config["id"])
+client.update_score_config(config_id: config["id"], max_value: 5)
+```
+
+Body keys are recursively converted from snake_case to camelCase.
+
+### Models
+
+```ruby
+model = client.create_model(model_name: "gpt-4o", match_pattern: "gpt-4o")
+client.list_models(limit: 20)
+client.get_model(model["id"])
+client.delete_model(model["id"])
+```
+
+### Metrics v2
+
+```ruby
+client.query_metrics(
+  query: {
+    view: "observations",
+    metrics: [{ measure: "count", aggregation: "count" }],
+    fromTimestamp: "2026-01-01T00:00:00Z",
+    toTimestamp: "2026-01-02T00:00:00Z"
+  }
+)
+```
+
+Pass either a Ruby hash or an already-encoded JSON string. The platform expects the metrics query itself as the `query` URL parameter.
+
+### Health
+
+```ruby
+client.health
 ```
 
 ## Scoring

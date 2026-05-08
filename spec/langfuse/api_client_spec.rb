@@ -84,6 +84,14 @@ RSpec.describe Langfuse::ApiClient do
       conn = api_client.connection
       expect(conn.headers["Content-Type"]).to eq("application/json")
     end
+
+    it "includes Langfuse SDK identity headers" do
+      conn = api_client.connection
+
+      expect(conn.headers["X-Langfuse-Sdk-Name"]).to eq("ruby")
+      expect(conn.headers["X-Langfuse-Sdk-Version"]).to eq(Langfuse::VERSION)
+      expect(conn.headers["X-Langfuse-Public-Key"]).to eq(public_key)
+    end
   end
 
   describe "#authorization_header" do
@@ -2813,6 +2821,261 @@ RSpec.describe Langfuse::ApiClient do
         allow(api_client.connection).to receive(:get).and_raise(retriable_error)
 
         expect { api_client.get_trace(trace_id) }.to raise_error(Langfuse::ApiError, /API request failed \(503\)/)
+      end
+    end
+  end
+
+  describe "SDK parity APIs" do
+    # rubocop:disable RSpec/MultipleMemoizedHelpers
+    describe "#delete_prompt" do
+      let(:prompt_name) { "greeting" }
+      let(:prompt_url) { "#{base_url}/api/public/v2/prompts/#{prompt_name}" }
+      let(:cache) { Langfuse::PromptCache.new(ttl: 60) }
+      let(:cached_client) do
+        described_class.new(public_key: public_key, secret_key: secret_key, base_url: base_url, cache: cache)
+      end
+      let(:prompt_response) do
+        {
+          "id" => "prompt-123",
+          "name" => prompt_name,
+          "version" => 1,
+          "prompt" => "Hello {{name}}!",
+          "type" => "text",
+          "labels" => ["production"]
+        }
+      end
+
+      it "deletes all prompt versions and invalidates cached variants by name" do
+        stub_request(:get, prompt_url)
+          .to_return(
+            { status: 200, body: prompt_response.merge("version" => 1).to_json,
+              headers: { "Content-Type" => "application/json" } },
+            { status: 200, body: prompt_response.merge("version" => 2).to_json,
+              headers: { "Content-Type" => "application/json" } }
+          )
+        stub_request(:delete, prompt_url).to_return(status: 204, body: "")
+
+        cached_client.get_prompt(prompt_name)
+        result = cached_client.delete_prompt(prompt_name)
+        fetched = cached_client.get_prompt(prompt_name)
+
+        expect(result).to be_nil
+        expect(fetched["version"]).to eq(2)
+        expect(a_request(:delete, prompt_url)).to have_been_made.once
+        expect(a_request(:get, prompt_url)).to have_been_made.twice
+      end
+
+      it "passes version and label query parameters when provided" do
+        stub_request(:delete, prompt_url)
+          .with(query: { version: "2", label: "staging" })
+          .to_return(status: 204, body: "")
+
+        api_client.delete_prompt(prompt_name, version: 2, label: "staging")
+
+        expect(a_request(:delete, prompt_url)
+          .with(query: { version: "2", label: "staging" })).to have_been_made.once
+      end
+    end
+    # rubocop:enable RSpec/MultipleMemoizedHelpers
+
+    describe "media APIs" do
+      let(:media) { Langfuse::Media.new(content_bytes: "hello", content_type: "text/plain") }
+
+      it "fetches media records" do
+        stub_request(:get, "#{base_url}/api/public/media/#{media.media_id}")
+          .to_return(status: 200, body: { mediaId: media.media_id, contentType: "text/plain" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = api_client.get_media(media.media_id)
+
+        expect(result["mediaId"]).to eq(media.media_id)
+      end
+
+      it "creates upload URLs with Ruby keyword arguments mapped to API fields" do
+        stub_request(:post, "#{base_url}/api/public/media")
+          .with(body: hash_including(
+            "traceId" => "trace-123",
+            "contentType" => "text/plain",
+            "contentLength" => 5,
+            "sha256Hash" => media.content_sha256_hash,
+            "field" => "input"
+          ))
+          .to_return(status: 200, body: { mediaId: media.media_id, uploadUrl: nil }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = api_client.get_media_upload_url(
+          trace_id: "trace-123",
+          content_type: media.content_type,
+          content_length: media.content_length,
+          sha256_hash: media.content_sha256_hash,
+          field: "input"
+        )
+
+        expect(result["mediaId"]).to eq(media.media_id)
+      end
+
+      it "uploads media bytes and patches upload status" do
+        upload_url = "https://media-upload.langfuse.test/upload/#{media.media_id}"
+        stub_request(:post, "#{base_url}/api/public/media")
+          .to_return(status: 200, body: { mediaId: media.media_id, uploadUrl: upload_url }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:put, upload_url)
+          .with do |request|
+            request.body == "hello" &&
+              request.headers["Content-Type"] == "text/plain" &&
+              request.headers["X-Amz-Checksum-Sha256"] == media.content_sha256_hash &&
+              request.headers["X-Ms-Blob-Type"] == "BlockBlob"
+          end
+          .to_return(status: 200, body: "")
+        stub_request(:patch, "#{base_url}/api/public/media/#{media.media_id}")
+          .with(body: hash_including("uploadHttpStatus" => 200))
+          .to_return(status: 200, body: { mediaId: media.media_id }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = api_client.upload_media(media, trace_id: "trace-123", field: "input")
+
+        expect(result).to eq(media.reference_string)
+        expect(a_request(:put, upload_url)).to have_been_made.once
+      end
+
+      it "omits provider-specific upload headers for GCS presigned URLs" do
+        upload_url = "https://storage.googleapis.com/langfuse-media/#{media.media_id}"
+        stub_request(:post, "#{base_url}/api/public/media")
+          .to_return(status: 200, body: { mediaId: media.media_id, uploadUrl: upload_url }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:put, upload_url)
+          .with do |request|
+            request.headers["Content-Type"] == "text/plain" &&
+              request.headers["X-Amz-Checksum-Sha256"].nil? &&
+              request.headers["X-Ms-Blob-Type"].nil?
+          end
+          .to_return(status: 200, body: "")
+        stub_request(:patch, "#{base_url}/api/public/media/#{media.media_id}")
+          .to_return(status: 200, body: { mediaId: media.media_id }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        api_client.upload_media(media, trace_id: "trace-123", field: "input")
+
+        expect(a_request(:put, upload_url)).to have_been_made.once
+      end
+    end
+
+    describe "read and admin APIs" do
+      it "checks API health" do
+        stub_request(:get, "#{base_url}/api/public/health")
+          .to_return(status: 200, body: { status: "OK" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        expect(api_client.health["status"]).to eq("OK")
+      end
+
+      it "lists and fetches sessions" do
+        stub_request(:get, "#{base_url}/api/public/sessions")
+          .with(query: { page: "1", environment: %w[production staging] })
+          .to_return(status: 200, body: { data: [{ id: "session-1" }] }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/sessions/session-1")
+          .to_return(status: 200, body: { id: "session-1" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        expect(api_client.list_sessions(page: 1, environment: %w[production staging]))
+          .to eq([{ "id" => "session-1" }])
+        expect(api_client.get_session("session-1")["id"]).to eq("session-1")
+      end
+
+      it "lists observations through the v2 endpoint" do
+        stub_request(:get, "#{base_url}/api/public/v2/observations")
+          .with(query: hash_including("traceId" => "trace-123", "fromStartTime" => "2026-01-01T00:00:00Z"))
+          .to_return(status: 200, body: { data: [{ id: "obs-1" }], meta: { nextCursor: nil } }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        result = api_client.list_observations(trace_id: "trace-123", from_start_time: Time.utc(2026, 1, 1))
+
+        expect(result).to eq([{ "id" => "obs-1" }])
+      end
+
+      it "lists and fetches scores through the v2 endpoint" do
+        stub_request(:get, "#{base_url}/api/public/v2/scores")
+          .with(query: hash_including("traceId" => "trace-123", "dataType" => "NUMERIC"))
+          .to_return(status: 200, body: { data: [{ id: "score-1" }] }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/v2/scores/score-1")
+          .to_return(status: 200, body: { id: "score-1" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        expect(api_client.list_scores(trace_id: "trace-123", data_type: "NUMERIC"))
+          .to eq([{ "id" => "score-1" }])
+        expect(api_client.get_score("score-1")["id"]).to eq("score-1")
+      end
+
+      it "manages score configs" do
+        stub_request(:post, "#{base_url}/api/public/score-configs")
+          .with do |request|
+            body = JSON.parse(request.body)
+            body["dataType"] == "CATEGORICAL" &&
+              body.dig("categories", 0, "value") == 5 &&
+              body.dig("categories", 0, "label") == "pass"
+          end
+          .to_return(status: 200, body: { id: "config-1" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/score-configs")
+          .to_return(status: 200, body: { data: [{ id: "config-1" }] }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/score-configs/config-1")
+          .to_return(status: 200, body: { id: "config-1" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:patch, "#{base_url}/api/public/score-configs/config-1")
+          .with(body: hash_including("description" => "updated"))
+          .to_return(status: 200, body: { id: "config-1", description: "updated" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        expect(
+          api_client.create_score_config(
+            name: "quality",
+            data_type: "CATEGORICAL",
+            categories: [{ value: 5, label: "pass" }]
+          )["id"]
+        )
+          .to eq("config-1")
+        expect(api_client.list_score_configs).to eq([{ "id" => "config-1" }])
+        expect(api_client.get_score_config("config-1")["id"]).to eq("config-1")
+        expect(api_client.update_score_config(config_id: "config-1", description: "updated")["description"])
+          .to eq("updated")
+      end
+
+      it "manages models" do
+        stub_request(:post, "#{base_url}/api/public/models")
+          .with(body: hash_including("modelName" => "gpt-4o", "matchPattern" => "gpt-4o"))
+          .to_return(status: 200, body: { id: "model-1" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/models")
+          .to_return(status: 200, body: { data: [{ id: "model-1" }] }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:get, "#{base_url}/api/public/models/model-1")
+          .to_return(status: 200, body: { id: "model-1" }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+        stub_request(:delete, "#{base_url}/api/public/models/model-1")
+          .to_return(status: 204, body: "")
+
+        expect(api_client.create_model(model_name: "gpt-4o", match_pattern: "gpt-4o")["id"]).to eq("model-1")
+        expect(api_client.list_models).to eq([{ "id" => "model-1" }])
+        expect(api_client.get_model("model-1")["id"]).to eq("model-1")
+        expect(api_client.delete_model("model-1")).to be_nil
+      end
+
+      it "queries metrics with a hash query encoded as JSON" do
+        metrics_query = {
+          view: "observations",
+          metrics: [{ measure: "count", aggregation: "count" }],
+          fromTimestamp: "2026-01-01T00:00:00Z",
+          toTimestamp: "2026-01-02T00:00:00Z"
+        }
+        stub_request(:get, "#{base_url}/api/public/v2/metrics")
+          .with(query: { query: JSON.generate(metrics_query) })
+          .to_return(status: 200, body: { data: [] }.to_json,
+                     headers: { "Content-Type" => "application/json" })
+
+        expect(api_client.query_metrics(query: metrics_query)).to eq({ "data" => [] })
       end
     end
   end
