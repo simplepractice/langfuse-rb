@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add SDK identity headers for REST and OTLP requests.
+- Add prompt deletion with prompt-name-wide cache invalidation.
+- Add dependency-light media references, media upload helpers, and media reference resolution.
+- Add flat read/admin APIs for sessions, observations v2, scores v2, score configs, models, metrics v2, and health.
+
+### Documentation
+- Add the JS/Python SDK parity matrix and document the new prompt, media, and read/admin APIs.
+
 ## [0.10.1] - 2026-05-05
 
 ### Changed

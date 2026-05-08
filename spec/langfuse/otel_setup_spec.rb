@@ -160,6 +160,17 @@ RSpec.describe Langfuse::OtelSetup do
     end
   end
 
+  describe ".build_headers" do
+    it "includes auth and Langfuse SDK identity headers for OTLP export" do
+      headers = described_class.send(:build_headers, config.public_key, config.secret_key)
+
+      expect(headers["Authorization"]).to start_with("Basic ")
+      expect(headers["x-langfuse-sdk-name"]).to eq("ruby")
+      expect(headers["x-langfuse-sdk-version"]).to eq(Langfuse::VERSION)
+      expect(headers["x-langfuse-public-key"]).to eq(config.public_key)
+    end
+  end
+
   describe "lazy module-level setup" do
     it "does not initialize tracing during Langfuse.configure" do
       Langfuse.configure do |c|

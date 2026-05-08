@@ -21,6 +21,7 @@ This is the consumer hub. Start here unless you are already looking for a specif
 ### Instrument an App
 
 - **[Tracing](TRACING.md)** — Observation hierarchy, propagation, background jobs, explicit global install
+- **[API Reference](API_REFERENCE.md#media-references)** — Media reference upload, parsing, and resolution
 - **[Rails](RAILS.md)** — Rails-specific patterns for controllers, services, jobs, and tests
 - **[Scoring](SCORING.md)** — Capture quality signals after a trace exists
 
@@ -39,5 +40,6 @@ This is the consumer hub. Start here unless you are already looking for a specif
 ### Reference
 
 - **[API Reference](API_REFERENCE.md)** — Exact public signatures and types
+- **[SDK Parity Matrix](PARITY.md)** — What matches JS/Python, what is intentionally separate, and what is out of scope
 - **[Configuration](CONFIGURATION.md)** — Option-by-option config reference
 - **[Architecture](ARCHITECTURE.md)** — Implementation and internal design reference, not required for the first run

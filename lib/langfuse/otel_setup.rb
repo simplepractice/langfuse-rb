@@ -3,6 +3,7 @@
 require "opentelemetry/sdk"
 require "opentelemetry/exporter/otlp"
 require "base64"
+require_relative "sdk_headers"
 
 module Langfuse
   # OpenTelemetry initialization and setup for Langfuse tracing.
@@ -173,7 +174,7 @@ module Langfuse
       def build_headers(public_key, secret_key)
         credentials = "#{public_key}:#{secret_key}"
         encoded = Base64.strict_encode64(credentials)
-        { "Authorization" => "Basic #{encoded}" }
+        { "Authorization" => "Basic #{encoded}" }.merge(SdkHeaders.otlp(public_key: public_key))
       end
 
       def build_sampler(sample_rate)

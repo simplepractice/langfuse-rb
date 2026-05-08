@@ -40,6 +40,7 @@ module Langfuse
 end
 
 require_relative "langfuse/config"
+require_relative "langfuse/sdk_headers"
 require_relative "langfuse/cache_constants"
 require_relative "langfuse/prompt_cache"
 require_relative "langfuse/prompt_fetch_result"
@@ -59,6 +60,7 @@ require_relative "langfuse/observations"
 require_relative "langfuse/trace_id"
 require_relative "langfuse/score_client"
 require_relative "langfuse/prompt_renderer"
+require_relative "langfuse/media"
 require_relative "langfuse/text_prompt_client"
 require_relative "langfuse/chat_prompt_client"
 require_relative "langfuse/timestamp_parser"
@@ -320,6 +322,23 @@ module Langfuse
     #   Langfuse.flush_scores
     def flush_scores
       client.flush_scores if @client
+    end
+
+    # Resolve Langfuse media reference tokens in a nested object using the global client.
+    #
+    # @param obj [Object] Object to traverse
+    # @param resolve_with [Symbol, String] Only :base64_data_uri is supported
+    # @param max_depth [Integer] Maximum nested traversal depth
+    # @param content_fetch_timeout [Integer] Media download timeout in seconds
+    # @return [Object] Copy of obj with resolvable media references replaced
+    # @raise [ArgumentError] when resolve_with is unsupported
+    def resolve_media_references(obj:, resolve_with: :base64_data_uri, max_depth: 10, content_fetch_timeout: 10)
+      client.resolve_media_references(
+        obj: obj,
+        resolve_with: resolve_with,
+        max_depth: max_depth,
+        content_fetch_timeout: content_fetch_timeout
+      )
     end
 
     # Generate a trace ID (deterministic when seeded, random otherwise).

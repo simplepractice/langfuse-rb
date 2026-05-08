@@ -418,6 +418,23 @@ puts prompt.labels  # => ["production"]
 
 **Note:** Only labels can be updated. Prompt content is immutable after creation—create a new version instead.
 
+### `delete_prompt` - Delete Versions
+
+Delete all versions for a prompt, one explicit version, or versions carrying a label:
+
+```ruby
+# Delete all versions
+client.delete_prompt("checkout-flow")
+
+# Delete one version
+client.delete_prompt("checkout-flow", version: 3)
+
+# Delete versions carrying a label
+client.delete_prompt("checkout-flow", label: "staging")
+```
+
+`delete_prompt` returns `nil` on success and invalidates all cached variants for that prompt name in the current SDK process.
+
 ### Promotion Workflow Example
 
 A typical promotion workflow:
