@@ -2447,6 +2447,71 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "client-owned tracing" do
+    let(:client) { described_class.new(valid_config) }
+
+    after do
+      client.shutdown
+    rescue StandardError
+      nil
+    end
+
+    it "memoizes an isolated tracer provider per client" do
+      other_config = Langfuse::Config.new do |config|
+        config.public_key = "pk_other"
+        config.secret_key = "sk_other"
+        config.base_url = "https://cloud.langfuse.com"
+      end
+      other_client = described_class.new(other_config)
+
+      expect(client.tracer_provider).to equal(client.tracer_provider)
+      expect(other_client.tracer_provider).not_to equal(client.tracer_provider)
+    ensure
+      other_client&.shutdown
+    end
+
+    it "publishes only one tracer provider under concurrent first access" do
+      calls = Queue.new
+      allow(Langfuse::TracerProviderFactory).to receive(:build).and_wrap_original do |method, *args, **kwargs|
+        calls << true
+        sleep 0.01
+        method.call(*args, **kwargs)
+      end
+
+      providers = Queue.new
+      threads = 5.times.map { Thread.new { providers << client.tracer_provider } }
+      threads.each(&:join)
+
+      resolved = 5.times.map { providers.pop }
+      expect(resolved.map(&:object_id).uniq.length).to eq(1)
+      expect(calls.size).to eq(1)
+    end
+
+    it "keeps root and child observations on the explicit client" do
+      root = client.start_observation("root")
+      child = root.start_observation("child")
+
+      expect(root.client).to equal(client)
+      expect(child.client).to equal(client)
+      expect(child.trace_id).to eq(root.trace_id)
+    ensure
+      child&.end
+      root&.end
+    end
+
+    it "uses the explicit client's mask for observation attributes" do
+      Langfuse.configure { |config| config.mask = ->(data:) { "global-#{data}" } }
+      valid_config.mask = ->(data:) { "client-#{data}" }
+
+      observation = client.start_observation("masked", { input: "secret" })
+      span_data = observation.otel_span.to_span_data
+
+      expect(JSON.parse(span_data.attributes["langfuse.observation.input"])).to eq("client-secret")
+    ensure
+      observation&.end
+    end
+  end
+
   describe "#run_experiment" do
     let(:client) { described_class.new(valid_config) }
     let(:base_url) { valid_config.base_url }

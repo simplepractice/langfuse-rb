@@ -7,8 +7,8 @@ RSpec.describe Langfuse::BaseObservation do
   # Test subclass that passes type to super
   let(:test_subclass) do
     Class.new(Langfuse::BaseObservation) do
-      def initialize(otel_span, otel_tracer, attributes: nil)
-        super(otel_span, otel_tracer, attributes: attributes, type: "test_observation")
+      def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+        super(otel_span, otel_tracer, attributes: attributes, client: client, type: "test_observation")
       end
     end
   end
@@ -711,37 +711,40 @@ RSpec.describe Langfuse::BaseObservation do
     end
 
     it "calls client.trace_url with correct trace_id" do
-      mock_client = instance_double(Langfuse::Client)
-      allow(Langfuse).to receive(:client).and_return(mock_client)
-      trace_id = observation.trace_id
+      mock_client = instance_double(Langfuse::Client, config: Langfuse.configuration)
+      obs = test_subclass.new(otel_span, otel_tracer, client: mock_client)
+      trace_id = obs.trace_id
 
       expect(mock_client).to receive(:trace_url).with(trace_id).and_return("https://example.com/traces/#{trace_id}")
 
-      observation.trace_url
+      obs.trace_url
     end
   end
 
   describe "#score_trace" do
-    it "delegates to Langfuse.create_score with trace_id" do
-      expect(Langfuse).to receive(:create_score).with(
+    let(:mock_client) { instance_double(Langfuse::Client, config: Langfuse.configuration) }
+    let(:owned_observation) { test_subclass.new(otel_span, otel_tracer, client: mock_client) }
+
+    it "delegates to the owning client with trace_id" do
+      expect(mock_client).to receive(:create_score).with(
         name: "quality",
         value: 0.9,
-        trace_id: observation.trace_id,
+        trace_id: owned_observation.trace_id,
         comment: "good",
         metadata: { k: "v" },
         data_type: :numeric
       )
-      observation.score_trace(
+      owned_observation.score_trace(
         name: "quality", value: 0.9,
         comment: "good", metadata: { k: "v" }
       )
     end
 
     it "defaults data_type to :numeric" do
-      expect(Langfuse).to receive(:create_score).with(
+      expect(mock_client).to receive(:create_score).with(
         hash_including(data_type: :numeric)
       )
-      observation.score_trace(name: "score", value: 1.0)
+      owned_observation.score_trace(name: "score", value: 1.0)
     end
   end
 

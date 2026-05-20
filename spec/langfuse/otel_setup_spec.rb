@@ -20,6 +20,7 @@ RSpec.describe Langfuse::OtelSetup do
   before do
     described_class.shutdown(timeout: 1) if described_class.initialized?
     allow(described_class).to receive(:build_exporter).and_return(exporter)
+    allow(Langfuse::TracerProviderFactory).to receive(:build_exporter).and_return(exporter)
   end
 
   after do

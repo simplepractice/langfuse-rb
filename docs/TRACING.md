@@ -8,7 +8,39 @@ This guide is about the tracing behavior the SDK actually implements today. If y
 - Child observations create nested spans inside that trace.
 - `:generation` is the right type for model calls because it carries model-specific fields like `model`, `usage_details`, and `cost_details`.
 - `:event` is a point-in-time observation with no duration.
-- `Langfuse.configure` stores configuration only. Module-level tracing uses Langfuse's internal tracer provider when tracing is ready.
+- `Langfuse.configure` stores configuration only. Module-level tracing uses the singleton client's internal tracer provider when tracing is ready.
+
+## Singleton vs Explicit Clients
+
+`Langfuse.observe(...)` is shorthand for `Langfuse.client.observe(...)`. That is the right default when your process sends traces to one Langfuse project.
+
+When one Ruby process needs multiple Langfuse projects, build explicit clients and call tracing APIs on those clients:
+
+```ruby
+project_a = Langfuse::Client.new(
+  Langfuse::Config.new do |config|
+    config.public_key = ENV["LANGFUSE_PROJECT_A_PUBLIC_KEY"]
+    config.secret_key = ENV["LANGFUSE_PROJECT_A_SECRET_KEY"]
+  end
+)
+
+project_b = Langfuse::Client.new(
+  Langfuse::Config.new do |config|
+    config.public_key = ENV["LANGFUSE_PROJECT_B_PUBLIC_KEY"]
+    config.secret_key = ENV["LANGFUSE_PROJECT_B_SECRET_KEY"]
+  end
+)
+
+project_a.observe("ingest-document") do |root|
+  root.start_observation("extract-text")
+end
+
+project_b.observe("support-answer") do |root|
+  root.start_observation("openai-chat", as_type: :generation)
+end
+```
+
+Observations keep their owner. A child created from `project_a` stays on `project_a` for tracing, masking, trace URLs, scores, flushing, and shutdown. Do not mix `Langfuse.observe` into an explicit-client trace unless you intentionally want the singleton client's project.
 
 ## Start with a Root Observation
 
@@ -217,14 +249,14 @@ This is the default behavior:
 
 - `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
 - `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
-- `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is configured
+- `Langfuse.observe(...)` uses the singleton client's internal tracer provider once tracing is configured
 - if tracing config is incomplete, module-level tracing falls back to a no-op tracer and logs one warning
 
 This is why ambient spans from some unrelated global OpenTelemetry provider are not exported to Langfuse by default.
 
 ### 2. Explicit Global Install with `Langfuse.tracer_provider`
 
-If you want Langfuse to own the global OpenTelemetry provider, install it explicitly:
+If you want the singleton Langfuse client to own the global OpenTelemetry provider, install it explicitly:
 
 ```ruby
 Langfuse.configure do |config|
@@ -286,6 +318,62 @@ Public helper predicates:
 - compatibility aliases: `Langfuse.is_default_export_span`, `Langfuse.is_langfuse_span`, `Langfuse.is_genai_span`, `Langfuse.is_known_llm_instrumentor`
 
 The exact signatures live in [API_REFERENCE.md](API_REFERENCE.md).
+
+## Validate Against Langfuse
+
+For changes to tracing behavior, validate both the local SDK behavior and the server-side Langfuse result. Use one small Ruby script to emit traces, then read the traces back with the Langfuse CLI.
+
+```ruby
+# scratchpad/validate_multiple_clients.rb
+require "bundler/setup"
+require "langfuse"
+
+def build_client(public_key:, secret_key:, base_url:)
+  Langfuse::Client.new(
+    Langfuse::Config.new do |config|
+      config.public_key = public_key
+      config.secret_key = secret_key
+      config.base_url = base_url
+      config.tracing_async = false
+    end
+  )
+end
+
+client = build_client(
+  public_key: ENV.fetch("LANGFUSE_PUBLIC_KEY"),
+  secret_key: ENV.fetch("LANGFUSE_SECRET_KEY"),
+  base_url: ENV.fetch("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+)
+
+trace_id = nil
+client.observe("ruby-sdk-validation", input: { source: "langfuse-rb" }) do |span|
+  trace_id = span.trace_id
+  span.start_observation("child-generation", { model: "test-model" }, as_type: :generation) do |generation|
+    generation.update(output: "ok")
+  end
+  span.score_trace(name: "validation-score", value: 1.0)
+end
+
+client.force_flush(timeout: 10)
+client.flush_scores
+puts trace_id
+```
+
+Run it locally:
+
+```bash
+trace_id=$(bundle exec ruby scratchpad/validate_multiple_clients.rb)
+```
+
+Then read the same trace back from Langfuse:
+
+```bash
+npx --yes langfuse-cli api traces get "$trace_id" --fields core,observations,scores --json
+npx --yes langfuse-cli api observations list --trace-id "$trace_id" --fields core,basic,metadata --json
+npx --yes langfuse-cli api scores list --trace-id "$trace_id" --fields score,trace --json
+```
+
+For multiple clients, run the script once per project credential set and confirm each trace appears only in the expected project. The CLI readback is the proof; local object identity alone only proves the Ruby process behavior.
 
 ## Best Practices
 

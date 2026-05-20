@@ -50,6 +50,7 @@ require_relative "langfuse/prompt_cache_events"
 require_relative "langfuse/api_client"
 require_relative "langfuse/span_filter"
 require_relative "langfuse/sampling"
+require_relative "langfuse/tracer_provider_factory"
 require_relative "langfuse/otel_setup"
 require_relative "langfuse/masking"
 require_relative "langfuse/otel_attributes"
@@ -58,6 +59,8 @@ require_relative "langfuse/span_processor"
 require_relative "langfuse/observations"
 require_relative "langfuse/trace_id"
 require_relative "langfuse/score_client"
+require_relative "langfuse/observation_methods"
+require_relative "langfuse/noop_observation_client"
 require_relative "langfuse/prompt_renderer"
 require_relative "langfuse/text_prompt_client"
 require_relative "langfuse/chat_prompt_client"
@@ -74,7 +77,6 @@ require_relative "langfuse/client"
 
 # rubocop:disable Metrics/ModuleLength
 module Langfuse
-  # rubocop:disable Metrics/ClassLength
   class << self
     # @param configuration [Config] the global configuration object
     attr_writer :configuration
@@ -126,8 +128,7 @@ module Langfuse
               "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
       end
 
-      OtelSetup.setup(configuration) unless OtelSetup.initialized?
-      OtelSetup.tracer_provider
+      client.tracer_provider
     end
 
     # Shutdown Langfuse and flush any pending traces and scores
@@ -142,8 +143,9 @@ module Langfuse
     #   at_exit { Langfuse.shutdown }
     #
     def shutdown(timeout: 30)
-      client.shutdown if @client
-      OtelSetup.shutdown(timeout: timeout)
+      @client&.shutdown(timeout: timeout)
+      @noop_observation_client&.shutdown(timeout: timeout)
+      OtelSetup.shutdown(timeout: timeout) if OtelSetup.initialized?
     end
 
     # Force flush all pending traces
@@ -151,7 +153,8 @@ module Langfuse
     # @param timeout [Integer] Timeout in seconds
     # @return [void]
     def force_flush(timeout: 30)
-      OtelSetup.force_flush(timeout: timeout)
+      @client&.force_flush(timeout: timeout)
+      OtelSetup.force_flush(timeout: timeout) if OtelSetup.initialized?
     end
 
     # Propagate trace-level attributes to all spans created within this context.
@@ -349,12 +352,14 @@ module Langfuse
       @configuration = nil
       @client = nil
       @noop_tracer = nil
+      @noop_observation_client = nil
       @tracing_disabled_warning_emitted = false
     rescue StandardError
       # Ignore shutdown errors during reset (e.g., in tests)
       @configuration = nil
       @client = nil
       @noop_tracer = nil
+      @noop_observation_client = nil
       @tracing_disabled_warning_emitted = false
     end
 
@@ -390,23 +395,16 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def start_observation(name, attrs = {}, as_type: :span, trace_id: nil, parent_span_context: nil,
                           start_time: nil, skip_validation: false)
-      parent_span_context = resolve_trace_context(trace_id, parent_span_context)
-      type_str = as_type.to_s
-      validate_observation_type!(as_type, type_str) unless skip_validation
-
-      otel_tracer = otel_tracer()
-      otel_span = create_otel_span(
-        name: name,
-        start_time: start_time,
+      warn_tracing_disabled_once unless tracing_config_ready?
+      observation_client.start_observation(
+        name,
+        attrs,
+        as_type: as_type,
+        trace_id: trace_id,
         parent_span_context: parent_span_context,
-        otel_tracer: otel_tracer
+        start_time: start_time,
+        skip_validation: skip_validation
       )
-      apply_observation_attributes(otel_span, type_str, attrs)
-
-      observation = wrap_otel_span(otel_span, type_str, otel_tracer)
-      # Events auto-end immediately when created
-      observation.end if type_str == OBSERVATION_TYPES[:event]
-      observation
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -433,129 +431,17 @@ module Langfuse
     #   obs = Langfuse.observe("operation", input: { data: "test" })
     #   obs.update(output: { result: "success" })
     #   obs.end
-    def observe(name, attrs = {}, as_type: :span, trace_id: nil, **kwargs, &block)
-      merged_attrs = attrs.to_h.merge(kwargs)
-      observation = start_observation(name, merged_attrs, as_type: as_type, trace_id: trace_id)
-      return observation unless block
-
-      observation.send(:run_in_context, &block)
+    def observe(name, attrs = {}, as_type: :span, trace_id: nil, **, &)
+      warn_tracing_disabled_once unless tracing_config_ready?
+      observation_client.observe(name, attrs, as_type: as_type, trace_id: trace_id, **, &)
     end
 
-    # Registry mapping observation type strings to their wrapper classes
-    OBSERVATION_TYPE_REGISTRY = {
-      OBSERVATION_TYPES[:generation] => Generation,
-      OBSERVATION_TYPES[:embedding] => Embedding,
-      OBSERVATION_TYPES[:event] => Event,
-      OBSERVATION_TYPES[:agent] => Agent,
-      OBSERVATION_TYPES[:tool] => Tool,
-      OBSERVATION_TYPES[:chain] => Chain,
-      OBSERVATION_TYPES[:retriever] => Retriever,
-      OBSERVATION_TYPES[:evaluator] => Evaluator,
-      OBSERVATION_TYPES[:guardrail] => Guardrail,
-      OBSERVATION_TYPES[:span] => Span
-    }.freeze
+    # @api private
+    def observation_client
+      tracing_config_ready? ? client : noop_observation_client
+    end
 
     private
-
-    # @api private
-    def resolve_trace_context(trace_id, parent_span_context)
-      return parent_span_context unless trace_id
-      raise ArgumentError, "Cannot specify both trace_id and parent_span_context" if parent_span_context
-
-      TraceId.send(:to_span_context, trace_id)
-    end
-
-    # @api private
-    def validate_observation_type!(as_type, type_str)
-      return if valid_observation_type?(as_type)
-
-      valid_types = OBSERVATION_TYPES.values.sort.join(", ")
-      raise ArgumentError, "Invalid observation type: #{type_str}. Valid types: #{valid_types}"
-    end
-
-    # @api private
-    def apply_observation_attributes(otel_span, type_str, attrs)
-      # Guard against ended spans — should always be recording here, but safe.
-      return unless otel_span.recording?
-
-      otel_attrs = OtelAttributes.create_observation_attributes(type_str, attrs.to_h, mask: configuration.mask)
-      otel_attrs.each { |key, value| otel_span.set_attribute(key, value) }
-    end
-
-    # Validates that an observation type is valid
-    #
-    # Checks if the provided type (symbol or string) matches a valid observation type
-    # in the OBSERVATION_TYPES constant.
-    #
-    # @param type [Symbol, String, Object] The observation type to validate
-    # @return [Boolean] true if valid, false otherwise
-    #
-    # @example
-    #   valid_observation_type?(:span)      # => true
-    #   valid_observation_type?("span")     # => true
-    #   valid_observation_type?(:invalid)   # => false
-    #   valid_observation_type?(nil)        # => false
-    def valid_observation_type?(type)
-      return false unless type.respond_to?(:to_sym)
-
-      OBSERVATION_TYPES.key?(type.to_sym)
-    rescue TypeError
-      false
-    end
-
-    # Gets the OpenTelemetry tracer for Langfuse
-    #
-    # @return [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
-    def otel_tracer
-      return tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION) if setup_tracing_if_ready
-
-      warn_tracing_disabled_once
-      noop_tracer
-    end
-
-    # Creates an OpenTelemetry span (root or child)
-    #
-    # @param name [String] Span name
-    # @param start_time [Time, Integer, nil] Optional start time
-    # @param parent_span_context [OpenTelemetry::Trace::SpanContext, nil] Parent span context
-    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
-    # @return [OpenTelemetry::SDK::Trace::Span] The created span
-    def create_otel_span(name:, otel_tracer:, start_time: nil, parent_span_context: nil)
-      if parent_span_context
-        # Create child span with parent context
-        # Create a non-recording span from the parent context to set in context
-        parent_span = OpenTelemetry::Trace.non_recording_span(parent_span_context)
-        parent_context = OpenTelemetry::Trace.context_with_span(parent_span)
-        OpenTelemetry::Context.with_current(parent_context) do
-          otel_tracer.start_span(name, start_timestamp: start_time)
-        end
-      else
-        # Create root span
-        otel_tracer.start_span(name, start_timestamp: start_time)
-      end
-    end
-
-    # Wraps an OpenTelemetry span in the appropriate observation class
-    #
-    # @param otel_span [OpenTelemetry::SDK::Trace::Span] The OTel span
-    # @param type_str [String] Observation type string
-    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
-    # @param attributes [Hash, nil] Optional attributes
-    # @return [BaseObservation] Appropriate observation wrapper instance
-    def wrap_otel_span(otel_span, type_str, otel_tracer, attributes: nil)
-      observation_class = OBSERVATION_TYPE_REGISTRY[type_str] || Span
-      observation_class.new(otel_span, otel_tracer, attributes: attributes)
-    end
-
-    # rubocop:disable Naming/PredicateMethod
-    def setup_tracing_if_ready
-      return true if OtelSetup.initialized?
-      return false unless tracing_config_ready?
-
-      OtelSetup.setup(configuration)
-      true
-    end
-    # rubocop:enable Naming/PredicateMethod
 
     def tracing_config_ready?
       configured?(configuration.public_key) &&
@@ -584,10 +470,9 @@ module Langfuse
       @tracing_warning_mutex ||= Mutex.new
     end
 
-    def noop_tracer
-      @noop_tracer ||= OpenTelemetry::Trace::TracerProvider.new.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION)
+    def noop_observation_client
+      @noop_observation_client ||= NoopObservationClient.new(configuration)
     end
   end
-  # rubocop:enable Metrics/ClassLength
 end
 # rubocop:enable Metrics/ModuleLength

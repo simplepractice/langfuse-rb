@@ -199,8 +199,11 @@ RSpec.describe Langfuse::DatasetItemClient do
     let(:item_client) { described_class.new(item_data, client: mock_client) }
 
     before do
+      allow(mock_client).to receive(:observe) do |name, attrs = {}, as_type: :span, trace_id: nil, **kwargs, &block|
+        Langfuse.observe(name, attrs, as_type: as_type, trace_id: trace_id, **kwargs, &block)
+      end
       allow(mock_client).to receive(:create_dataset_run_item)
-      allow(Langfuse).to receive(:force_flush)
+      allow(mock_client).to receive(:force_flush)
     end
 
     it "raises ArgumentError when no block given" do
@@ -249,7 +252,7 @@ RSpec.describe Langfuse::DatasetItemClient do
 
     it "calls force_flush before linking" do
       call_order = []
-      allow(Langfuse).to receive(:force_flush) { call_order << :flush }
+      allow(mock_client).to receive(:force_flush) { call_order << :flush }
       allow(mock_client).to receive(:create_dataset_run_item) { call_order << :link }
       item_client.run(run_name: "test") { "output" }
       expect(call_order).to eq(%i[flush link])
