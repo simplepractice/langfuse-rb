@@ -22,6 +22,7 @@ module Langfuse
   # rubocop:disable Metrics/ClassLength
   class Client
     extend Forwardable
+    include ObservationMethods
 
     # @return [Integer] Default page size when fetching all dataset items
     DATASET_ITEMS_PAGE_SIZE = 50
@@ -90,6 +91,28 @@ module Langfuse
 
       # Initialize score client for batching score events
       @score_client = ScoreClient.new(api_client: @api_client, config: config)
+      @tracer_provider = nil
+      @tracer_provider_mutex = Mutex.new
+    end
+
+    # Return this client's isolated tracer provider.
+    #
+    # @return [OpenTelemetry::SDK::Trace::TracerProvider]
+    # @raise [ConfigurationError] if tracing configuration is incomplete
+    def tracer_provider
+      return @tracer_provider if @tracer_provider
+
+      @tracer_provider_mutex.synchronize do
+        @tracer_provider ||= build_tracer_provider
+      end
+    end
+
+    # Force flush pending trace spans for this client.
+    #
+    # @param timeout [Integer] timeout in seconds
+    # @return [void]
+    def force_flush(timeout: 30)
+      @tracer_provider&.force_flush(timeout: timeout)
     end
 
     # Fetch a prompt and return the appropriate client
@@ -452,12 +475,16 @@ module Langfuse
       @score_client.flush
     end
 
-    # Shutdown the client and flush any pending scores
+    # Shutdown the client and flush any pending traces and scores
     #
     # Also shuts down the cache if it supports shutdown (e.g., SWR thread pool).
     #
+    # @param timeout [Integer] timeout in seconds for trace shutdown
     # @return [void]
-    def shutdown
+    def shutdown(timeout: 30)
+      provider = release_tracer_provider
+      provider&.shutdown(timeout: timeout)
+    ensure
       @score_client.shutdown
       @api_client.shutdown
     end
@@ -661,6 +688,37 @@ module Langfuse
     private
 
     attr_reader :score_client
+
+    def build_tracer_provider
+      provider = TracerProviderFactory.build(config)
+      log_tracing_initialized
+      provider
+    end
+
+    def log_tracing_initialized
+      mode = config.tracing_async ? "async" : "sync"
+      config.logger.info("Langfuse tracing initialized with OpenTelemetry (#{mode} mode)")
+    end
+
+    def release_tracer_provider
+      @tracer_provider_mutex.synchronize do
+        provider = @tracer_provider
+        @tracer_provider = nil
+        provider
+      end
+    end
+
+    def observation_tracer
+      tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION)
+    end
+
+    def observation_mask
+      config.mask
+    end
+
+    def observation_owner
+      self
+    end
 
     # Build a project-scoped URL, returning nil if project ID is unavailable
     def project_url(path)

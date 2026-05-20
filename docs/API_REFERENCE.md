@@ -207,6 +207,21 @@ client = Langfuse.client
 prompt = client.get_prompt("greeting")
 ```
 
+### `Langfuse::Client.new`
+
+Create an explicit client. Use this when one Ruby process needs more than one Langfuse project.
+
+```ruby
+client = Langfuse::Client.new(
+  Langfuse::Config.new do |config|
+    config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
+    config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+  end
+)
+```
+
+Explicit clients own their own API client, score queue, prompt cache, and tracer provider. Observations created by an explicit client keep that owner for child observations, masking, trace URLs, scores, `force_flush`, and `shutdown`.
+
 ## Prompt Management
 
 ### `Client#get_prompt`
@@ -671,6 +686,28 @@ obs.update(output: { result: "done" })
 obs.end
 ```
 
+### `Client#observe`
+
+Explicit-client tracing equivalent to `Langfuse.observe`.
+
+```ruby
+client.observe("operation", { input: "data" }) do |obs|
+  child = obs.start_observation("child")
+  child.end
+end
+```
+
+Use this instead of `Langfuse.observe` when the trace belongs to an explicit client. Children created from the returned observation stay on the same client.
+
+### `Client#start_observation`
+
+Explicit-client equivalent to `Langfuse.start_observation`.
+
+```ruby
+obs = client.start_observation("operation", { input: "data" })
+obs.end
+```
+
 ### `BaseObservation`
 
 Returned by `observe` in stateful mode or passed to block.
@@ -684,6 +721,7 @@ Returned by `observe` in stateful mode or passed to block.
 | `trace_url` | `String` or `nil`              | URL to Langfuse UI, if project lookup succeeds |
 | `otel_span` | OpenTelemetry::SDK::Trace::Span | Underlying OTel span         |
 | `type`      | String                          | Observation type             |
+| `client`    | Langfuse::Client                | Client that owns follow-up operations |
 
 **Methods:**
 
@@ -1546,7 +1584,7 @@ Langfuse.shutdown
 
 ### `Langfuse.force_flush`
 
-Force flush all pending data.
+Force flush pending traces for the singleton client.
 
 **Signature:**
 
@@ -1559,6 +1597,8 @@ Langfuse.force_flush(timeout: 30)
 ```ruby
 Langfuse.force_flush(timeout: 10)
 ```
+
+Use `client.force_flush(timeout: 10)` for traces created through an explicit client.
 
 ## See Also
 

@@ -113,7 +113,31 @@ RSpec.describe Langfuse do
       provider = described_class.tracer_provider
 
       expect(provider).to be_a(OpenTelemetry::SDK::Trace::TracerProvider)
-      expect(Langfuse::OtelSetup.tracer_provider).to equal(provider)
+      expect(described_class.client.tracer_provider).to equal(provider)
+      expect(Langfuse::OtelSetup.initialized?).to be false
+    end
+  end
+
+  describe ".observe ownership" do
+    it "uses the singleton client as the module-level observation owner" do
+      observation = described_class.observe("test-span")
+
+      expect(observation.client).to equal(described_class.client)
+    ensure
+      observation&.end
+    end
+
+    it "uses a no-op owner when tracing configuration is incomplete" do
+      described_class.reset!
+      described_class.configure do |config|
+        config.public_key = nil
+        config.secret_key = nil
+        config.base_url = nil
+      end
+
+      observation = described_class.observe("disabled-span")
+
+      expect(observation.client).to be_a(Langfuse::NoopObservationClient)
     end
   end
 
@@ -163,13 +187,15 @@ RSpec.describe Langfuse do
       end
     end
 
-    it "calls OtelSetup.shutdown with timeout" do
-      expect(Langfuse::OtelSetup).to receive(:shutdown).with(timeout: 30)
+    it "calls client shutdown with timeout" do
+      client = described_class.client
+      expect(client).to receive(:shutdown).with(timeout: 30)
       described_class.shutdown
     end
 
     it "accepts custom timeout" do
-      expect(Langfuse::OtelSetup).to receive(:shutdown).with(timeout: 10)
+      client = described_class.client
+      expect(client).to receive(:shutdown).with(timeout: 10)
       described_class.shutdown(timeout: 10)
     end
   end
