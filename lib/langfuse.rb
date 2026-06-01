@@ -51,11 +51,12 @@ require_relative "langfuse/api_client"
 require_relative "langfuse/span_filter"
 require_relative "langfuse/sampling"
 require_relative "langfuse/tracer_provider_factory"
-require_relative "langfuse/otel_setup"
 require_relative "langfuse/masking"
 require_relative "langfuse/otel_attributes"
 require_relative "langfuse/propagation"
 require_relative "langfuse/span_processor"
+require_relative "langfuse/client_context"
+require_relative "langfuse/active_scoring"
 require_relative "langfuse/observations"
 require_relative "langfuse/trace_id"
 require_relative "langfuse/score_client"
@@ -74,6 +75,7 @@ require_relative "langfuse/dataset_client"
 require_relative "langfuse/dataset_item_client"
 require_relative "langfuse/experiment_runner"
 require_relative "langfuse/client"
+require_relative "langfuse/otel_setup"
 
 # rubocop:disable Metrics/ModuleLength
 module Langfuse
@@ -145,7 +147,6 @@ module Langfuse
     def shutdown(timeout: 30)
       @client&.shutdown(timeout: timeout)
       @noop_observation_client&.shutdown(timeout: timeout)
-      OtelSetup.shutdown(timeout: timeout) if OtelSetup.initialized?
     end
 
     # Force flush all pending traces
@@ -154,7 +155,6 @@ module Langfuse
     # @return [void]
     def force_flush(timeout: 30)
       @client&.force_flush(timeout: timeout)
-      OtelSetup.force_flush(timeout: timeout) if OtelSetup.initialized?
     end
 
     # Propagate trace-level attributes to all spans created within this context.
@@ -278,7 +278,7 @@ module Langfuse
     #     Langfuse.score_active_observation(name: "accuracy", value: 0.92)
     #   end
     def score_active_observation(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      client.score_active_observation(
+      ActiveScoring.client.score_active_observation(
         name: name,
         value: value,
         comment: comment,
@@ -304,7 +304,7 @@ module Langfuse
     #     Langfuse.score_active_trace(name: "overall_quality", value: 5)
     #   end
     def score_active_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      client.score_active_trace(
+      ActiveScoring.client.score_active_trace(
         name: name,
         value: value,
         comment: comment,
@@ -347,20 +347,12 @@ module Langfuse
     #
     # @return [void]
     def reset!
-      client.shutdown if @client
-      OtelSetup.shutdown(timeout: 5) if OtelSetup.initialized?
-      @configuration = nil
-      @client = nil
-      @noop_tracer = nil
-      @noop_observation_client = nil
-      @tracing_disabled_warning_emitted = false
+      @client&.shutdown
     rescue StandardError
       # Ignore shutdown errors during reset (e.g., in tests)
-      @configuration = nil
-      @client = nil
-      @noop_tracer = nil
-      @noop_observation_client = nil
-      @tracing_disabled_warning_emitted = false
+      nil
+    ensure
+      reset_runtime_state!
     end
 
     # Creates a new observation (root or child)
@@ -472,6 +464,17 @@ module Langfuse
 
     def noop_observation_client
       @noop_observation_client ||= NoopObservationClient.new(configuration)
+    end
+
+    def reset_runtime_state!
+      BaseObservation.reset_deprecation_warnings! if defined?(BaseObservation)
+      ActiveScoring.reset! if defined?(ActiveScoring)
+      OtelSetup.reset_deprecation_warning! if defined?(OtelSetup)
+      @configuration = nil
+      @client = nil
+      @noop_tracer = nil
+      @noop_observation_client = nil
+      @tracing_disabled_warning_emitted = false
     end
   end
 end

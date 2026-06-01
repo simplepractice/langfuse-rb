@@ -29,6 +29,16 @@ module Langfuse
     end
 
     # @return [nil]
+    def score_active_observation(**)
+      nil
+    end
+
+    # @return [nil]
+    def score_active_trace(**)
+      nil
+    end
+
+    # @return [nil]
     def flush_scores
       nil
     end

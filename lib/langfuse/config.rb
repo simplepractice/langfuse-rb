@@ -20,6 +20,17 @@ module Langfuse
   #
   # rubocop:disable Metrics/ClassLength
   class Config
+    SNAPSHOT_DUP_FIELDS = %i[
+      public_key
+      secret_key
+      base_url
+      cache_stale_ttl
+      job_queue
+      environment
+      release
+    ].freeze
+    private_constant :SNAPSHOT_DUP_FIELDS
+
     # @return [String, nil] Langfuse public API key
     attr_accessor :public_key
 
@@ -217,6 +228,16 @@ module Langfuse
       cache_stale_ttl == :indefinite ? INDEFINITE_SECONDS : cache_stale_ttl
     end
 
+    # @return [Config] frozen copy safe for long-lived clients
+    # @api private
+    def snapshot
+      duplicate = dup
+      SNAPSHOT_DUP_FIELDS.each do |field|
+        duplicate.instance_variable_set(:"@#{field}", snapshot_value(public_send(field)))
+      end
+      duplicate.freeze
+    end
+
     # Set trace sampling rate.
     #
     # @param value [Numeric, String] Sampling rate from 0.0 to 1.0
@@ -227,6 +248,14 @@ module Langfuse
     end
 
     private
+
+    def snapshot_value(value)
+      return value.dup.freeze if value.respond_to?(:dup) && value.respond_to?(:freeze)
+
+      value
+    rescue TypeError
+      value
+    end
 
     def default_logger
       if defined?(Rails) && Rails.respond_to?(:logger)

@@ -412,9 +412,8 @@ RSpec.describe Langfuse::ScoreClient do
         pinned_client.flush
       end
 
-      # Guards against a prior regression where ScoreClient read the sampler from
-      # OtelSetup's singleton provider, so whichever client initialized tracing
-      # first dictated sampling for every other client in the process.
+      # Guards against a prior regression where ScoreClient read sampling from a
+      # process-wide provider instead of its owning client.
       it "uses its own config's sample_rate, not another client's" do
         permissive_config = Langfuse::Config.new do |c|
           c.public_key = "pk_test"

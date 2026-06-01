@@ -67,21 +67,21 @@ module Langfuse
     # @param config [Config] Configuration object
     # @return [Client]
     def initialize(config)
-      @config = config
-      @config.validate!
+      config.validate!
+      @config = config.snapshot
 
       # Create cache if enabled
       cache = create_cache if cache_enabled?
 
       # Create API client with cache
       @api_client = ApiClient.new(
-        public_key: config.public_key,
-        secret_key: config.secret_key,
-        base_url: config.base_url,
-        timeout: config.timeout,
-        logger: config.logger,
+        public_key: @config.public_key,
+        secret_key: @config.secret_key,
+        base_url: @config.base_url,
+        timeout: @config.timeout,
+        logger: @config.logger,
         cache: cache,
-        cache_observer: config.prompt_cache_observer
+        cache_observer: @config.prompt_cache_observer
       )
 
       @project_id = nil
@@ -90,7 +90,7 @@ module Langfuse
       @project_id_fetched = false
 
       # Initialize score client for batching score events
-      @score_client = ScoreClient.new(api_client: @api_client, config: config)
+      @score_client = ScoreClient.new(api_client: @api_client, config: @config)
       @tracer_provider = nil
       @tracer_provider_mutex = Mutex.new
     end
@@ -428,6 +428,7 @@ module Langfuse
     #     client.score_active_observation(name: "accuracy", value: 0.92)
     #   end
     def score_active_observation(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+      ensure_active_observation_owner!
       @score_client.score_active_observation(
         name: name,
         value: value,
@@ -454,6 +455,7 @@ module Langfuse
     #     client.score_active_trace(name: "overall_quality", value: 5)
     #   end
     def score_active_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+      ensure_active_observation_owner!
       @score_client.score_active_trace(
         name: name,
         value: value,
@@ -718,6 +720,13 @@ module Langfuse
 
     def observation_owner
       self
+    end
+
+    def ensure_active_observation_owner!
+      active_client = ClientContext.current_client
+      return if active_client.nil? || active_client.equal?(self)
+
+      raise ArgumentError, "Active Langfuse observation belongs to a different client"
     end
 
     # Build a project-scoped URL, returning nil if project ID is unavailable

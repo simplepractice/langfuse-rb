@@ -1,154 +1,99 @@
 # frozen_string_literal: true
 
-require "opentelemetry/sdk"
-
 module Langfuse
-  # OpenTelemetry initialization and setup for Langfuse tracing.
-  # rubocop:disable Metrics/ModuleLength
+  # Deprecated compatibility wrapper for the former OpenTelemetry setup module.
+  #
+  # New code should use the client-owned tracer provider directly:
+  # `Langfuse.tracer_provider` for the global client, or
+  # `Langfuse::Client.new(config).tracer_provider` for explicit clients.
   module OtelSetup
-    TRACING_CONFIG_FIELDS = %i[
-      public_key
-      secret_key
-      base_url
-      environment
-      release
-      sample_rate
-      should_export_span
-      tracing_async
-      batch_size
-      flush_interval
-    ].freeze
-    private_constant(:TRACING_CONFIG_FIELDS)
+    DEPRECATION_WARNING =
+      "Langfuse::OtelSetup is deprecated and will be removed in the next major release. " \
+      "Use Langfuse.tracer_provider, Langfuse.force_flush, Langfuse.shutdown, or an explicit " \
+      "Langfuse::Client instead."
+    private_constant :DEPRECATION_WARNING
 
     class << self
-      # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil] The configured internal tracer provider
-      attr_reader :tracer_provider
-
-      # Initialize Langfuse's internal tracer provider without mutating global OpenTelemetry state.
+      # Initialize and return the global Langfuse tracer provider.
       #
-      # @param config [Langfuse::Config] The Langfuse configuration
+      # @param _config [Langfuse::Config] ignored compatibility argument
       # @return [OpenTelemetry::SDK::Trace::TracerProvider]
-      def setup(config)
-        validate_tracing_config!(config)
-        return existing_provider_for(config) if initialized?
-
-        candidate_provider = nil
-        provider = nil
-        created = false
-        candidate_provider = build_tracer_provider(config)
-        provider, created = publish_provider(candidate_provider, tracing_config_snapshot(config))
-        unless created
-          candidate_provider.shutdown(timeout: 30)
-          return existing_provider_for(config)
-        end
-
-        log_initialized(config)
-        provider
-      rescue StandardError
-        rollback_provider(provider) if created
-        raise
+      # @raise [ConfigurationError] if global tracing configuration is incomplete
+      def setup(_config = Langfuse.configuration)
+        warn_deprecated_once
+        Langfuse.tracer_provider
       end
 
-      # Shutdown the internal tracer provider and flush any pending spans.
+      # Return the already-initialized global Langfuse tracer provider.
       #
-      # @param timeout [Integer] Timeout in seconds
+      # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil]
+      # @raise [void]
+      def tracer_provider
+        warn_deprecated_once
+        current_tracer_provider
+      end
+
+      # Shutdown the global Langfuse client.
+      #
+      # @param timeout [Integer] timeout in seconds
       # @return [void]
+      # @raise [void]
       def shutdown(timeout: 30)
-        provider = nil
-        setup_mutex.synchronize do
-          provider = @tracer_provider
-          @tracer_provider = nil
-          @config_snapshot = nil
-        end
-        provider&.shutdown(timeout: timeout)
+        warn_deprecated_once
+        Langfuse.shutdown(timeout: timeout)
       end
 
-      # Force flush all pending spans on the internal tracer provider.
+      # Force flush the global Langfuse client.
       #
-      # @param timeout [Integer] Timeout in seconds
+      # @param timeout [Integer] timeout in seconds
       # @return [void]
+      # @raise [void]
       def force_flush(timeout: 30)
-        @tracer_provider&.force_flush(timeout: timeout)
+        warn_deprecated_once
+        Langfuse.force_flush(timeout: timeout)
       end
 
-      # Check if Langfuse tracing has been initialized.
+      # Check whether the global Langfuse tracer provider is initialized.
       #
       # @return [Boolean]
+      # @raise [void]
       def initialized?
-        !@tracer_provider.nil?
+        warn_deprecated_once
+        !current_tracer_provider.nil?
+      end
+
+      # @return [void]
+      # @api private
+      def reset_deprecation_warning!
+        warning_mutex.synchronize do
+          @deprecation_warning_emitted = false
+        end
       end
 
       private
 
-      def existing_provider_for(config)
-        snapshot = tracing_config_snapshot(config)
-        if @config_snapshot == snapshot
-          config.logger.debug("Langfuse tracing already initialized; reusing existing tracer provider")
-        else
-          config.logger.warn(
-            "Langfuse tracing is already initialized. Changes to #{TRACING_CONFIG_FIELDS.join(', ')} " \
-            "require Langfuse.reset! before they take effect."
-          )
+      def current_tracer_provider
+        current_client&.instance_variable_get(:@tracer_provider)
+      end
+
+      def current_client
+        Langfuse.instance_variable_get(:@client)
+      end
+
+      def warn_deprecated_once
+        return if @deprecation_warning_emitted
+
+        warning_mutex.synchronize do
+          return if @deprecation_warning_emitted
+
+          Langfuse.configuration.logger.warn(DEPRECATION_WARNING)
+          @deprecation_warning_emitted = true
         end
-        @tracer_provider
       end
 
-      def publish_provider(provider, snapshot)
-        created = false
-        current = nil
-
-        # This mutex only guards publication so setup never exposes a half-built provider.
-        setup_mutex.synchronize do
-          if @tracer_provider
-            current = @tracer_provider
-          else
-            @tracer_provider = provider
-            @config_snapshot = snapshot
-            current = provider
-            created = true
-          end
-        end
-
-        [current, created]
-      end
-
-      def rollback_provider(provider)
-        setup_mutex.synchronize do
-          return unless @tracer_provider.equal?(provider)
-
-          @tracer_provider = nil
-          @config_snapshot = nil
-        end
-        provider.shutdown(timeout: 1)
-      rescue StandardError
-        nil
-      end
-
-      def build_tracer_provider(config)
-        TracerProviderFactory.build(config, exporter: build_exporter(config))
-      end
-
-      def build_exporter(config)
-        TracerProviderFactory.build_exporter(config)
-      end
-
-      def log_initialized(config)
-        mode = config.tracing_async ? "async" : "sync"
-        config.logger.info("Langfuse tracing initialized with OpenTelemetry (#{mode} mode)")
-      end
-
-      def validate_tracing_config!(config)
-        TracerProviderFactory.validate_tracing_config!(config)
-      end
-
-      def tracing_config_snapshot(config)
-        TRACING_CONFIG_FIELDS.to_h { |field| [field, config.public_send(field)] }.freeze
-      end
-
-      def setup_mutex
-        @setup_mutex ||= Mutex.new
+      def warning_mutex
+        @warning_mutex ||= Mutex.new
       end
     end
   end
-  # rubocop:enable Metrics/ModuleLength
 end

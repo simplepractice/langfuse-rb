@@ -52,7 +52,7 @@ RSpec.describe Langfuse do
         config.secret_key = "test_sk"
       end
 
-      expect(Langfuse::OtelSetup.initialized?).to be false
+      expect(described_class.instance_variable_get(:@client)).to be_nil
     end
   end
 
@@ -77,7 +77,10 @@ RSpec.describe Langfuse do
 
     it "uses the global configuration" do
       client = described_class.client
-      expect(client.config).to eq(described_class.configuration)
+      expect(client.config).not_to equal(described_class.configuration)
+      expect(client.config.public_key).to eq(described_class.configuration.public_key)
+      expect(client.config.secret_key).to eq(described_class.configuration.secret_key)
+      expect(client.config.base_url).to eq(described_class.configuration.base_url)
     end
 
     it "creates client with configured settings" do
@@ -114,7 +117,6 @@ RSpec.describe Langfuse do
 
       expect(provider).to be_a(OpenTelemetry::SDK::Trace::TracerProvider)
       expect(described_class.client.tracer_provider).to equal(provider)
-      expect(Langfuse::OtelSetup.initialized?).to be false
     end
   end
 
@@ -174,6 +176,22 @@ RSpec.describe Langfuse do
       described_class.reset!
 
       expect(described_class.instance_variable_get(:@configuration)).to be_nil
+      expect(described_class.instance_variable_get(:@client)).to be_nil
+    end
+
+    it "resets warning state even when client shutdown fails" do
+      client = instance_double(Langfuse::Client)
+      described_class.instance_variable_set(:@client, client)
+      allow(client).to receive(:shutdown).and_raise(StandardError)
+      allow(Langfuse::BaseObservation).to receive(:reset_deprecation_warnings!)
+      allow(Langfuse::ActiveScoring).to receive(:reset!)
+      allow(Langfuse::OtelSetup).to receive(:reset_deprecation_warning!)
+
+      described_class.reset!
+
+      expect(Langfuse::BaseObservation).to have_received(:reset_deprecation_warnings!)
+      expect(Langfuse::ActiveScoring).to have_received(:reset!)
+      expect(Langfuse::OtelSetup).to have_received(:reset_deprecation_warning!)
       expect(described_class.instance_variable_get(:@client)).to be_nil
     end
   end

@@ -227,7 +227,7 @@ span.end
 **Key Components:**
 
 - **BaseObservation** - Base class for all observation types
-- **OtelSetup** - Initializes OpenTelemetry SDK with OTLP exporter
+- **Client tracer provider** - Owns isolated OpenTelemetry export for each client
 - **SpanProcessor** - Propagates trace-level attributes to child spans
 - **OtelAttributes** - Converts Langfuse attributes to OpenTelemetry format
 

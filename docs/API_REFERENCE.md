@@ -125,6 +125,8 @@ Langfuse.tracer_provider # => OpenTelemetry::SDK::Trace::TracerProvider
 
 `Langfuse.configure` does not call this for you. This is the explicit global-install seam. If you also want another OpenTelemetry backend or custom propagation, that remains application-owned setup.
 
+`Langfuse::OtelSetup` remains as a deprecated compatibility wrapper around the global `Langfuse.tracer_provider`, `Langfuse.force_flush`, and `Langfuse.shutdown` APIs. New code should not call it; explicit clients should use `Langfuse::Client.new(config).tracer_provider`.
+
 **Example:**
 
 ```ruby
@@ -1039,7 +1041,8 @@ Langfuse.client.flush_scores
 
 ### Module-Level Scoring
 
-Convenience methods delegating to `Langfuse.client`:
+Convenience methods. Active scoring routes through the client that owns the current Langfuse observation,
+falling back to `Langfuse.client` only outside Langfuse-owned observations:
 
 ```ruby
 Langfuse.create_score(name: "quality", value: 0.85, trace_id: "abc")

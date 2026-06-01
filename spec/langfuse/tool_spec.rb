@@ -7,7 +7,8 @@ RSpec.describe Langfuse::Tool do
   let(:tracer_provider) { OpenTelemetry::SDK::Trace::TracerProvider.new }
   let(:otel_tracer) { tracer_provider.tracer("test-tracer") }
   let(:otel_span) { otel_tracer.start_span("test-tool") }
-  let(:tool) { described_class.new(otel_span, otel_tracer) }
+  let(:client) { Langfuse.client }
+  let(:tool) { described_class.new(otel_span, otel_tracer, client: client) }
 
   describe "#type" do
     it "returns 'tool'" do
@@ -48,7 +49,7 @@ RSpec.describe Langfuse::Tool do
   describe "integration with Span via start_observation" do
     it "creates tool as child of span" do
       parent_span = otel_tracer.start_span("parent-span")
-      parent_observation = Langfuse::Span.new(parent_span, otel_tracer)
+      parent_observation = Langfuse::Span.new(parent_span, otel_tracer, client: client)
 
       tool_obj = parent_observation.start_observation("nested-tool", { input: { query: "test" } }, as_type: :tool)
       expect(tool_obj).to be_a(described_class)
@@ -102,7 +103,7 @@ RSpec.describe Langfuse::Tool do
   describe "initialization with attributes" do
     it "sets initial attributes when provided" do
       attrs = { input: { query: "search" }, output: { result: "success" }, level: "DEFAULT" }
-      tool_obj = described_class.new(otel_span, otel_tracer, attributes: attrs)
+      tool_obj = described_class.new(otel_span, otel_tracer, attributes: attrs, client: client)
       span_data = tool_obj.otel_span.to_span_data
 
       expect(JSON.parse(span_data.attributes["langfuse.observation.input"])).to eq({ "query" => "search" })
