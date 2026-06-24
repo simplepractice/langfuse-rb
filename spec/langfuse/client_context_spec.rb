@@ -65,6 +65,30 @@ RSpec.describe "Langfuse active client context" do
     end.to raise_error(ArgumentError, /different client/)
   end
 
+  it "explains when the active observation was created while tracing was unconfigured" do
+    Langfuse.reset!
+    Langfuse.configure do |c|
+      c.public_key = nil
+      c.secret_key = nil
+      c.base_url = nil
+      c.logger = Logger.new(StringIO.new)
+    end
+
+    Langfuse.observe("noop-trace") do
+      expect do
+        client_a.score_active_trace(name: "noop-owner", value: 1)
+      end.to raise_error(ArgumentError, /tracing was unconfigured/)
+    end
+  end
+
+  it "does not emit the raw fallback warning when no span is active" do
+    expect(Langfuse.configuration.logger).not_to receive(:warn)
+
+    expect do
+      Langfuse.score_active_trace(name: "no-span", value: 1)
+    end.to raise_error(ArgumentError, /No active OpenTelemetry span/)
+  end
+
   it "allows explicit clients to score raw OpenTelemetry active spans" do
     tracer = OpenTelemetry.tracer_provider.tracer("raw")
     span = tracer.start_span("raw-span")

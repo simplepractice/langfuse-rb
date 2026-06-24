@@ -18,7 +18,7 @@ module Langfuse
         active_client = ClientContext.current_client
         return active_client if active_client
 
-        warn_raw_active_scoring_once
+        warn_raw_active_scoring_once if raw_active_span?
         Langfuse.client
       end
 
@@ -30,6 +30,12 @@ module Langfuse
       end
 
       private
+
+      # Without a valid active span the score call raises its own ArgumentError
+      # downstream, so a raw-fallback deprecation warning would be misleading.
+      def raw_active_span?
+        OpenTelemetry::Trace.current_span.context.valid?
+      end
 
       def warn_raw_active_scoring_once
         return if @raw_active_scoring_warning_emitted

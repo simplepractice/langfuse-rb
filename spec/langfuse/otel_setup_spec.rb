@@ -28,6 +28,26 @@ RSpec.describe Langfuse::OtelSetup do
 
       expect(described_class.setup).to equal(provider)
     end
+
+    it "warns when a non-global config argument is passed" do
+      custom_config = Langfuse::Config.new do |c|
+        c.public_key = "pk_custom"
+        c.secret_key = "sk_custom"
+        c.base_url = "https://custom.langfuse.test"
+      end
+
+      expect(logger).to receive(:warn).with(/Langfuse::OtelSetup is deprecated/)
+      expect(logger).to receive(:warn).with(/ignores its config argument/)
+
+      expect(described_class.setup(custom_config)).to equal(Langfuse.client.tracer_provider)
+    end
+
+    it "does not warn about the config argument when the global config is passed" do
+      expect(logger).to receive(:warn).with(/Langfuse::OtelSetup is deprecated/)
+      expect(logger).not_to receive(:warn).with(/ignores its config argument/)
+
+      described_class.setup(Langfuse.configuration)
+    end
   end
 
   describe ".tracer_provider" do
@@ -35,7 +55,7 @@ RSpec.describe Langfuse::OtelSetup do
       expect(logger).to receive(:warn).with(/Langfuse::OtelSetup is deprecated/)
 
       expect(described_class.tracer_provider).to be_nil
-      expect(Langfuse.client.instance_variable_get(:@tracer_provider)).to be_nil
+      expect(Langfuse.client.initialized_tracer_provider).to be_nil
     end
 
     it "returns the initialized global provider" do

@@ -16,18 +16,18 @@ module Langfuse
     class << self
       # Initialize and return the global Langfuse tracer provider.
       #
-      # @param _config [Langfuse::Config] ignored compatibility argument
+      # @param config [Langfuse::Config] ignored; the global configuration is always used
       # @return [OpenTelemetry::SDK::Trace::TracerProvider]
       # @raise [ConfigurationError] if global tracing configuration is incomplete
-      def setup(_config = Langfuse.configuration)
+      def setup(config = Langfuse.configuration)
         warn_deprecated_once
+        warn_ignored_config(config)
         Langfuse.tracer_provider
       end
 
       # Return the already-initialized global Langfuse tracer provider.
       #
       # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil]
-      # @raise [void]
       def tracer_provider
         warn_deprecated_once
         current_tracer_provider
@@ -37,7 +37,6 @@ module Langfuse
       #
       # @param timeout [Integer] timeout in seconds
       # @return [void]
-      # @raise [void]
       def shutdown(timeout: 30)
         warn_deprecated_once
         Langfuse.shutdown(timeout: timeout)
@@ -47,7 +46,6 @@ module Langfuse
       #
       # @param timeout [Integer] timeout in seconds
       # @return [void]
-      # @raise [void]
       def force_flush(timeout: 30)
         warn_deprecated_once
         Langfuse.force_flush(timeout: timeout)
@@ -56,7 +54,6 @@ module Langfuse
       # Check whether the global Langfuse tracer provider is initialized.
       #
       # @return [Boolean]
-      # @raise [void]
       def initialized?
         warn_deprecated_once
         !current_tracer_provider.nil?
@@ -72,12 +69,19 @@ module Langfuse
 
       private
 
-      def current_tracer_provider
-        current_client&.instance_variable_get(:@tracer_provider)
+      # Passing a non-global config used to work; now it is silently lossy,
+      # so call that out instead of letting traces land in the wrong project.
+      def warn_ignored_config(config)
+        return if config.equal?(Langfuse.configuration)
+
+        Langfuse.configuration.logger.warn(
+          "Langfuse::OtelSetup.setup ignores its config argument and always uses the global " \
+          "Langfuse configuration. Use Langfuse::Client.new(config).tracer_provider instead."
+        )
       end
 
-      def current_client
-        Langfuse.instance_variable_get(:@client)
+      def current_tracer_provider
+        Langfuse.initialized_client&.initialized_tracer_provider
       end
 
       def warn_deprecated_once

@@ -79,6 +79,17 @@ require_relative "langfuse/otel_setup"
 
 # rubocop:disable Metrics/ModuleLength
 module Langfuse
+  TRACING_DISABLED_WARNING =
+    "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
+  private_constant :TRACING_DISABLED_WARNING
+
+  # The singleton client snapshots configuration at creation, so configure
+  # calls after that point are silently ineffective without this warning.
+  CONFIGURE_AFTER_CLIENT_WARNING =
+    "Langfuse.configure was called after the singleton client was created. Clients snapshot " \
+    "configuration at creation, so these changes will not take effect until Langfuse.reset!."
+  private_constant :CONFIGURE_AFTER_CLIENT_WARNING
+
   class << self
     # @param configuration [Config] the global configuration object
     attr_writer :configuration
@@ -102,6 +113,7 @@ module Langfuse
     #   end
     def configure
       yield(configuration)
+      configuration.logger.warn(CONFIGURE_AFTER_CLIENT_WARNING) if @client
       configuration
     end
 
@@ -110,6 +122,12 @@ module Langfuse
     # @return [Client] the global client instance
     def client
       @client ||= Client.new(configuration)
+    end
+
+    # @return [Client, nil] the singleton client if one has been created, without creating it
+    # @api private
+    def initialized_client
+      @client
     end
 
     # Return Langfuse's internal tracer provider for explicit global OpenTelemetry installation.
@@ -125,10 +143,7 @@ module Langfuse
     #
     #   OpenTelemetry.tracer_provider = Langfuse.tracer_provider
     def tracer_provider
-      unless tracing_config_ready?
-        raise ConfigurationError,
-              "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
-      end
+      raise ConfigurationError, TRACING_DISABLED_WARNING unless tracing_config_ready?
 
       client.tracer_provider
     end
@@ -451,9 +466,7 @@ module Langfuse
       tracing_warning_mutex.synchronize do
         return if @tracing_disabled_warning_emitted
 
-        configuration.logger.warn(
-          "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
-        )
+        configuration.logger.warn(TRACING_DISABLED_WARNING)
         @tracing_disabled_warning_emitted = true
       end
     end
@@ -472,7 +485,6 @@ module Langfuse
       OtelSetup.reset_deprecation_warning! if defined?(OtelSetup)
       @configuration = nil
       @client = nil
-      @noop_tracer = nil
       @noop_observation_client = nil
       @tracing_disabled_warning_emitted = false
     end

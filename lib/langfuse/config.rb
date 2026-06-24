@@ -233,7 +233,7 @@ module Langfuse
     def snapshot
       duplicate = dup
       SNAPSHOT_DUP_FIELDS.each do |field|
-        duplicate.instance_variable_set(:"@#{field}", snapshot_value(public_send(field)))
+        duplicate.instance_variable_set(:"@#{field}", public_send(field).dup.freeze)
       end
       duplicate.freeze
     end
@@ -248,14 +248,6 @@ module Langfuse
     end
 
     private
-
-    def snapshot_value(value)
-      return value.dup.freeze if value.respond_to?(:dup) && value.respond_to?(:freeze)
-
-      value
-    rescue TypeError
-      value
-    end
 
     def default_logger
       if defined?(Rails) && Rails.respond_to?(:logger)

@@ -52,7 +52,22 @@ RSpec.describe Langfuse do
         config.secret_key = "test_sk"
       end
 
-      expect(described_class.instance_variable_get(:@client)).to be_nil
+      expect(described_class.initialized_client).to be_nil
+    end
+
+    it "does not warn before the singleton client exists" do
+      expect(described_class.configuration.logger).not_to receive(:warn)
+
+      described_class.configure { |config| config.cache_ttl = 120 }
+    end
+
+    it "warns that changes are ineffective once the singleton client exists" do
+      described_class.client
+
+      expect(described_class.configuration.logger).to receive(:warn)
+        .with(/will not take effect until Langfuse.reset!/)
+
+      described_class.configure { |config| config.cache_ttl = 120 }
     end
   end
 

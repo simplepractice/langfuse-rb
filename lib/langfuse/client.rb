@@ -115,6 +115,14 @@ module Langfuse
       @tracer_provider&.force_flush(timeout: timeout)
     end
 
+    # This client's tracer provider if one has been built, without building one.
+    #
+    # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil]
+    # @api private
+    def initialized_tracer_provider
+      @tracer_provider
+    end
+
     # Fetch a prompt and return the appropriate client
     #
     # Fetches the prompt from the Langfuse API and returns either a
@@ -726,7 +734,17 @@ module Langfuse
       active_client = ClientContext.current_client
       return if active_client.nil? || active_client.equal?(self)
 
-      raise ArgumentError, "Active Langfuse observation belongs to a different client"
+      raise ArgumentError, active_owner_mismatch_message(active_client)
+    end
+
+    def active_owner_mismatch_message(active_client)
+      if active_client.is_a?(NoopObservationClient)
+        "Active Langfuse observation was created while tracing was unconfigured, so it has no real owner. " \
+          "Configure Langfuse before creating the observation, or score by explicit trace_id instead."
+      else
+        "Active Langfuse observation belongs to a different client. " \
+          "Score through the client that created it, or pass an explicit trace_id."
+      end
     end
 
     # Build a project-scoped URL, returning nil if project ID is unavailable
