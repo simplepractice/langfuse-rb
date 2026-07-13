@@ -94,6 +94,20 @@ RSpec.describe Langfuse::MaskingExporter do
 
         expect(third_party_span.attributes["gen_ai.prompt"]).not_to be_frozen
       end
+
+      it "copies array attribute elements instead of aliasing them" do
+        original = [+"tag-one", +"tag-two"]
+        span = build_span_data(name: "array-span", scope_name: "ruby-openai",
+                               attributes: { "gen_ai.tags" => original })
+
+        exporter.export([span])
+
+        snapshot_value = seen.first[identifier(span)].attributes["gen_ai.tags"]
+        expect(snapshot_value).to be_frozen
+        expect(snapshot_value.first).to be_frozen
+        expect(snapshot_value.first).not_to equal(original.first)
+        expect(original.first).not_to be_frozen
+      end
     end
 
     context "with sparse patches" do
@@ -148,7 +162,7 @@ RSpec.describe Langfuse::MaskingExporter do
     end
 
     context "when the hook raises" do
-      let(:hook) { ->(**) { raise "boom" } }
+      let(:hook) { ->(**) { raise "leaky ssn 123-45-6789" } }
 
       it "drops the whole batch and returns FAILURE" do
         result = exporter.export(batch)
@@ -157,10 +171,13 @@ RSpec.describe Langfuse::MaskingExporter do
         expect(delegate.finished_spans).to be_empty
       end
 
-      it "logs a sanitized error" do
+      it "logs only the exception class, never the message" do
         exporter.export(batch)
 
-        expect(logger).to have_received(:error).with(/mask_otel_spans raised RuntimeError/)
+        expect(logger).to have_received(:error) do |message|
+          expect(message).to include("mask_otel_spans raised RuntimeError")
+          expect(message).not_to include("leaky ssn")
+        end
       end
     end
 

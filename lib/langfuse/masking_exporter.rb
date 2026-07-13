@@ -98,7 +98,9 @@ module Langfuse
 
       apply_patches(batch, patches)
     rescue StandardError => e
-      @logger.error("Langfuse mask_otel_spans raised #{e.class}: #{e.message}; dropping the Langfuse export batch")
+      # Only the exception class is logged: hook exception messages can carry
+      # the sensitive attribute values the hook exists to mask.
+      @logger.error("Langfuse mask_otel_spans raised #{e.class}; dropping the Langfuse export batch")
       nil
     end
 
@@ -128,9 +130,12 @@ module Langfuse
       (attributes || {}).transform_values { |value| frozen_copy(value) }.freeze
     end
 
+    # Arrays are copied element-wise so snapshot values never alias mutable
+    # strings still referenced by the original span data.
     def frozen_copy(value)
       case value
-      when String, Array then value.dup.freeze
+      when String then value.dup.freeze
+      when Array then value.map { |element| frozen_copy(element) }.freeze
       else value
       end
     end
