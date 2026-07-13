@@ -115,7 +115,7 @@ Values must be strings; there is no length limit. Provide structured
 corrections as JSON text when appropriate — the SDK does not serialize objects
 for you. Corrections appear in the Langfuse UI alongside the original output
 with a diff view, and can be read back through the v3 scores API
-(`data_type: "CORRECTION"`).
+(`GET /api/public/v3/scores?dataType=CORRECTION`).
 
 ### Text/Correction vs. Experiment Evaluations
 
