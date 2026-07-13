@@ -190,7 +190,10 @@ module Langfuse
     end
 
     def present?(value)
-      value.respond_to?(:strip) ? !value.strip.empty? : !value.nil?
+      return false unless value
+      return !value.strip.empty? if value.respond_to?(:strip)
+
+      true
     end
 
     def build_observations_params(**options)

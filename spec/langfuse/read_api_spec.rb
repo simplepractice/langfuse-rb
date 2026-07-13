@@ -158,6 +158,11 @@ RSpec.describe Langfuse::ReadApi do
           .to raise_error(ArgumentError, /from_start_time and to_start_time are required/)
       end
 
+      it "rejects false bounds as absent" do
+        expect { api_client.list_observations(from_start_time: false, to_start_time: false) }
+          .to raise_error(ArgumentError, /from_start_time and to_start_time are required/)
+      end
+
       it "does not issue an HTTP request" do
         begin
           api_client.list_observations
