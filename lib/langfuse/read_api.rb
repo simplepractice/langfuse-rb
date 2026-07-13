@@ -58,7 +58,7 @@ module Langfuse
     # @param type [String, nil] Filter by observation type (e.g. "GENERATION", "SPAN")
     # @param level [String, nil] Filter by level (e.g. "DEFAULT", "ERROR")
     # @param parent_observation_id [String, nil] Filter by parent observation ID
-    # @param environment [String, Array<String>, nil] Filter by environment(s)
+    # @param environment [String, nil] Filter by environment
     # @param version [String, nil] Filter by observation version
     # @param expand_metadata [String, nil] Comma-separated metadata keys to return non-truncated
     # @return [Hash] Full response hash with "data" rows and "meta" cursor info
@@ -179,13 +179,18 @@ module Langfuse
     private
 
     # v2 observation reads must always be bounded; an unbounded scan over the
-    # events table is rejected here rather than issued silently.
+    # events table is rejected here rather than issued silently. Blank strings
+    # count as absent so they cannot sneak past the guard as empty params.
     def validate_bounded_observation_read!(trace_id, from_start_time, to_start_time)
-      return if trace_id
-      return if from_start_time && to_start_time
+      return if present?(trace_id)
+      return if present?(from_start_time) && present?(to_start_time)
 
       raise ArgumentError,
             "from_start_time and to_start_time are required unless trace_id is provided"
+    end
+
+    def present?(value)
+      value.respond_to?(:strip) ? !value.strip.empty? : !value.nil?
     end
 
     def build_observations_params(**options)
