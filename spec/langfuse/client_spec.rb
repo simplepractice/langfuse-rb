@@ -1593,6 +1593,36 @@ RSpec.describe Langfuse::Client do
       client.create_score(name: "quality", value: 0.85, trace_id: "abc123")
     end
 
+    it "forwards correction scores unchanged" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:create).with(
+        hash_including(
+          name: "output",
+          value: "The corrected output",
+          trace_id: "abc123",
+          observation_id: "def456",
+          data_type: :correction
+        )
+      )
+
+      client.create_score(
+        name: "output",
+        value: "The corrected output",
+        trace_id: "abc123",
+        observation_id: "def456",
+        data_type: :correction
+      )
+    end
+
+    it "forwards text scores unchanged" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:create).with(
+        hash_including(name: "reviewer_notes", value: "Helpful", data_type: :text)
+      )
+
+      client.create_score(name: "reviewer_notes", value: "Helpful", trace_id: "abc123", data_type: :text)
+    end
+
     it "passes the full score kwarg set to score_client" do
       score_client = client.instance_variable_get(:@score_client)
       expect(score_client).to receive(:create).with(

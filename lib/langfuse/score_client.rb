@@ -63,7 +63,7 @@ module Langfuse
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
     # @param environment [String, nil] Optional environment
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
     # @return [void]
@@ -77,6 +77,13 @@ module Langfuse
     #
     # @example Categorical score
     #   create(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
+    #
+    # @example Text score (1 to 500 characters)
+    #   create(name: "reviewer_notes", value: "Helpful but verbose", trace_id: "abc123", data_type: :text)
+    #
+    # @example Corrected output (conventionally named "output")
+    #   create(name: "output", value: "The corrected output", trace_id: "abc123",
+    #          observation_id: "def456", data_type: :correction)
     # rubocop:disable Metrics/ParameterLists
     def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
@@ -109,7 +116,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
@@ -140,7 +147,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
@@ -242,37 +249,57 @@ module Langfuse
     end
     # rubocop:enable Metrics/ParameterLists
 
+    # Documented Langfuse limit for TEXT score values.
+    TEXT_VALUE_LENGTH_RANGE = (1..500)
+    private_constant :TEXT_VALUE_LENGTH_RANGE
+
     # Normalize and validate score value based on data type
     #
     # @param value [Object] Raw score value
     # @param data_type [Symbol] Data type symbol
     # @return [Object] Normalized value
     # @raise [ArgumentError] if value doesn't match data type
-    # rubocop:disable Metrics/CyclomaticComplexity
     def normalize_value(value, data_type)
       case data_type
-      when :numeric
-        raise ArgumentError, "Numeric value must be Numeric, got #{value.class}" unless value.is_a?(Numeric)
-
-        value
-      when :boolean
-        case value
-        when true, 1
-          1
-        when false, 0
-          0
-        else
-          raise ArgumentError, "Boolean value must be true/false or 0/1, got #{value.inspect}"
-        end
-      when :categorical
-        raise ArgumentError, "Categorical value must be a String, got #{value.class}" unless value.is_a?(String)
-
-        value
-      else
-        raise ArgumentError, "Invalid data_type: #{data_type}"
+      when :numeric then normalize_numeric(value)
+      when :boolean then normalize_boolean(value)
+      when :categorical then require_string(value, "Categorical")
+      when :text then normalize_text(value)
+      # Corrections carry the full corrected output; Langfuse documents no
+      # length limit for them, so none is enforced here.
+      when :correction then require_string(value, "Correction")
+      else raise ArgumentError, "Invalid data_type: #{data_type}"
       end
     end
-    # rubocop:enable Metrics/CyclomaticComplexity
+
+    def normalize_numeric(value)
+      raise ArgumentError, "Numeric value must be Numeric, got #{value.class}" unless value.is_a?(Numeric)
+
+      value
+    end
+
+    def normalize_boolean(value)
+      case value
+      when true, 1 then 1
+      when false, 0 then 0
+      else raise ArgumentError, "Boolean value must be true/false or 0/1, got #{value.inspect}"
+      end
+    end
+
+    def normalize_text(value)
+      require_string(value, "Text")
+      unless TEXT_VALUE_LENGTH_RANGE.cover?(value.length)
+        raise ArgumentError, "Text value must contain 1 to 500 characters, got #{value.length}"
+      end
+
+      value
+    end
+
+    def require_string(value, label)
+      raise ArgumentError, "#{label} value must be a String, got #{value.class}" unless value.is_a?(String)
+
+      value
+    end
 
     # Validate score name
     #

@@ -354,7 +354,7 @@ module Langfuse
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
     # @param environment [String, nil] Optional environment
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
     # @return [void]
@@ -368,6 +368,14 @@ module Langfuse
     #
     # @example Categorical score
     #   client.create_score(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
+    #
+    # @example Text score (1 to 500 characters)
+    #   client.create_score(name: "reviewer_notes", value: "Helpful but verbose",
+    #                       trace_id: "abc123", data_type: :text)
+    #
+    # @example Corrected output (conventionally named "output")
+    #   client.create_score(name: "output", value: "The corrected output", trace_id: "abc123",
+    #                       observation_id: "def456", data_type: :correction)
     # rubocop:disable Metrics/ParameterLists
     def create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                      metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
@@ -396,7 +404,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
@@ -422,7 +430,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #

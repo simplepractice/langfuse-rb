@@ -248,6 +248,90 @@ RSpec.describe Langfuse::ScoreClient do
       end
     end
 
+    context "with text score" do
+      it "emits dataType TEXT with the string value" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(
+                                                              name: "reviewer_notes",
+                                                              value: "Helpful but verbose",
+                                                              dataType: "TEXT"
+                                                            )
+                                                          )
+                                                        ))
+
+        score_client.create(name: "reviewer_notes", value: "Helpful but verbose", data_type: :text)
+        score_client.flush
+      end
+
+      it "accepts a 500-character value" do
+        expect(api_client).to receive(:send_batch)
+
+        score_client.create(name: "notes", value: "a" * 500, data_type: :text)
+        score_client.flush
+      end
+
+      it "rejects an empty value" do
+        expect do
+          score_client.create(name: "notes", value: "", data_type: :text)
+        end.to raise_error(ArgumentError, /Text value must contain 1 to 500 characters, got 0/)
+      end
+
+      it "rejects a value longer than 500 characters" do
+        expect do
+          score_client.create(name: "notes", value: "a" * 501, data_type: :text)
+        end.to raise_error(ArgumentError, /Text value must contain 1 to 500 characters, got 501/)
+      end
+
+      it "rejects non-string values" do
+        expect do
+          score_client.create(name: "notes", value: 42, data_type: :text)
+        end.to raise_error(ArgumentError, /Text value must be a String, got Integer/)
+      end
+    end
+
+    context "with correction score" do
+      it "emits dataType CORRECTION with the caller's name and string value" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(
+                                                              name: "output",
+                                                              value: "The corrected output",
+                                                              dataType: "CORRECTION",
+                                                              traceId: "trace-1",
+                                                              observationId: "obs-1"
+                                                            )
+                                                          )
+                                                        ))
+
+        score_client.create(name: "output", value: "The corrected output",
+                            trace_id: "trace-1", observation_id: "obs-1", data_type: :correction)
+        score_client.flush
+      end
+
+      it "preserves an arbitrary caller-supplied name without rewriting it" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(body: hash_including(name: "custom-name"))
+                                                        ))
+
+        score_client.create(name: "custom-name", value: "corrected", data_type: :correction)
+        score_client.flush
+      end
+
+      it "does not enforce a length limit" do
+        expect(api_client).to receive(:send_batch)
+
+        score_client.create(name: "output", value: "a" * 10_000, data_type: :correction)
+        score_client.flush
+      end
+
+      it "rejects non-string values" do
+        expect do
+          score_client.create(name: "output", value: { text: "corrected" }, data_type: :correction)
+        end.to raise_error(ArgumentError, /Correction value must be a String, got Hash/)
+      end
+    end
+
     context "with validation errors" do
       it "raises ArgumentError for missing name" do
         expect do

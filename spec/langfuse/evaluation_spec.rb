@@ -52,6 +52,16 @@ RSpec.describe Langfuse::Evaluation do
         .to raise_error(ArgumentError, /Invalid data_type: invalid/)
     end
 
+    it "rejects the general-score :text type" do
+      expect { described_class.new(name: "notes", value: "some text", data_type: :text) }
+        .to raise_error(ArgumentError, /Invalid data_type: text.*numeric, boolean, categorical/)
+    end
+
+    it "rejects the general-score :correction type" do
+      expect { described_class.new(name: "output", value: "corrected", data_type: :correction) }
+        .to raise_error(ArgumentError, /Invalid data_type: correction.*numeric, boolean, categorical/)
+    end
+
     context "with value type validation" do
       it "raises ArgumentError for non-numeric value with numeric data_type" do
         expect { described_class.new(name: "test", value: "hello", data_type: :numeric) }

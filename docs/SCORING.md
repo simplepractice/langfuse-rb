@@ -70,6 +70,62 @@ client.create_score(
 - Content categories
 - Quality tiers (low/medium/high)
 
+### Text
+
+Free-form string notes (1 to 500 characters):
+
+```ruby
+client.create_score(
+  name: "reviewer_notes",
+  value: "The response was helpful but could be more concise.",
+  trace_id: "abc123...",
+  data_type: :text
+)
+```
+
+**Common use cases:**
+- Reviewer notes and qualitative feedback
+- Short explanations attached to a trace or observation
+
+Values must be strings containing 1 to 500 characters; anything else raises
+`ArgumentError`.
+
+### Correction (Corrected Outputs)
+
+Corrections capture an improved version of an LLM output directly on a trace or
+observation. They are scores with `dataType: "CORRECTION"` and — by Langfuse
+convention — the name `"output"`:
+
+```ruby
+client.create_score(
+  name: "output",                        # Langfuse convention for corrections
+  value: "The corrected output text",    # the full replacement output
+  trace_id: "abc123...",
+  observation_id: "def456...",           # optional: target an observation
+  data_type: :correction
+)
+```
+
+**Common use cases:**
+- Domain experts documenting what the model should have generated
+- Human-in-the-loop review workflows
+- Building fine-tuning datasets from corrected outputs
+
+Values must be strings; there is no length limit. Provide structured
+corrections as JSON text when appropriate — the SDK does not serialize objects
+for you. Corrections appear in the Langfuse UI alongside the original output
+with a diff view, and can be read back through the v3 scores API
+(`data_type: "CORRECTION"`).
+
+### Text/Correction vs. Experiment Evaluations
+
+Text and correction scores are general scores, not experiment metrics.
+`Langfuse::Evaluation` (used by experiment evaluators — see
+[EXPERIMENTS.md](EXPERIMENTS.md)) intentionally accepts only `:numeric`,
+`:boolean`, and `:categorical` and raises `ArgumentError` for `:text` and
+`:correction`, matching the Python SDK. Create corrections and text notes
+through `create_score` against the trace or observation instead.
+
 ## Creating Scores
 
 ### Client-Level API
