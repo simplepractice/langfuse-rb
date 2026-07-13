@@ -7,6 +7,7 @@ require "json"
 require "uri"
 require_relative "prompt_fetch_result"
 require_relative "prompt_cache_coordinator"
+require_relative "read_api"
 
 module Langfuse
   # HTTP client for Langfuse API
@@ -25,6 +26,7 @@ module Langfuse
   #
   class ApiClient # rubocop:disable Metrics/ClassLength
     include PromptCacheEvents
+    include ReadApi
 
     # @return [String] Langfuse public API key
     attr_reader :public_key

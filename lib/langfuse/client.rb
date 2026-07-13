@@ -44,6 +44,9 @@ module Langfuse
     # @!method validate_prompt_cache_backend!
     # @!method list_traces(**options)
     # @!method get_trace(id)
+    # @!method list_observations(**options)
+    # @!method query_metrics(query:)
+    # @!method list_scores(**options)
     # @!method list_datasets(page: nil, limit: nil)
     # @!method get_dataset_run(dataset_name:, run_name:)
     # @!method create_dataset_run_item(**)
@@ -57,6 +60,9 @@ module Langfuse
                    :validate_prompt_cache_backend!,
                    :list_traces,
                    :get_trace,
+                   :list_observations,
+                   :query_metrics,
+                   :list_scores,
                    :list_datasets,
                    :get_dataset_run,
                    :create_dataset_run_item

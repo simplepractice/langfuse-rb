@@ -139,7 +139,7 @@ module Langfuse
       def build_exporter(config)
         OpenTelemetry::Exporter::OTLP::Exporter.new(
           endpoint: "#{config.base_url}/api/public/otel/v1/traces",
-          headers: build_headers(config.public_key, config.secret_key),
+          headers: build_headers(config),
           compression: "gzip"
         )
       end
@@ -170,10 +170,19 @@ module Langfuse
         value.nil? || value.empty?
       end
 
-      def build_headers(public_key, secret_key)
-        credentials = "#{public_key}:#{secret_key}"
+      # Langfuse requires `x-langfuse-ingestion-version: 4` on direct OTLP
+      # exports for real-time Fast Preview processing; without it, data can be
+      # delayed on the new UI and v2 read surfaces.
+      def build_headers(config)
+        credentials = "#{config.public_key}:#{config.secret_key}"
         encoded = Base64.strict_encode64(credentials)
-        { "Authorization" => "Basic #{encoded}" }
+        {
+          "Authorization" => "Basic #{encoded}",
+          "x-langfuse-ingestion-version" => "4",
+          "x-langfuse-sdk-name" => "ruby",
+          "x-langfuse-sdk-version" => Langfuse::VERSION,
+          "x-langfuse-public-key" => config.public_key
+        }
       end
 
       def build_sampler(sample_rate)

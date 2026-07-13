@@ -256,4 +256,25 @@ RSpec.describe Langfuse::OtelSetup do
       expect(exporter.finished_spans).to be_empty
     end
   end
+
+  describe ".build_headers" do
+    let(:headers) { described_class.send(:build_headers, config) }
+
+    it "includes Basic auth credentials" do
+      encoded = Base64.strict_encode64("pk_test_123:sk_test_456")
+      expect(headers["Authorization"]).to eq("Basic #{encoded}")
+    end
+
+    it "requests v4 Fast Preview ingestion" do
+      expect(headers["x-langfuse-ingestion-version"]).to eq("4")
+    end
+
+    it "identifies the SDK by name, version, and public key" do
+      expect(headers).to include(
+        "x-langfuse-sdk-name" => "ruby",
+        "x-langfuse-sdk-version" => Langfuse::VERSION,
+        "x-langfuse-public-key" => "pk_test_123"
+      )
+    end
+  end
 end
