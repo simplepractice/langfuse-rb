@@ -16,6 +16,7 @@ module Langfuse
       release
       sample_rate
       should_export_span
+      mask_otel_spans
       tracing_async
       batch_size
       flush_interval
@@ -137,11 +138,14 @@ module Langfuse
       end
 
       def build_exporter(config)
-        OpenTelemetry::Exporter::OTLP::Exporter.new(
+        exporter = OpenTelemetry::Exporter::OTLP::Exporter.new(
           endpoint: "#{config.base_url}/api/public/otel/v1/traces",
           headers: build_headers(config.public_key, config.secret_key),
           compression: "gzip"
         )
+        return exporter unless config.mask_otel_spans
+
+        MaskingExporter.new(delegate: exporter, hook: config.mask_otel_spans, logger: config.logger)
       end
 
       def log_initialized(config)
@@ -153,9 +157,15 @@ module Langfuse
         raise ConfigurationError, "public_key is required" if blank?(config.public_key)
         raise ConfigurationError, "secret_key is required" if blank?(config.secret_key)
         raise ConfigurationError, "base_url cannot be empty" if blank?(config.base_url)
-        return if config.should_export_span.nil? || config.should_export_span.respond_to?(:call)
 
-        raise ConfigurationError, "should_export_span must respond to #call"
+        validate_callable!(config.should_export_span, "should_export_span")
+        validate_callable!(config.mask_otel_spans, "mask_otel_spans")
+      end
+
+      def validate_callable!(value, name)
+        return if value.nil? || value.respond_to?(:call)
+
+        raise ConfigurationError, "#{name} must respond to #call"
       end
 
       def tracing_config_snapshot(config)

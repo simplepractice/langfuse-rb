@@ -342,3 +342,32 @@ end
 ```
 
 Masking applies to observation `input`, `output`, and `metadata`. The full configuration contract is in [CONFIGURATION.md](CONFIGURATION.md#mask).
+
+### Export-stage masking with `mask_otel_spans`
+
+`mask` runs while the SDK creates Langfuse-owned attributes; it never sees the raw
+attributes of third-party spans (e.g. `gen_ai.*` attributes set by an OpenAI or
+LangChain instrumentation). To transform those, configure the export-stage hook:
+
+```ruby
+Langfuse.configure do |config|
+  config.mask_otel_spans = lambda { |spans:|
+    spans.filter_map { |id, snapshot|
+      next unless snapshot.attributes.key?("gen_ai.prompt")
+
+      [id, { delete: ["gen_ai.completion"], set: { "gen_ai.prompt" => "[REDACTED]" } }]
+    }.to_h
+  }
+end
+```
+
+The hook runs after `should_export_span` selects spans and just before the batch
+is handed to the Langfuse OTLP exporter, so it sees exactly the spans this client
+will export — Langfuse-owned and third-party alike. Returning `nil` exports the
+batch unchanged. Errors fail closed: the batch (or the offending span) is dropped
+rather than exported unmasked.
+
+Only the Langfuse export copy is transformed. If you also send telemetry to
+another OpenTelemetry backend, that backend receives the original spans and needs
+its own masking. The two hooks are independent; applications may configure either
+or both. The full contract is in [CONFIGURATION.md](CONFIGURATION.md#mask_otel_spans).

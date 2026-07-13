@@ -592,6 +592,37 @@ RSpec.describe Langfuse::Config do
     end
   end
 
+  describe "mask_otel_spans validation" do
+    let(:config) do
+      described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+      end
+    end
+
+    it "defaults mask_otel_spans to nil" do
+      expect(config.mask_otel_spans).to be_nil
+    end
+
+    it "passes validation when mask_otel_spans is nil" do
+      config.mask_otel_spans = nil
+      expect { config.validate! }.not_to raise_error
+    end
+
+    it "passes validation when mask_otel_spans responds to #call" do
+      config.mask_otel_spans = ->(spans:) { spans and nil }
+      expect { config.validate! }.not_to raise_error
+    end
+
+    it "fails validation when mask_otel_spans does not respond to #call" do
+      config.mask_otel_spans = "not_callable"
+      expect { config.validate! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask_otel_spans must respond to #call"
+      )
+    end
+  end
+
   describe "stale-while-revalidate integration" do
     it "works with all configuration options together" do
       config = described_class.new do |c|

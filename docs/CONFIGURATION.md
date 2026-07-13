@@ -395,6 +395,32 @@ config.mask = lambda { |data:|
 
 See [TRACING.md](TRACING.md#masking) for usage patterns and behavior details.
 
+#### `mask_otel_spans`
+
+- **Type:** `#call` (Proc, Lambda, or any object responding to `call`) or `nil`
+- **Default:** `nil` (export-stage masking disabled)
+- **Description:** Export-stage masking hook applied to every span batch exported to Langfuse, including spans created by third-party instrumentations. Receives a `spans:` keyword argument — a frozen Hash mapping stable span identifiers (`"<hex trace_id>:<hex span_id>"`) to immutable `Langfuse::OtelSpanSnapshot` values (trace/span IDs, name, instrumentation scope name, frozen span attributes, frozen resource attributes). Return `nil` to export the batch unchanged, or a sparse Hash of patches keyed by the same identifiers. Each patch is a Hash with optional `:delete` (Array of attribute keys) and `:set` (Hash of replacement attributes); deletes run before sets, so a replacement wins when a key appears in both.
+
+```ruby
+config.mask_otel_spans = lambda { |spans:|
+  spans.filter_map { |id, snapshot|
+    next unless snapshot.attributes.key?("gen_ai.prompt")
+
+    [id, { set: { "gen_ai.prompt" => "[REDACTED]" } }]
+  }.to_h
+}
+```
+
+Fail-closed behavior:
+
+- A hook exception or an invalid top-level result drops the whole Langfuse export batch.
+- A malformed per-span patch drops that span from the Langfuse export.
+- An invalid replacement attribute value omits that attribute rather than exporting its original value.
+
+Only the copy exported to Langfuse is transformed. Any other OpenTelemetry exporter receives the original, unmasked spans — Langfuse masking does not protect other telemetry backends. The hook is synchronous and runs on the batch export thread; it must not rely on request context, the current span, async work, or network calls.
+
+See [TRACING.md](TRACING.md#masking) for how the two masking boundaries relate.
+
 ## Tracing Behavior and OpenTelemetry Ownership
 
 There are three states worth documenting.
@@ -625,6 +651,7 @@ Validation rules:
 - `prompt_cache_observer` must respond to `#call` (if set)
 - `should_export_span` must respond to `#call` (if set)
 - `mask` must respond to `#call` (if set)
+- `mask_otel_spans` must respond to `#call` (if set)
 
 ## Accessing Current Configuration
 
