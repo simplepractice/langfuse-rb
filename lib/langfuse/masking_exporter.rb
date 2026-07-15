@@ -23,7 +23,39 @@ module Langfuse
   #   @return [Hash] frozen resource attributes
   OtelSpanSnapshot = Data.define(
     :trace_id, :span_id, :name, :scope_name, :attributes, :resource_attributes
-  )
+  ) do
+    class << self
+      # Build an immutable snapshot without freezing objects owned by the
+      # original span data.
+      # @api private
+      def from_span(span)
+        new(
+          trace_id: span.hex_trace_id,
+          span_id: span.hex_span_id,
+          name: frozen_copy(span.name),
+          scope_name: frozen_copy(span.instrumentation_scope&.name),
+          attributes: frozen_attributes(span.attributes),
+          resource_attributes: frozen_attributes(span.resource&.attribute_enumerator&.to_h)
+        )
+      end
+
+      private
+
+      def frozen_attributes(attributes)
+        (attributes || {}).to_h do |key, value|
+          [frozen_copy(key), frozen_copy(value)]
+        end.freeze
+      end
+
+      def frozen_copy(value)
+        case value
+        when String then value.dup.freeze
+        when Array then value.map { |element| frozen_copy(element) }.freeze
+        else value
+        end
+      end
+    end
+  end
 
   # Export-stage masking wrapper around the Langfuse OTLP exporter.
   #
@@ -85,13 +117,24 @@ module Langfuse
 
     # @return [Array<SpanData>, nil] the masked batch, or nil to drop it
     def mask_batch(batch)
-      patches = @hook.call(spans: snapshot_batch(batch))
+      snapshots = snapshot_batch(batch)
+      return unless snapshots
+
+      patches = @hook.call(spans: snapshots)
       return batch if patches.nil?
 
       unless patches.is_a?(Hash)
         @logger.error(
           "Langfuse mask_otel_spans returned #{patches.class} instead of nil or a Hash " \
           "of patches; dropping the Langfuse export batch"
+        )
+        return nil
+      end
+
+      unless patches.each_key.all? { |identifier| snapshots.key?(identifier) }
+        @logger.error(
+          "Langfuse mask_otel_spans returned a patch for an unknown span identifier; " \
+          "dropping the Langfuse export batch"
         )
         return nil
       end
@@ -105,7 +148,18 @@ module Langfuse
     end
 
     def snapshot_batch(batch)
-      batch.to_h { |span| [span_identifier(span), snapshot(span)] }.freeze
+      batch.each_with_object({}) do |span, snapshots|
+        identifier = span_identifier(span)
+        if snapshots.key?(identifier)
+          @logger.error(
+            "Langfuse mask_otel_spans received duplicate span identifiers; " \
+            "dropping the Langfuse export batch"
+          )
+          return nil
+        end
+
+        snapshots[identifier] = OtelSpanSnapshot.from_span(span)
+      end.freeze
     end
 
     # Stable identifier the hook uses to key sparse patches.
@@ -113,41 +167,14 @@ module Langfuse
       "#{span.hex_trace_id}:#{span.hex_span_id}"
     end
 
-    def snapshot(span)
-      OtelSpanSnapshot.new(
-        trace_id: span.hex_trace_id,
-        span_id: span.hex_span_id,
-        name: span.name,
-        scope_name: span.instrumentation_scope&.name,
-        attributes: frozen_attributes(span.attributes),
-        resource_attributes: frozen_attributes(span.resource&.attribute_enumerator&.to_h)
-      )
-    end
-
-    # Copies mutable values so freezing the snapshot never freezes objects
-    # still referenced by the original span data.
-    def frozen_attributes(attributes)
-      (attributes || {}).transform_values { |value| frozen_copy(value) }.freeze
-    end
-
-    # Arrays are copied element-wise so snapshot values never alias mutable
-    # strings still referenced by the original span data.
-    def frozen_copy(value)
-      case value
-      when String then value.dup.freeze
-      when Array then value.map { |element| frozen_copy(element) }.freeze
-      else value
-      end
-    end
-
     # Unpatched spans are passed through untouched; patched spans are cloned
     # so the originals stay pristine for any other exporter.
     def apply_patches(batch, patches)
       batch.filter_map do |span|
-        patch = patches[span_identifier(span)]
-        next span unless patch
+        identifier = span_identifier(span)
+        next span unless patches.key?(identifier)
 
-        apply_patch(span, patch)
+        apply_patch(span, patches.fetch(identifier))
       end
     end
 
@@ -167,16 +194,24 @@ module Langfuse
     def valid_patch?(patch)
       patch.is_a?(Hash) &&
         (patch.keys - PATCH_KEYS).empty? &&
-        (patch[:delete].nil? || patch[:delete].is_a?(Array)) &&
-        (patch[:set].nil? || patch[:set].is_a?(Hash))
+        valid_delete_keys?(patch[:delete]) &&
+        valid_set_keys?(patch[:set])
+    end
+
+    def valid_delete_keys?(keys)
+      keys.nil? || (keys.is_a?(Array) && keys.all? { |key| valid_attribute_key?(key) })
+    end
+
+    def valid_set_keys?(attributes)
+      attributes.nil? || (attributes.is_a?(Hash) && attributes.each_key.all? { |key| valid_attribute_key?(key) })
     end
 
     # Deletes run before sets so a replacement wins when a key appears in both.
     def patched_attributes(span, patch)
       attributes = (span.attributes || {}).dup
-      Array(patch[:delete]).each { |key| attributes.delete(key.to_s) }
+      Array(patch[:delete]).each { |key| attributes.delete(key) }
       (patch[:set] || {}).each do |key, value|
-        apply_replacement(attributes, key.to_s, value)
+        apply_replacement(attributes, key, value)
       end
       attributes.freeze
     end
@@ -197,26 +232,22 @@ module Langfuse
     end
 
     def valid_attribute_value?(value)
-      case value
-      when String, Integer, Float, true, false then true
-      when Array then homogeneous_scalar_array?(value)
-      else false
-      end
+      OpenTelemetry::SDK::Internal.valid_value?(value)
     end
 
-    def homogeneous_scalar_array?(array)
-      return true if array.empty?
-      # Booleans mix TrueClass and FalseClass but form one OpenTelemetry type.
-      return array.all? { |element| [true, false].include?(element) } if [true, false].include?(array.first)
-
-      type = array.first.class
-      [String, Integer, Float].include?(type) && array.all? { |element| element.instance_of?(type) }
+    def valid_attribute_key?(key)
+      OpenTelemetry::SDK::Internal.valid_key?(key)
     end
 
     def clone_with_attributes(span, attributes)
       copy = span.dup
       copy.attributes = attributes
+      copy.total_recorded_attributes = attributes.size + dropped_attribute_count(span)
       copy
+    end
+
+    def dropped_attribute_count(span)
+      [span.total_recorded_attributes.to_i - (span.attributes || {}).size, 0].max
     end
   end
 end

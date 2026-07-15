@@ -78,6 +78,8 @@ RSpec.describe Langfuse::MaskingExporter do
         expect(snapshot.span_id).to eq(third_party_span.hex_span_id)
         expect(snapshot.name).to eq("chat gpt-4o")
         expect(snapshot.scope_name).to eq("ruby-openai")
+        expect(snapshot.name).to be_frozen
+        expect(snapshot.scope_name).to be_frozen
         expect(snapshot.attributes).to be_frozen
         expect(snapshot.attributes["gen_ai.prompt"]).to be_frozen
         expect(snapshot.resource_attributes).to include("service.name" => "test-app")
@@ -107,6 +109,16 @@ RSpec.describe Langfuse::MaskingExporter do
         expect(snapshot_value.first).to be_frozen
         expect(snapshot_value.first).not_to equal(original.first)
         expect(original.first).not_to be_frozen
+      end
+
+      it "copies span and scope names instead of exposing shared strings" do
+        span = build_span_data(name: +"mutable-name", scope_name: +"mutable-scope")
+
+        exporter.export([span])
+
+        snapshot = seen.first[identifier(span)]
+        expect(snapshot.name).not_to equal(span.name)
+        expect(snapshot.scope_name).not_to equal(span.instrumentation_scope.name)
       end
     end
 
@@ -212,6 +224,17 @@ RSpec.describe Langfuse::MaskingExporter do
       end
     end
 
+    context "when a present patch is false" do
+      let(:hook) { ->(spans:) { { spans.keys.first => false } } }
+
+      it "drops the span instead of exporting it unchanged" do
+        exporter.export([third_party_span])
+
+        expect(delegate.finished_spans).to be_empty
+        expect(logger).to have_received(:error).with(/malformed patch/)
+      end
+    end
+
     context "when a patch has unknown keys" do
       let(:hook) do
         ->(spans:) { spans.each_key.to_h { |id| [id, { remove: ["gen_ai.prompt"] }] } }
@@ -254,7 +277,8 @@ RSpec.describe Langfuse::MaskingExporter do
           spans.each_key.to_h do |id|
             [id, { set: {
               "string" => "ok", "int" => 1, "float" => 1.5, "bool" => true,
-              "bools" => [true, false], "strings" => %w[a b], "empty" => []
+              "bools" => [true, false], "numbers" => [1, 2.5],
+              "strings" => %w[a b], "empty" => []
             } }]
           end
         end
@@ -266,9 +290,17 @@ RSpec.describe Langfuse::MaskingExporter do
         attributes = delegate.finished_spans.first.attributes
         expect(attributes).to include(
           "string" => "ok", "int" => 1, "float" => 1.5, "bool" => true,
-          "bools" => [true, false], "strings" => %w[a b], "empty" => []
+          "bools" => [true, false], "numbers" => [1, 2.5],
+          "strings" => %w[a b], "empty" => []
         )
         expect(logger).not_to have_received(:warn)
+      end
+
+      it "keeps OpenTelemetry dropped-attribute accounting valid" do
+        exporter.export([third_party_span])
+
+        exported = delegate.finished_spans.first
+        expect(exported.total_recorded_attributes).to be >= exported.attributes.size
       end
     end
 
@@ -288,10 +320,25 @@ RSpec.describe Langfuse::MaskingExporter do
     context "with patches keyed by unknown identifiers" do
       let(:hook) { ->(**) { { "deadbeef:cafebabe" => { delete: ["x"] } } } }
 
-      it "ignores them and exports the batch" do
-        exporter.export(batch)
+      it "drops the batch instead of exporting unmatched sensitive spans" do
+        result = exporter.export(batch)
 
-        expect(delegate.finished_spans.size).to eq(2)
+        expect(result).to eq(OpenTelemetry::SDK::Trace::Export::FAILURE)
+        expect(delegate.finished_spans).to be_empty
+        expect(logger).to have_received(:error).with(/unknown span identifier/)
+      end
+    end
+
+    context "with duplicate span identifiers" do
+      it "drops the batch instead of silently collapsing snapshots" do
+        duplicate = third_party_span.dup
+        duplicate.name = "duplicate"
+
+        result = exporter.export([third_party_span, duplicate])
+
+        expect(result).to eq(OpenTelemetry::SDK::Trace::Export::FAILURE)
+        expect(delegate.finished_spans).to be_empty
+        expect(logger).to have_received(:error).with(/duplicate span identifiers/)
       end
     end
   end

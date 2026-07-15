@@ -3,6 +3,7 @@
 require "opentelemetry/sdk"
 require "opentelemetry/exporter/otlp"
 require "base64"
+require_relative "masking_exporter"
 
 module Langfuse
   # OpenTelemetry initialization and setup for Langfuse tracing.
