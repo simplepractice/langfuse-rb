@@ -88,8 +88,9 @@ module Langfuse
     def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       validate_name(name)
-      normalized_value = normalize_value(value, data_type)
+      normalized_value = ScoreValue.normalize(value, data_type)
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
+      validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
 
       return unless enqueue_trace_linked_score?(trace_id)
 
@@ -221,7 +222,7 @@ module Langfuse
     # @param comment [String, nil] Comment
     # @param metadata [Hash, nil] Metadata
     # @param environment [String, nil] Environment
-    # @param data_type [String] Data type string (NUMERIC, BOOLEAN, CATEGORICAL)
+    # @param data_type [String] API score data type string
     # @return [Hash] Event hash
     # rubocop:disable Metrics/ParameterLists
     def build_score_event(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
@@ -249,56 +250,12 @@ module Langfuse
     end
     # rubocop:enable Metrics/ParameterLists
 
-    # Documented Langfuse limit for TEXT score values.
-    TEXT_VALUE_LENGTH_RANGE = (1..500)
-    private_constant :TEXT_VALUE_LENGTH_RANGE
+    def validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
+      return unless data_type == :correction
+      return if trace_id.is_a?(String) && !trace_id.empty? && !session_id && !dataset_run_id && !config_id
 
-    # Normalize and validate score value based on data type
-    #
-    # @param value [Object] Raw score value
-    # @param data_type [Symbol] Data type symbol
-    # @return [Object] Normalized value
-    # @raise [ArgumentError] if value doesn't match data type
-    def normalize_value(value, data_type)
-      case data_type
-      when :numeric then normalize_numeric(value)
-      when :boolean then normalize_boolean(value)
-      when :categorical then require_string(value, "Categorical")
-      when :text then normalize_text(value)
-      # Corrections carry the full corrected output; Langfuse documents no
-      # length limit for them, so none is enforced here.
-      when :correction then require_string(value, "Correction")
-      else raise ArgumentError, "Invalid data_type: #{data_type}"
-      end
-    end
-
-    def normalize_numeric(value)
-      raise ArgumentError, "Numeric value must be Numeric, got #{value.class}" unless value.is_a?(Numeric)
-
-      value
-    end
-
-    def normalize_boolean(value)
-      case value
-      when true, 1 then 1
-      when false, 0 then 0
-      else raise ArgumentError, "Boolean value must be true/false or 0/1, got #{value.inspect}"
-      end
-    end
-
-    def normalize_text(value)
-      require_string(value, "Text")
-      unless TEXT_VALUE_LENGTH_RANGE.cover?(value.length)
-        raise ArgumentError, "Text value must contain 1 to 500 characters, got #{value.length}"
-      end
-
-      value
-    end
-
-    def require_string(value, label)
-      raise ArgumentError, "#{label} value must be a String, got #{value.class}" unless value.is_a?(String)
-
-      value
+      raise ArgumentError,
+            "Correction scores require trace_id and cannot use session_id, dataset_run_id, or config_id"
     end
 
     # Validate score name

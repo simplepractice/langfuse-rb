@@ -314,14 +314,14 @@ RSpec.describe Langfuse::ScoreClient do
                                                           hash_including(body: hash_including(name: "custom-name"))
                                                         ))
 
-        score_client.create(name: "custom-name", value: "corrected", data_type: :correction)
+        score_client.create(name: "custom-name", value: "corrected", trace_id: "trace-1", data_type: :correction)
         score_client.flush
       end
 
       it "does not enforce a length limit" do
         expect(api_client).to receive(:send_batch)
 
-        score_client.create(name: "output", value: "a" * 10_000, data_type: :correction)
+        score_client.create(name: "output", value: "a" * 10_000, trace_id: "trace-1", data_type: :correction)
         score_client.flush
       end
 
@@ -329,6 +329,22 @@ RSpec.describe Langfuse::ScoreClient do
         expect do
           score_client.create(name: "output", value: { text: "corrected" }, data_type: :correction)
         end.to raise_error(ArgumentError, /Correction value must be a String, got Hash/)
+      end
+
+      it "rejects subjects that Langfuse cannot attach a correction to" do
+        invalid_subjects = [
+          {},
+          { observation_id: "obs-1" },
+          { trace_id: "trace-1", session_id: "session-1" },
+          { trace_id: "trace-1", dataset_run_id: "run-1" },
+          { trace_id: "trace-1", config_id: "config-1" }
+        ]
+
+        invalid_subjects.each do |subject|
+          expect do
+            score_client.create(name: "output", value: "corrected", data_type: :correction, **subject)
+          end.to raise_error(ArgumentError, /Correction scores require trace_id/)
+        end
       end
     end
 

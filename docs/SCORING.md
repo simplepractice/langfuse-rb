@@ -93,12 +93,12 @@ Values must be strings containing 1 to 500 characters; anything else raises
 ### Correction (Corrected Outputs)
 
 Corrections capture an improved version of an LLM output directly on a trace or
-observation. They are scores with `dataType: "CORRECTION"` and — by Langfuse
-convention — the name `"output"`:
+observation. They are scores with `dataType: "CORRECTION"`; Langfuse persists
+their name as `"output"`:
 
 ```ruby
 client.create_score(
-  name: "output",                        # Langfuse convention for corrections
+  name: "output",                        # persisted by Langfuse as "output"
   value: "The corrected output text",    # the full replacement output
   trace_id: "abc123...",
   observation_id: "def456...",           # optional: target an observation
@@ -113,8 +113,11 @@ client.create_score(
 
 Values must be strings; there is no length limit. Provide structured
 corrections as JSON text when appropriate — the SDK does not serialize objects
-for you. Corrections appear in the Langfuse UI alongside the original output
-with a diff view, and can be read back through the v3 scores API
+for you. A correction must have a `trace_id`; `observation_id` may additionally
+target one observation. Session, dataset-run, and score-config associations are
+rejected because Langfuse only accepts corrections on traces or observations.
+Corrections appear in the Langfuse UI alongside the original output with a diff
+view, and can be read back through the v3 scores API
 (`GET /api/public/v3/scores?dataType=CORRECTION`).
 
 ### Text/Correction vs. Experiment Evaluations
