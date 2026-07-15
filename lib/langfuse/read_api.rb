@@ -179,21 +179,22 @@ module Langfuse
     private
 
     # v2 observation reads must always be bounded; an unbounded scan over the
-    # events table is rejected here rather than issued silently. Blank strings
-    # count as absent so they cannot sneak past the guard as empty params.
+    # events table is rejected here rather than issued silently. Only values
+    # matching the documented query contract can satisfy the bound.
     def validate_bounded_observation_read!(trace_id, from_start_time, to_start_time)
-      return if present?(trace_id)
-      return if present?(from_start_time) && present?(to_start_time)
+      return if non_empty_string?(trace_id)
+      return if valid_query_time?(from_start_time) && valid_query_time?(to_start_time)
 
       raise ArgumentError,
             "from_start_time and to_start_time are required unless trace_id is provided"
     end
 
-    def present?(value)
-      return false unless value
-      return !value.strip.empty? if value.respond_to?(:strip)
+    def valid_query_time?(value)
+      non_empty_string?(format_query_time(value))
+    end
 
-      true
+    def non_empty_string?(value)
+      value.is_a?(String) && !value.strip.empty?
     end
 
     def build_observations_params(**options)

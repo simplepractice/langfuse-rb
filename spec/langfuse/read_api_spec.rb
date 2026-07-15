@@ -163,6 +163,16 @@ RSpec.describe Langfuse::ReadApi do
           .to raise_error(ArgumentError, /from_start_time and to_start_time are required/)
       end
 
+      it "rejects truthy non-string trace ids as absent" do
+        expect { api_client.list_observations(trace_id: []) }
+          .to raise_error(ArgumentError, /from_start_time and to_start_time are required/)
+      end
+
+      it "rejects truthy non-time bounds as absent" do
+        expect { api_client.list_observations(from_start_time: [], to_start_time: {}) }
+          .to raise_error(ArgumentError, /from_start_time and to_start_time are required/)
+      end
+
       it "does not issue an HTTP request" do
         begin
           api_client.list_observations
