@@ -7,7 +7,8 @@ RSpec.describe Langfuse::Guardrail do
   let(:tracer_provider) { OpenTelemetry::SDK::Trace::TracerProvider.new }
   let(:otel_tracer) { tracer_provider.tracer("test-tracer") }
   let(:otel_span) { otel_tracer.start_span("test-guardrail") }
-  let(:guardrail) { described_class.new(otel_span, otel_tracer) }
+  let(:client) { Langfuse.client }
+  let(:guardrail) { described_class.new(otel_span, otel_tracer, client: client) }
 
   describe "#type" do
     it "returns 'guardrail'" do
@@ -49,7 +50,7 @@ RSpec.describe Langfuse::Guardrail do
   describe "integration with Span via start_observation" do
     it "creates guardrail as child of span" do
       parent_span = otel_tracer.start_span("parent-span")
-      parent_observation = Langfuse::Span.new(parent_span, otel_tracer)
+      parent_observation = Langfuse::Span.new(parent_span, otel_tracer, client: client)
 
       guardrail_obj = parent_observation.start_observation("nested-guardrail", { input: { content: "test" } },
                                                            as_type: :guardrail)
@@ -104,7 +105,7 @@ RSpec.describe Langfuse::Guardrail do
   describe "initialization with attributes" do
     it "sets initial attributes when provided" do
       attrs = { input: { content: "test" }, output: { safe: true }, level: "DEFAULT" }
-      guardrail_obj = described_class.new(otel_span, otel_tracer, attributes: attrs)
+      guardrail_obj = described_class.new(otel_span, otel_tracer, attributes: attrs, client: client)
       span_data = guardrail_obj.otel_span.to_span_data
 
       expect(JSON.parse(span_data.attributes["langfuse.observation.input"])).to eq({ "content" => "test" })

@@ -7,7 +7,8 @@ RSpec.describe Langfuse::Event do
   let(:tracer_provider) { OpenTelemetry::SDK::Trace::TracerProvider.new }
   let(:otel_tracer) { tracer_provider.tracer("test-tracer") }
   let(:otel_span) { otel_tracer.start_span("test-event") }
-  let(:event) { described_class.new(otel_span, otel_tracer) }
+  let(:client) { Langfuse.client }
+  let(:event) { described_class.new(otel_span, otel_tracer, client: client) }
 
   describe "#type" do
     it "returns 'event'" do
@@ -37,7 +38,7 @@ RSpec.describe Langfuse::Event do
 
   describe "auto-ending behavior via start_observation" do
     let(:parent_span) { otel_tracer.start_span("parent") }
-    let(:parent_observation) { Langfuse::Span.new(parent_span, otel_tracer) }
+    let(:parent_observation) { Langfuse::Span.new(parent_span, otel_tracer, client: client) }
 
     context "when created without block (stateful API)" do
       it "automatically ends the event" do
@@ -92,7 +93,7 @@ RSpec.describe Langfuse::Event do
   describe "integration with Span via start_observation" do
     it "creates event as child of span" do
       parent_span = otel_tracer.start_span("parent-span")
-      parent_observation = Langfuse::Span.new(parent_span, otel_tracer)
+      parent_observation = Langfuse::Span.new(parent_span, otel_tracer, client: client)
 
       event_obj = parent_observation.start_observation("nested-event", { input: { data: "test" } }, as_type: :event)
       expect(event_obj).to be_a(described_class)
@@ -102,7 +103,7 @@ RSpec.describe Langfuse::Event do
 
     it "creates event as child of generation" do
       parent_span = otel_tracer.start_span("parent-generation")
-      parent_observation = Langfuse::Generation.new(parent_span, otel_tracer)
+      parent_observation = Langfuse::Generation.new(parent_span, otel_tracer, client: client)
 
       event_obj = parent_observation.start_observation("streaming-event", { input: { chunk: "data" } }, as_type: :event)
       expect(event_obj).to be_a(described_class)
@@ -157,7 +158,7 @@ RSpec.describe Langfuse::Event do
   describe "initialization with attributes" do
     it "sets initial attributes when provided" do
       attrs = { input: { action: "click" }, output: { success: true }, level: "DEFAULT" }
-      event_obj = described_class.new(otel_span, otel_tracer, attributes: attrs)
+      event_obj = described_class.new(otel_span, otel_tracer, attributes: attrs, client: client)
       span_data = event_obj.otel_span.to_span_data
 
       expect(JSON.parse(span_data.attributes["langfuse.observation.input"])).to eq({ "action" => "click" })

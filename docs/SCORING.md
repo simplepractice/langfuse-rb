@@ -145,6 +145,8 @@ end
 ```
 
 This is useful when you don't have the observation ID but want to score from within the traced block.
+Inside a Langfuse observation, module-level scoring uses the client that owns that observation. That keeps
+explicit-client traces from accidentally sending scores through the singleton client.
 
 ### Scoring Active Traces
 
@@ -164,6 +166,10 @@ Langfuse.observe("user-request") do |span|
   result
 end
 ```
+
+When called from a raw OpenTelemetry span that was not created by Langfuse, module-level active scoring still
+falls back to `Langfuse.client` for this release and emits a deprecation warning. Prefer
+`client.score_active_trace` or `client.score_active_observation` for raw OTel spans so the score owner is explicit.
 
 ## Complete Examples
 

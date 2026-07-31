@@ -117,7 +117,7 @@ module Langfuse
       raise ArgumentError, "block is required" unless block
 
       output, trace_id, observation_id, task_error = execute_in_trace(run_name, run_metadata, &block)
-      Langfuse.force_flush(timeout: FLUSH_TIMEOUT)
+      @client.force_flush(timeout: FLUSH_TIMEOUT)
 
       link(trace_id: trace_id, observation_id: observation_id, run_name: run_name,
            run_description: run_description, metadata: run_metadata)
@@ -131,6 +131,7 @@ module Langfuse
     def execute_in_trace(run_name, run_metadata, &block)
       TracedExecution.call(
         trace_name: "dataset-run-#{run_name}",
+        client: @client,
         input: @input,
         metadata: run_metadata || {},
         task: block

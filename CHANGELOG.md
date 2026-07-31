@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Support multiple Langfuse clients in one process: explicit `Langfuse::Client` instances own their API client, score queue, prompt cache, and OpenTelemetry tracer provider. Observations keep their creating client for children, masking, trace URLs, scores, `force_flush`, and `shutdown` (#94)
+- `Client#observe`, `Client#start_observation`, `Client#tracer_provider`, and `Client#force_flush` as explicit-client equivalents of the module-level APIs (#94)
+
+### Changed
+- **Breaking:** clients snapshot configuration at creation. `Langfuse.configure` changes made after the singleton client is first used no longer take effect and log a warning; call `Langfuse.reset!` to apply them (#94)
+- **Breaking:** `Client#score_active_observation` and `Client#score_active_trace` raise `ArgumentError` when the active observation belongs to a different Langfuse client, instead of silently scoring across projects (#94)
+
+### Deprecated
+- `Langfuse::OtelSetup` is now a warn-once compatibility shim over the singleton client APIs; its `setup` config argument is ignored and warns when a non-global config is passed (#94)
+- `Langfuse.score_active_trace` / `Langfuse.score_active_observation` on raw (non-Langfuse) OpenTelemetry spans fall back to the singleton client with a deprecation warning; use `client.score_active_*` so the owner is explicit (#94)
+- Observation constructors without `client:` warn once and fall back to the module-level observation owner (#94)
+
 ## [0.10.1] - 2026-05-05
 
 ### Changed

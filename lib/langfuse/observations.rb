@@ -58,6 +58,46 @@ module Langfuse
   #
   # @abstract Subclass and pass type: to super to create concrete observation types
   class BaseObservation
+    CLIENT_FALLBACK_DEPRECATION =
+      "Langfuse observation constructors without client: are deprecated and will require client: " \
+      "in the next major release. SDK factories already pass the owning client."
+    private_constant :CLIENT_FALLBACK_DEPRECATION
+
+    class << self
+      # @param client [Client, NoopObservationClient, nil]
+      # @return [Client, NoopObservationClient]
+      # @api private
+      def resolve_client(client)
+        return client if client
+
+        warn_client_fallback_once
+        Langfuse.observation_client
+      end
+
+      # @return [void]
+      # @api private
+      def reset_deprecation_warnings!
+        client_fallback_warning_mutex.synchronize do
+          @client_fallback_warning_emitted = false
+        end
+      end
+
+      private
+
+      def warn_client_fallback_once
+        client_fallback_warning_mutex.synchronize do
+          return if @client_fallback_warning_emitted
+
+          Langfuse.configuration.logger.warn(CLIENT_FALLBACK_DEPRECATION)
+          @client_fallback_warning_emitted = true
+        end
+      end
+
+      def client_fallback_warning_mutex
+        @client_fallback_warning_mutex ||= Mutex.new
+      end
+    end
+
     # @return [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     attr_reader :otel_span
 
@@ -67,13 +107,18 @@ module Langfuse
     # @return [String] Observation type (e.g., "span", "generation", "event")
     attr_reader :type
 
+    # @return [Client, NoopObservationClient] Owner used for child observations, URLs, masking, and scores
+    attr_reader :client
+
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, Types::GenerationAttributes, nil] Optional initial attributes
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
     # @param type [String] Observation type (e.g., "span", "generation", "event")
-    def initialize(otel_span, otel_tracer, attributes: nil, type: nil)
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil, type: nil)
       @otel_span = otel_span
       @otel_tracer = otel_tracer
+      @client = BaseObservation.resolve_client(client)
       @type = type || raise(ArgumentError, "type must be provided")
 
       # Set initial attributes if provided
@@ -99,7 +144,7 @@ module Langfuse
     #     puts "View trace: #{obs.trace_url}"
     #   end
     def trace_url
-      Langfuse.client.trace_url(trace_id)
+      @client.trace_url(trace_id)
     end
 
     # Ends the observation span.
@@ -118,7 +163,7 @@ module Langfuse
     def update_trace(attrs)
       return self unless @otel_span.recording?
 
-      otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h, mask: Langfuse.configuration.mask)
+      otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h, mask: @client.config.mask)
       otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
       self
     end
@@ -134,7 +179,7 @@ module Langfuse
     # @return [BaseObservation, Object] The child observation (or block return value if block given)
     def start_observation(name, attrs = {}, as_type: :span, &block)
       # Skip validation so unknown types fall back to Span in the factory.
-      child = Langfuse.start_observation(
+      child = @client.start_observation(
         name,
         attrs,
         as_type: as_type,
@@ -181,7 +226,7 @@ module Langfuse
     # @param level [String] Log level (debug, default, warning, error)
     # @return [void]
     def event(name:, input: nil, level: "default")
-      masked_input = Masking.apply(input, mask: Langfuse.configuration.mask)
+      masked_input = Masking.apply(input, mask: @client.config.mask)
       attributes = {
         OtelAttributes::OBSERVATION_INPUT => masked_input&.to_json,
         OtelAttributes::OBSERVATION_LEVEL => level
@@ -204,7 +249,7 @@ module Langfuse
     # @param data_type [Symbol] one of :numeric, :boolean, :categorical
     # @return [Hash] created score data from the API
     def score_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      Langfuse.create_score(
+      @client.create_score(
         name: name,
         value: value,
         trace_id: trace_id,
@@ -228,7 +273,7 @@ module Langfuse
       attrs_hash = attrs.to_h.merge(kwargs)
 
       # Use @type instance variable set during initialization
-      otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash, mask: Langfuse.configuration.mask)
+      otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash, mask: @client.config.mask)
       otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
     end
 
@@ -254,7 +299,8 @@ module Langfuse
     def run_in_context
       parent_ctx = OpenTelemetry::Context.current
       span_ctx = OpenTelemetry::Trace.context_with_span(@otel_span, parent_context: parent_ctx)
-      OpenTelemetry::Context.with_current(span_ctx) { yield self }
+      client_ctx = ClientContext.context_with_client(@client, context: span_ctx)
+      OpenTelemetry::Context.with_current(client_ctx) { yield self }
     ensure
       safe_end
     end
@@ -286,8 +332,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:span])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:span])
     end
 
     # @param attrs [Hash, Types::SpanAttributes] Span attributes to set
@@ -356,8 +403,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::GenerationAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:generation])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:generation])
     end
 
     # @param attrs [Hash, Types::GenerationAttributes] Generation attributes to set
@@ -392,8 +440,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:event])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:event])
     end
 
     # @param attrs [Hash, Types::SpanAttributes] Event attributes to set
@@ -429,8 +478,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:agent])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:agent])
     end
 
     # @param attrs [Hash, Types::AgentAttributes] Agent attributes to set
@@ -462,8 +512,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:tool])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:tool])
     end
 
     # @param attrs [Hash, Types::ToolAttributes] Tool attributes to set
@@ -504,8 +555,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:chain])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:chain])
     end
 
     # @param attrs [Hash, Types::ChainAttributes] Chain attributes to set
@@ -540,8 +592,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:retriever])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:retriever])
     end
 
     # @param attrs [Hash, Types::RetrieverAttributes] Retriever attributes to set
@@ -576,8 +629,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:evaluator])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:evaluator])
     end
 
     # @param attrs [Hash, Types::EvaluatorAttributes] Evaluator attributes to set
@@ -612,8 +666,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::SpanAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:guardrail])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:guardrail])
     end
 
     # @param attrs [Hash, Types::GuardrailAttributes] Guardrail attributes to set
@@ -655,8 +710,9 @@ module Langfuse
     # @param otel_span [OpenTelemetry::SDK::Trace::Span] The underlying OTel span
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     # @param attributes [Hash, Types::EmbeddingAttributes, nil] Optional initial attributes
-    def initialize(otel_span, otel_tracer, attributes: nil)
-      super(otel_span, otel_tracer, attributes: attributes, type: OBSERVATION_TYPES[:embedding])
+    # @param client [Client, NoopObservationClient, nil] Owner for follow-up operations; omitting is deprecated
+    def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+      super(otel_span, otel_tracer, attributes: attributes, client: client, type: OBSERVATION_TYPES[:embedding])
     end
 
     # @param attrs [Hash, Types::EmbeddingAttributes] Embedding attributes to set

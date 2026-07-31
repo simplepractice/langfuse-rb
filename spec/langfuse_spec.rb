@@ -52,7 +52,22 @@ RSpec.describe Langfuse do
         config.secret_key = "test_sk"
       end
 
-      expect(Langfuse::OtelSetup.initialized?).to be false
+      expect(described_class.initialized_client).to be_nil
+    end
+
+    it "does not warn before the singleton client exists" do
+      expect(described_class.configuration.logger).not_to receive(:warn)
+
+      described_class.configure { |config| config.cache_ttl = 120 }
+    end
+
+    it "warns that changes are ineffective once the singleton client exists" do
+      described_class.client
+
+      expect(described_class.configuration.logger).to receive(:warn)
+        .with(/will not take effect until Langfuse.reset!/)
+
+      described_class.configure { |config| config.cache_ttl = 120 }
     end
   end
 
@@ -77,7 +92,10 @@ RSpec.describe Langfuse do
 
     it "uses the global configuration" do
       client = described_class.client
-      expect(client.config).to eq(described_class.configuration)
+      expect(client.config).not_to equal(described_class.configuration)
+      expect(client.config.public_key).to eq(described_class.configuration.public_key)
+      expect(client.config.secret_key).to eq(described_class.configuration.secret_key)
+      expect(client.config.base_url).to eq(described_class.configuration.base_url)
     end
 
     it "creates client with configured settings" do
@@ -113,7 +131,30 @@ RSpec.describe Langfuse do
       provider = described_class.tracer_provider
 
       expect(provider).to be_a(OpenTelemetry::SDK::Trace::TracerProvider)
-      expect(Langfuse::OtelSetup.tracer_provider).to equal(provider)
+      expect(described_class.client.tracer_provider).to equal(provider)
+    end
+  end
+
+  describe ".observe ownership" do
+    it "uses the singleton client as the module-level observation owner" do
+      observation = described_class.observe("test-span")
+
+      expect(observation.client).to equal(described_class.client)
+    ensure
+      observation&.end
+    end
+
+    it "uses a no-op owner when tracing configuration is incomplete" do
+      described_class.reset!
+      described_class.configure do |config|
+        config.public_key = nil
+        config.secret_key = nil
+        config.base_url = nil
+      end
+
+      observation = described_class.observe("disabled-span")
+
+      expect(observation.client).to be_a(Langfuse::NoopObservationClient)
     end
   end
 
@@ -152,6 +193,22 @@ RSpec.describe Langfuse do
       expect(described_class.instance_variable_get(:@configuration)).to be_nil
       expect(described_class.instance_variable_get(:@client)).to be_nil
     end
+
+    it "resets warning state even when client shutdown fails" do
+      client = instance_double(Langfuse::Client)
+      described_class.instance_variable_set(:@client, client)
+      allow(client).to receive(:shutdown).and_raise(StandardError)
+      allow(Langfuse::BaseObservation).to receive(:reset_deprecation_warnings!)
+      allow(Langfuse::ActiveScoring).to receive(:reset!)
+      allow(Langfuse::OtelSetup).to receive(:reset_deprecation_warning!)
+
+      described_class.reset!
+
+      expect(Langfuse::BaseObservation).to have_received(:reset_deprecation_warnings!)
+      expect(Langfuse::ActiveScoring).to have_received(:reset!)
+      expect(Langfuse::OtelSetup).to have_received(:reset_deprecation_warning!)
+      expect(described_class.instance_variable_get(:@client)).to be_nil
+    end
   end
 
   describe ".shutdown" do
@@ -163,13 +220,15 @@ RSpec.describe Langfuse do
       end
     end
 
-    it "calls OtelSetup.shutdown with timeout" do
-      expect(Langfuse::OtelSetup).to receive(:shutdown).with(timeout: 30)
+    it "calls client shutdown with timeout" do
+      client = described_class.client
+      expect(client).to receive(:shutdown).with(timeout: 30)
       described_class.shutdown
     end
 
     it "accepts custom timeout" do
-      expect(Langfuse::OtelSetup).to receive(:shutdown).with(timeout: 10)
+      client = described_class.client
+      expect(client).to receive(:shutdown).with(timeout: 10)
       described_class.shutdown(timeout: 10)
     end
   end

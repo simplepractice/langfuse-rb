@@ -8,7 +8,39 @@ This guide is about the tracing behavior the SDK actually implements today. If y
 - Child observations create nested spans inside that trace.
 - `:generation` is the right type for model calls because it carries model-specific fields like `model`, `usage_details`, and `cost_details`.
 - `:event` is a point-in-time observation with no duration.
-- `Langfuse.configure` stores configuration only. Module-level tracing uses Langfuse's internal tracer provider when tracing is ready.
+- `Langfuse.configure` stores configuration only. Module-level tracing uses the singleton client's internal tracer provider when tracing is ready.
+
+## Singleton vs Explicit Clients
+
+`Langfuse.observe(...)` is shorthand for `Langfuse.client.observe(...)`. That is the right default when your process sends traces to one Langfuse project.
+
+When one Ruby process needs multiple Langfuse projects, build explicit clients and call tracing APIs on those clients:
+
+```ruby
+project_a = Langfuse::Client.new(
+  Langfuse::Config.new do |config|
+    config.public_key = ENV["LANGFUSE_PROJECT_A_PUBLIC_KEY"]
+    config.secret_key = ENV["LANGFUSE_PROJECT_A_SECRET_KEY"]
+  end
+)
+
+project_b = Langfuse::Client.new(
+  Langfuse::Config.new do |config|
+    config.public_key = ENV["LANGFUSE_PROJECT_B_PUBLIC_KEY"]
+    config.secret_key = ENV["LANGFUSE_PROJECT_B_SECRET_KEY"]
+  end
+)
+
+project_a.observe("ingest-document") do |root|
+  root.start_observation("extract-text")
+end
+
+project_b.observe("support-answer") do |root|
+  root.start_observation("openai-chat", as_type: :generation)
+end
+```
+
+Observations keep their owner. A child created from `project_a` stays on `project_a` for tracing, masking, trace URLs, scores, flushing, and shutdown. Do not mix `Langfuse.observe` into an explicit-client trace unless you intentionally want the singleton client's project.
 
 ## Start with a Root Observation
 
@@ -217,14 +249,14 @@ This is the default behavior:
 
 - `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
 - `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
-- `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is configured
+- `Langfuse.observe(...)` uses the singleton client's internal tracer provider once tracing is configured
 - if tracing config is incomplete, module-level tracing falls back to a no-op tracer and logs one warning
 
 This is why ambient spans from some unrelated global OpenTelemetry provider are not exported to Langfuse by default.
 
 ### 2. Explicit Global Install with `Langfuse.tracer_provider`
 
-If you want Langfuse to own the global OpenTelemetry provider, install it explicitly:
+If you want the singleton Langfuse client to own the global OpenTelemetry provider, install it explicitly:
 
 ```ruby
 Langfuse.configure do |config|

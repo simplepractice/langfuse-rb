@@ -22,6 +22,7 @@ module Langfuse
   # rubocop:disable Metrics/ClassLength
   class Client
     extend Forwardable
+    include ObservationMethods
 
     # @return [Integer] Default page size when fetching all dataset items
     DATASET_ITEMS_PAGE_SIZE = 50
@@ -66,21 +67,21 @@ module Langfuse
     # @param config [Config] Configuration object
     # @return [Client]
     def initialize(config)
-      @config = config
-      @config.validate!
+      config.validate!
+      @config = config.snapshot
 
       # Create cache if enabled
       cache = create_cache if cache_enabled?
 
       # Create API client with cache
       @api_client = ApiClient.new(
-        public_key: config.public_key,
-        secret_key: config.secret_key,
-        base_url: config.base_url,
-        timeout: config.timeout,
-        logger: config.logger,
+        public_key: @config.public_key,
+        secret_key: @config.secret_key,
+        base_url: @config.base_url,
+        timeout: @config.timeout,
+        logger: @config.logger,
         cache: cache,
-        cache_observer: config.prompt_cache_observer
+        cache_observer: @config.prompt_cache_observer
       )
 
       @project_id = nil
@@ -89,7 +90,37 @@ module Langfuse
       @project_id_fetched = false
 
       # Initialize score client for batching score events
-      @score_client = ScoreClient.new(api_client: @api_client, config: config)
+      @score_client = ScoreClient.new(api_client: @api_client, config: @config)
+      @tracer_provider = nil
+      @tracer_provider_mutex = Mutex.new
+    end
+
+    # Return this client's isolated tracer provider.
+    #
+    # @return [OpenTelemetry::SDK::Trace::TracerProvider]
+    # @raise [ConfigurationError] if tracing configuration is incomplete
+    def tracer_provider
+      return @tracer_provider if @tracer_provider
+
+      @tracer_provider_mutex.synchronize do
+        @tracer_provider ||= build_tracer_provider
+      end
+    end
+
+    # Force flush pending trace spans for this client.
+    #
+    # @param timeout [Integer] timeout in seconds
+    # @return [void]
+    def force_flush(timeout: 30)
+      @tracer_provider&.force_flush(timeout: timeout)
+    end
+
+    # This client's tracer provider if one has been built, without building one.
+    #
+    # @return [OpenTelemetry::SDK::Trace::TracerProvider, nil]
+    # @api private
+    def initialized_tracer_provider
+      @tracer_provider
     end
 
     # Fetch a prompt and return the appropriate client
@@ -405,6 +436,7 @@ module Langfuse
     #     client.score_active_observation(name: "accuracy", value: 0.92)
     #   end
     def score_active_observation(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+      ensure_active_observation_owner!
       @score_client.score_active_observation(
         name: name,
         value: value,
@@ -431,6 +463,7 @@ module Langfuse
     #     client.score_active_trace(name: "overall_quality", value: 5)
     #   end
     def score_active_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+      ensure_active_observation_owner!
       @score_client.score_active_trace(
         name: name,
         value: value,
@@ -452,12 +485,16 @@ module Langfuse
       @score_client.flush
     end
 
-    # Shutdown the client and flush any pending scores
+    # Shutdown the client and flush any pending traces and scores
     #
     # Also shuts down the cache if it supports shutdown (e.g., SWR thread pool).
     #
+    # @param timeout [Integer] timeout in seconds for trace shutdown
     # @return [void]
-    def shutdown
+    def shutdown(timeout: 30)
+      provider = release_tracer_provider
+      provider&.shutdown(timeout: timeout)
+    ensure
       @score_client.shutdown
       @api_client.shutdown
     end
@@ -661,6 +698,54 @@ module Langfuse
     private
 
     attr_reader :score_client
+
+    def build_tracer_provider
+      provider = TracerProviderFactory.build(config)
+      log_tracing_initialized
+      provider
+    end
+
+    def log_tracing_initialized
+      mode = config.tracing_async ? "async" : "sync"
+      config.logger.info("Langfuse tracing initialized with OpenTelemetry (#{mode} mode)")
+    end
+
+    def release_tracer_provider
+      @tracer_provider_mutex.synchronize do
+        provider = @tracer_provider
+        @tracer_provider = nil
+        provider
+      end
+    end
+
+    def observation_tracer
+      tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION)
+    end
+
+    def observation_mask
+      config.mask
+    end
+
+    def observation_owner
+      self
+    end
+
+    def ensure_active_observation_owner!
+      active_client = ClientContext.current_client
+      return if active_client.nil? || active_client.equal?(self)
+
+      raise ArgumentError, active_owner_mismatch_message(active_client)
+    end
+
+    def active_owner_mismatch_message(active_client)
+      if active_client.is_a?(NoopObservationClient)
+        "Active Langfuse observation was created while tracing was unconfigured, so it has no real owner. " \
+          "Configure Langfuse before creating the observation, or score by explicit trace_id instead."
+      else
+        "Active Langfuse observation belongs to a different client. " \
+          "Score through the client that created it, or pass an explicit trace_id."
+      end
+    end
 
     # Build a project-scoped URL, returning nil if project ID is unavailable
     def project_url(path)

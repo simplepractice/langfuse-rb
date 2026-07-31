@@ -3,257 +3,91 @@
 require "spec_helper"
 
 RSpec.describe Langfuse::OtelSetup do
-  let(:logger) { instance_double(Logger, info: nil, debug: nil, warn: nil) }
-  let(:exporter) { OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new }
-  let(:config) do
-    Langfuse::Config.new do |c|
-      c.public_key = "pk_test_123"
-      c.secret_key = "sk_test_456"
-      c.base_url = "https://api.langfuse.test"
-      c.tracing_async = false
-      c.batch_size = 10
-      c.flush_interval = 1
-      c.logger = logger
-    end
-  end
+  let(:logger) { instance_double(Logger, info: nil, warn: nil) }
 
   before do
-    described_class.shutdown(timeout: 1) if described_class.initialized?
-    allow(described_class).to receive(:build_exporter).and_return(exporter)
+    Langfuse.reset!
+    Langfuse.configure do |config|
+      config.public_key = "pk_test"
+      config.secret_key = "sk_test"
+      config.base_url = "https://cloud.langfuse.com"
+      config.logger = logger
+    end
   end
 
   after do
-    described_class.shutdown(timeout: 1) if described_class.initialized?
+    Langfuse.reset!
   end
 
   describe ".setup" do
-    it "initializes the tracer provider" do
-      described_class.setup(config)
+    it "warns and delegates to the global tracer provider" do
+      provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider)
 
-      expect(described_class.tracer_provider).to be_a(OpenTelemetry::SDK::Trace::TracerProvider)
-      expect(described_class.initialized?).to be true
+      expect(logger).to receive(:warn).with(/Langfuse::OtelSetup is deprecated/)
+      expect(Langfuse).to receive(:tracer_provider).and_return(provider)
+
+      expect(described_class.setup).to equal(provider)
     end
 
-    it "does not mutate the global tracer provider" do
-      original_global_provider = OpenTelemetry.tracer_provider
-
-      described_class.setup(config)
-
-      expect(OpenTelemetry.tracer_provider).to eq(original_global_provider)
-    end
-
-    it "does not mutate the global propagator" do
-      original_global_propagation = OpenTelemetry.propagation
-
-      described_class.setup(config)
-
-      expect(OpenTelemetry.propagation).to eq(original_global_propagation)
-    end
-
-    it "reuses the existing provider for identical tracing config" do
-      provider = described_class.setup(config)
-
-      expect(logger).to receive(:debug).with(/reusing existing tracer provider/)
-      expect(described_class.setup(config)).to equal(provider)
-    end
-
-    it "warns and keeps the existing provider when tracing config changes" do
-      provider = described_class.setup(config)
-      config.environment = "staging"
-
-      expect(logger).to receive(:warn).with(/require Langfuse.reset!/)
-      expect(described_class.setup(config)).to equal(provider)
-    end
-
-    it "shuts down unpublished providers lost in the setup race" do
-      candidate_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider, shutdown: nil)
-      existing_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider)
-
-      allow(described_class).to receive_messages(
-        build_tracer_provider: candidate_provider,
-        publish_provider: [existing_provider, false],
-        existing_provider_for: existing_provider
-      )
-
-      expect(candidate_provider).to receive(:shutdown).with(timeout: 30)
-      expect(described_class.setup(config)).to equal(existing_provider)
-    end
-
-    it "validates should_export_span in setup" do
-      config.should_export_span = "bad"
-
-      expect { described_class.setup(config) }.to raise_error(
-        Langfuse::ConfigurationError,
-        "should_export_span must respond to #call"
-      )
-    end
-
-    context "with sample_rate below 1.0" do
-      before do
-        config.sample_rate = 0.1
+    it "warns when a non-global config argument is passed" do
+      custom_config = Langfuse::Config.new do |c|
+        c.public_key = "pk_custom"
+        c.secret_key = "sk_custom"
+        c.base_url = "https://custom.langfuse.test"
       end
 
-      it "uses TraceIdRatioBased sampler" do
-        described_class.setup(config)
+      expect(logger).to receive(:warn).with(/Langfuse::OtelSetup is deprecated/)
+      expect(logger).to receive(:warn).with(/ignores its config argument/)
 
-        expect(described_class.tracer_provider.sampler).to be_a(OpenTelemetry::SDK::Trace::Samplers::TraceIdRatioBased)
-      end
-
-      it "makes deterministic decisions for the same trace id" do
-        described_class.setup(config)
-
-        sampler = described_class.tracer_provider.sampler
-        trace_id = ["aabbccddeeff00112233445566778899"].pack("H*")
-        decision_one = sampler.should_sample?(
-          trace_id: trace_id,
-          parent_context: nil,
-          links: [],
-          name: "score",
-          kind: OpenTelemetry::Trace::SpanKind::INTERNAL,
-          attributes: {}
-        ).sampled?
-        decision_two = sampler.should_sample?(
-          trace_id: trace_id,
-          parent_context: nil,
-          links: [],
-          name: "score",
-          kind: OpenTelemetry::Trace::SpanKind::INTERNAL,
-          attributes: {}
-        ).sampled?
-
-        expect(decision_one).to eq(decision_two)
-      end
+      expect(described_class.setup(custom_config)).to equal(Langfuse.client.tracer_provider)
     end
 
-    context "with sample_rate at 1.0" do
-      before do
-        config.sample_rate = 1.0
-      end
+    it "does not warn about the config argument when the global config is passed" do
+      expect(logger).to receive(:warn).with(/Langfuse::OtelSetup is deprecated/)
+      expect(logger).not_to receive(:warn).with(/ignores its config argument/)
 
-      it "uses always-on sampling behavior" do
-        described_class.setup(config)
-
-        sampler = described_class.tracer_provider.sampler
-        decision = sampler.should_sample?(
-          trace_id: ["00112233445566778899aabbccddeeff"].pack("H*"),
-          parent_context: nil,
-          links: [],
-          name: "score",
-          kind: OpenTelemetry::Trace::SpanKind::INTERNAL,
-          attributes: {}
-        )
-
-        expect(decision.sampled?).to be(true)
-      end
+      described_class.setup(Langfuse.configuration)
     end
   end
 
-  describe ".shutdown" do
-    it "is safe before initialization" do
-      expect { described_class.shutdown(timeout: 1) }.not_to raise_error
+  describe ".tracer_provider" do
+    it "returns the current global provider without initializing one" do
+      expect(logger).to receive(:warn).with(/Langfuse::OtelSetup is deprecated/)
+
+      expect(described_class.tracer_provider).to be_nil
+      expect(Langfuse.client.initialized_tracer_provider).to be_nil
+    end
+
+    it "returns the initialized global provider" do
+      provider = Langfuse.tracer_provider
+
+      expect(described_class.tracer_provider).to equal(provider)
+    end
+  end
+
+  describe ".initialized?" do
+    it "reflects whether the global provider has been initialized" do
+      expect(described_class.initialized?).to be(false)
+
+      Langfuse.tracer_provider
+
+      expect(described_class.initialized?).to be(true)
     end
   end
 
   describe ".force_flush" do
-    it "is safe before initialization" do
-      expect { described_class.force_flush(timeout: 1) }.not_to raise_error
+    it "delegates to Langfuse.force_flush" do
+      expect(Langfuse).to receive(:force_flush).with(timeout: 2)
+
+      described_class.force_flush(timeout: 2)
     end
   end
 
-  describe "lazy module-level setup" do
-    it "does not initialize tracing during Langfuse.configure" do
-      Langfuse.configure do |c|
-        c.public_key = config.public_key
-        c.secret_key = config.secret_key
-        c.base_url = config.base_url
-        c.logger = logger
-      end
+  describe ".shutdown" do
+    it "delegates to Langfuse.shutdown" do
+      expect(Langfuse).to receive(:shutdown).with(timeout: 2)
 
-      expect(described_class.initialized?).to be false
-    end
-
-    it "raises from Langfuse.tracer_provider when tracing is not ready" do
-      Langfuse.reset!
-      Langfuse.configure do |c|
-        c.public_key = nil
-        c.secret_key = nil
-        c.base_url = nil
-        c.logger = logger
-      end
-
-      expect { Langfuse.tracer_provider }.to raise_error(
-        Langfuse::ConfigurationError,
-        /Langfuse tracing is disabled/
-      )
-    end
-
-    it "initializes once when Langfuse.tracer_provider is called concurrently" do
-      Langfuse.reset!
-      Langfuse.configure do |c|
-        c.public_key = config.public_key
-        c.secret_key = config.secret_key
-        c.base_url = config.base_url
-        c.logger = logger
-      end
-
-      providers = Queue.new
-      threads = 5.times.map do
-        Thread.new { providers << Langfuse.tracer_provider }
-      end
-      threads.each(&:join)
-
-      resolved = 5.times.map { providers.pop }
-      expect(resolved.map(&:object_id).uniq.length).to eq(1)
-    end
-  end
-
-  describe "export behavior" do
-    before do
-      Langfuse.reset!
-      Langfuse.configure do |c|
-        c.public_key = config.public_key
-        c.secret_key = config.secret_key
-        c.base_url = config.base_url
-        c.tracing_async = false
-        c.batch_size = 10
-        c.flush_interval = 1
-        c.logger = logger
-      end
-    end
-
-    it "exports Langfuse-created spans without exporting ambient global spans" do
-      OpenTelemetry.tracer_provider.tracer("dalli").start_span("cache-span").finish
-      span = Langfuse.observe("langfuse-span")
-      span.end
-      Langfuse.force_flush(timeout: 1)
-
-      expect(exporter.finished_spans.map(&:name)).to eq(["langfuse-span"])
-    end
-
-    it "exports known LLM scopes after explicit global installation" do
-      OpenTelemetry.tracer_provider = Langfuse.tracer_provider
-      OpenTelemetry.tracer_provider.tracer("langsmith.client").start_span("global-span").finish
-      Langfuse.force_flush(timeout: 1)
-
-      expect(exporter.finished_spans.map(&:name)).to eq(["global-span"])
-    end
-
-    it "allows custom filters to drop globally installed spans again" do
-      Langfuse.reset!
-      Langfuse.configure do |c|
-        c.public_key = config.public_key
-        c.secret_key = config.secret_key
-        c.base_url = config.base_url
-        c.tracing_async = false
-        c.should_export_span = ->(_span) { false }
-        c.logger = logger
-      end
-
-      OpenTelemetry.tracer_provider = Langfuse.tracer_provider
-      OpenTelemetry.tracer_provider.tracer("langsmith.client").start_span("global-span").finish
-      Langfuse.force_flush(timeout: 1)
-
-      expect(exporter.finished_spans).to be_empty
+      described_class.shutdown(timeout: 2)
     end
   end
 end

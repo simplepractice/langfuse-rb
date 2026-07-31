@@ -7,8 +7,8 @@ RSpec.describe Langfuse::BaseObservation do
   # Test subclass that passes type to super
   let(:test_subclass) do
     Class.new(Langfuse::BaseObservation) do
-      def initialize(otel_span, otel_tracer, attributes: nil)
-        super(otel_span, otel_tracer, attributes: attributes, type: "test_observation")
+      def initialize(otel_span, otel_tracer, attributes: nil, client: nil)
+        super(otel_span, otel_tracer, attributes: attributes, client: client, type: "test_observation")
       end
     end
   end
@@ -16,7 +16,8 @@ RSpec.describe Langfuse::BaseObservation do
   let(:tracer_provider) { OpenTelemetry::SDK::Trace::TracerProvider.new }
   let(:otel_tracer) { tracer_provider.tracer("test-tracer") }
   let(:otel_span) { otel_tracer.start_span("test-span") }
-  let(:observation) { test_subclass.new(otel_span, otel_tracer) }
+  let(:client) { Langfuse.client }
+  let(:observation) { test_subclass.new(otel_span, otel_tracer, client: client) }
 
   describe "#initialize" do
     it "stores otel_span and otel_tracer" do
@@ -25,14 +26,33 @@ RSpec.describe Langfuse::BaseObservation do
     end
 
     it "initializes without attributes" do
-      obs = test_subclass.new(otel_span, otel_tracer)
+      obs = test_subclass.new(otel_span, otel_tracer, client: client)
       expect(obs.otel_span).to eq(otel_span)
       expect(obs.otel_tracer).to eq(otel_tracer)
     end
 
+    it "falls back to the module observation client with one deprecation warning" do
+      logger = instance_double(Logger)
+      allow(Langfuse.configuration).to receive(:logger).and_return(logger)
+
+      expect(logger).to receive(:warn).once.with(/constructors without client: are deprecated/)
+
+      first = test_subclass.new(otel_span, otel_tracer)
+      second = test_subclass.new(otel_tracer.start_span("second"), otel_tracer)
+
+      expect(first.client).to equal(Langfuse.observation_client)
+      expect(second.client).to equal(Langfuse.observation_client)
+    end
+
+    it "does not warn when an explicit client is provided" do
+      expect(Langfuse.configuration.logger).not_to receive(:warn)
+
+      test_subclass.new(otel_span, otel_tracer, client: client)
+    end
+
     it "sets initial attributes when provided" do
       attrs = { input: { query: "test" }, output: { result: "success" } }
-      obs = test_subclass.new(otel_span, otel_tracer, attributes: attrs)
+      obs = test_subclass.new(otel_span, otel_tracer, attributes: attrs, client: client)
       span_data = obs.otel_span.to_span_data
 
       expect(JSON.parse(span_data.attributes["langfuse.observation.input"])).to eq({ "query" => "test" })
@@ -44,7 +64,7 @@ RSpec.describe Langfuse::BaseObservation do
         input: { data: "test" },
         level: "DEFAULT"
       )
-      obs = test_subclass.new(otel_span, otel_tracer, attributes: attrs)
+      obs = test_subclass.new(otel_span, otel_tracer, attributes: attrs, client: client)
       span_data = obs.otel_span.to_span_data
 
       expect(JSON.parse(span_data.attributes["langfuse.observation.input"])).to eq({ "data" => "test" })
@@ -87,12 +107,14 @@ RSpec.describe Langfuse::BaseObservation do
 
     it "raises ArgumentError if type is not provided" do
       abstract_class = Class.new(described_class)
-      expect { abstract_class.new(otel_span, otel_tracer) }.to raise_error(ArgumentError, /type must be provided/)
+      expect do
+        abstract_class.new(otel_span, otel_tracer, client: client)
+      end.to raise_error(ArgumentError, /type must be provided/)
     end
 
     it "returns the type passed to initialize" do
       abstract_class = Class.new(described_class)
-      obs = abstract_class.new(otel_span, otel_tracer, type: "custom_type")
+      obs = abstract_class.new(otel_span, otel_tracer, client: client, type: "custom_type")
 
       expect(obs.type).to eq("custom_type")
     end
@@ -321,7 +343,7 @@ RSpec.describe Langfuse::BaseObservation do
 
     it "handles different level values" do
       %w[DEBUG DEFAULT WARNING ERROR].each do |level|
-        obs = test_subclass.new(otel_tracer.start_span("test"), otel_tracer)
+        obs = test_subclass.new(otel_tracer.start_span("test"), otel_tracer, client: client)
         obs.level = level
         span_data = obs.otel_span.to_span_data
         expect(span_data.attributes["langfuse.observation.level"]).to eq(level)
@@ -618,7 +640,7 @@ RSpec.describe Langfuse::BaseObservation do
   describe "hierarchical structure" do
     it "creates nested observations" do
       parent_span = otel_tracer.start_span("parent")
-      parent_obs = Langfuse::Span.new(parent_span, otel_tracer)
+      parent_obs = Langfuse::Span.new(parent_span, otel_tracer, client: client)
 
       parent_obs.start_observation("level-1") do |span1|
         span1.start_observation("level-2") do |span2|
@@ -632,7 +654,7 @@ RSpec.describe Langfuse::BaseObservation do
 
     it "shares trace_id across nested observations" do
       parent_span = otel_tracer.start_span("parent")
-      parent_obs = Langfuse::Span.new(parent_span, otel_tracer)
+      parent_obs = Langfuse::Span.new(parent_span, otel_tracer, client: client)
       trace_id = parent_obs.trace_id
 
       child = parent_obs.start_observation("child")
@@ -646,7 +668,7 @@ RSpec.describe Langfuse::BaseObservation do
   describe "integration with real OpenTelemetry spans" do
     it "works with actual span lifecycle" do
       parent_span = otel_tracer.start_span("parent")
-      parent_obs = Langfuse::Span.new(parent_span, otel_tracer)
+      parent_obs = Langfuse::Span.new(parent_span, otel_tracer, client: client)
 
       child = parent_obs.start_observation("child-operation", { input: { data: "test" } })
       child.output = { result: "success" }
@@ -711,37 +733,43 @@ RSpec.describe Langfuse::BaseObservation do
     end
 
     it "calls client.trace_url with correct trace_id" do
-      mock_client = instance_double(Langfuse::Client)
-      allow(Langfuse).to receive(:client).and_return(mock_client)
-      trace_id = observation.trace_id
+      mock_client = instance_double(Langfuse::Client, config: Langfuse.configuration)
+      obs = test_subclass.new(otel_span, otel_tracer, client: mock_client)
+      trace_id = obs.trace_id
 
       expect(mock_client).to receive(:trace_url).with(trace_id).and_return("https://example.com/traces/#{trace_id}")
 
-      observation.trace_url
+      obs.trace_url
     end
   end
 
   describe "#score_trace" do
-    it "delegates to Langfuse.create_score with trace_id" do
-      expect(Langfuse).to receive(:create_score).with(
+    let(:mock_client) { instance_double(Langfuse::Client, config: Langfuse.configuration) }
+
+    it "delegates to the owning client with trace_id" do
+      owned_observation = test_subclass.new(otel_span, otel_tracer, client: mock_client)
+
+      expect(mock_client).to receive(:create_score).with(
         name: "quality",
         value: 0.9,
-        trace_id: observation.trace_id,
+        trace_id: owned_observation.trace_id,
         comment: "good",
         metadata: { k: "v" },
         data_type: :numeric
       )
-      observation.score_trace(
+      owned_observation.score_trace(
         name: "quality", value: 0.9,
         comment: "good", metadata: { k: "v" }
       )
     end
 
     it "defaults data_type to :numeric" do
-      expect(Langfuse).to receive(:create_score).with(
+      owned_observation = test_subclass.new(otel_span, otel_tracer, client: mock_client)
+
+      expect(mock_client).to receive(:create_score).with(
         hash_including(data_type: :numeric)
       )
-      observation.score_trace(name: "score", value: 1.0)
+      owned_observation.score_trace(name: "score", value: 1.0)
     end
   end
 

@@ -23,7 +23,7 @@ This is the part people get wrong.
 - `Langfuse.configure` stores configuration only.
 - Module-level tracing initializes lazily on first use.
 - Langfuse tracing is isolated by default.
-- `Langfuse.tracer_provider` is the explicit seam for installing Langfuse as the global OpenTelemetry provider.
+- `Langfuse.tracer_provider` returns the singleton client's provider for explicit global OpenTelemetry installation.
 - `should_export_span` only runs on spans handled by Langfuse's provider.
 - Filtering is not the fix for ambient-span overcapture. Isolation is.
 - Langfuse does not auto-configure a second OpenTelemetry backend or any multi-export pipeline for you.
@@ -49,6 +49,49 @@ OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 ```
 
 If you also want propagation or another OpenTelemetry backend, configure those in your application. Langfuse does not infer or install them.
+
+## Multiple Clients
+
+Use explicit `Langfuse::Client` instances when one Ruby process sends data to multiple Langfuse projects. The module-level APIs are only a facade over `Langfuse.client`; explicit clients own their own API client, score queue, prompt cache, and tracer provider.
+
+```ruby
+primary = Langfuse.client
+
+project_a_config = Langfuse::Config.new do |config|
+  config.public_key = ENV["LANGFUSE_PROJECT_A_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_PROJECT_A_SECRET_KEY"]
+end
+
+project_b_config = Langfuse::Config.new do |config|
+  config.public_key = ENV["LANGFUSE_PROJECT_B_PUBLIC_KEY"]
+  config.secret_key = ENV["LANGFUSE_PROJECT_B_SECRET_KEY"]
+end
+
+project_a = Langfuse::Client.new(project_a_config)
+project_b = Langfuse::Client.new(project_b_config)
+
+project_a.observe("project-a-workflow") do |root|
+  root.start_observation("project-a-child")
+end
+
+project_b.observe("project-b-workflow") do |root|
+  root.start_observation("project-b-child")
+end
+
+project_a.force_flush
+project_b.force_flush
+```
+
+The owner is sticky. A root observation created by `project_a.observe` creates children through `project_a`, uses `project_a.config.mask`, generates trace URLs through `project_a`, and scores through `project_a`. It does not fall back to `Langfuse.client`.
+
+Use lifecycle methods on the same client that created the work:
+
+```ruby
+project_a.force_flush(timeout: 10)
+project_a.shutdown(timeout: 30)
+```
+
+`Langfuse.force_flush` and `Langfuse.shutdown` apply to the singleton client only.
 
 ## All Configuration Options
 
@@ -401,12 +444,12 @@ There are three states worth documenting.
 
 - `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
 - `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
-- `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is ready
+- `Langfuse.observe(...)` uses the singleton client's internal tracer provider once tracing is ready
 - if `public_key`, `secret_key`, or `base_url` are missing, module-level tracing falls back to a no-op tracer and logs one warning
 
 ### Explicit Global Install with `Langfuse.tracer_provider`
 
-If you want Langfuse to own the global OpenTelemetry provider, install it explicitly:
+If you want the singleton Langfuse client to own the global OpenTelemetry provider, install it explicitly:
 
 ```ruby
 require "opentelemetry/trace/propagation/trace_context"

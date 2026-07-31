@@ -15,9 +15,13 @@ RSpec.describe Langfuse::Client do
       expect(client).to be_a(described_class)
     end
 
-    it "sets the config" do
+    it "snapshots the config" do
       client = described_class.new(valid_config)
-      expect(client.config).to eq(valid_config)
+      expect(client.config).not_to equal(valid_config)
+      expect(client.config).to be_frozen
+      expect(client.config.public_key).to eq(valid_config.public_key)
+      expect(client.config.secret_key).to eq(valid_config.secret_key)
+      expect(client.config.base_url).to eq(valid_config.base_url)
     end
 
     it "creates an api_client" do
@@ -2444,6 +2448,166 @@ RSpec.describe Langfuse::Client do
           client.delete_dataset_run(dataset_name: dataset_name, run_name: run_name)
         end.to raise_error(Langfuse::NotFoundError)
       end
+    end
+  end
+
+  describe "client-owned tracing" do
+    let(:client) { described_class.new(valid_config) }
+
+    after do
+      client.shutdown
+    rescue StandardError
+      nil
+    end
+
+    it "memoizes an isolated tracer provider per client" do
+      other_config = Langfuse::Config.new do |config|
+        config.public_key = "pk_other"
+        config.secret_key = "sk_other"
+        config.base_url = "https://cloud.langfuse.com"
+      end
+      other_client = described_class.new(other_config)
+
+      expect(client.tracer_provider).to equal(client.tracer_provider)
+      expect(other_client.tracer_provider).not_to equal(client.tracer_provider)
+    ensure
+      other_client&.shutdown
+    end
+
+    it "publishes only one tracer provider under concurrent first access" do
+      calls = Queue.new
+      allow(Langfuse::TracerProviderFactory).to receive(:build).and_wrap_original do |method, *args, **kwargs|
+        calls << true
+        sleep 0.01
+        method.call(*args, **kwargs)
+      end
+
+      providers = Queue.new
+      threads = 5.times.map { Thread.new { providers << client.tracer_provider } }
+      threads.each(&:join)
+
+      resolved = 5.times.map { providers.pop }
+      expect(resolved.map(&:object_id).uniq.length).to eq(1)
+      expect(calls.size).to eq(1)
+    end
+
+    it "keeps root and child observations on the explicit client" do
+      root = client.start_observation("root")
+      child = root.start_observation("child")
+
+      expect(root.client).to equal(client)
+      expect(child.client).to equal(client)
+      expect(child.trace_id).to eq(root.trace_id)
+    ensure
+      child&.end
+      root&.end
+    end
+
+    it "uses the explicit client's mask for observation attributes" do
+      Langfuse.configure { |config| config.mask = ->(data:) { "global-#{data}" } }
+      valid_config.mask = ->(data:) { "client-#{data}" }
+
+      observation = client.start_observation("masked", { input: "secret" })
+      span_data = observation.otel_span.to_span_data
+
+      expect(JSON.parse(span_data.attributes["langfuse.observation.input"])).to eq("client-secret")
+    ensure
+      observation&.end
+    end
+
+    it "snapshots API auth and base URL at construction" do
+      frozen_client = described_class.new(valid_config)
+
+      valid_config.public_key = "pk_mutated"
+      valid_config.secret_key = "sk_mutated"
+      valid_config.base_url = "https://mutated.langfuse.test"
+
+      expect(frozen_client.config).to be_frozen
+      expect(frozen_client.api_client.public_key).to eq("pk_test_123")
+      expect(frozen_client.api_client.secret_key).to eq("sk_test_456")
+      expect(frozen_client.api_client.base_url).to eq("https://cloud.langfuse.com")
+    ensure
+      frozen_client&.shutdown
+    end
+
+    it "uses the construction-time trace exporter endpoint and auth" do
+      config = Langfuse::Config.new do |c|
+        c.public_key = "pk_original"
+        c.secret_key = "sk_original"
+        c.base_url = "https://original.langfuse.test"
+        c.tracing_async = false
+        c.flush_interval = 1
+      end
+      frozen_client = described_class.new(config)
+      auth = "Basic #{Base64.strict_encode64('pk_original:sk_original')}"
+
+      config.public_key = "pk_mutated"
+      config.secret_key = "sk_mutated"
+      config.base_url = "https://mutated.langfuse.test"
+
+      stub_request(:post, "https://original.langfuse.test/api/public/otel/v1/traces")
+        .with(headers: { "Authorization" => auth })
+        .to_return(status: 200, body: "", headers: {})
+
+      observation = frozen_client.start_observation("exported")
+      observation.end
+      frozen_client.force_flush(timeout: 1)
+
+      expect(WebMock).to have_requested(:post, "https://original.langfuse.test/api/public/otel/v1/traces").once
+      expect(WebMock).not_to have_requested(:post, "https://mutated.langfuse.test/api/public/otel/v1/traces")
+    ensure
+      observation&.end if observation&.otel_span&.recording?
+      frozen_client&.shutdown
+    end
+
+    it "uses construction-time masking and trace defaults" do
+      config = Langfuse::Config.new do |c|
+        c.public_key = "pk_original"
+        c.secret_key = "sk_original"
+        c.mask = ->(data:) { "original-#{data}" }
+        c.environment = "original-env"
+        c.release = "original-release"
+        c.tracing_async = false
+      end
+      frozen_client = described_class.new(config)
+
+      config.mask = ->(data:) { "mutated-#{data}" }
+      config.environment = "mutated-env"
+      config.release = "mutated-release"
+
+      observation = frozen_client.start_observation("snapshot", { input: "secret" })
+      span_data = observation.otel_span.to_span_data
+
+      expect(JSON.parse(span_data.attributes["langfuse.observation.input"])).to eq("original-secret")
+      expect(span_data.attributes["langfuse.environment"]).to eq("original-env")
+      expect(span_data.attributes["langfuse.release"]).to eq("original-release")
+    ensure
+      observation&.end
+      frozen_client&.shutdown
+    end
+
+    it "uses the construction-time base URL for trace URLs" do
+      config = Langfuse::Config.new do |c|
+        c.public_key = "pk_original"
+        c.secret_key = "sk_original"
+        c.base_url = "https://original.langfuse.test"
+      end
+      frozen_client = described_class.new(config)
+      config.base_url = "https://mutated.langfuse.test"
+
+      stub_request(:get, "https://original.langfuse.test/api/public/projects")
+        .to_return(
+          status: 200,
+          body: { "data" => [{ "id" => "project-original" }] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      expect(frozen_client.trace_url("abc123")).to eq(
+        "https://original.langfuse.test/project/project-original/traces/abc123"
+      )
+      expect(WebMock).not_to have_requested(:get, "https://mutated.langfuse.test/api/public/projects")
+    ensure
+      frozen_client&.shutdown
     end
   end
 
