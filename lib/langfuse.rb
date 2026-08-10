@@ -405,7 +405,7 @@ module Langfuse
         if parent_span_context
           create_child_span(otel_tracer, name, parent_span_context, start_time)
         elsif trace_id
-          create_root_otel_span(otel_tracer, name, trace_id, start_time)
+          create_root_span(otel_tracer, name, trace_id, start_time)
         else
           otel_tracer.start_span(name, start_timestamp: start_time)
         end
@@ -535,7 +535,7 @@ module Langfuse
     # `TracerProvider#internal_start_span` derives root-ness from that slot alone.
     #
     # @api private
-    def create_root_otel_span(otel_tracer, name, trace_id, start_time)
+    def create_root_span(otel_tracer, name, trace_id, start_time)
       root_context = OpenTelemetry::Trace.context_with_span(OpenTelemetry::Trace::Span::INVALID)
 
       TraceId.pin_generation_to(trace_id) do
