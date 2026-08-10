@@ -952,6 +952,38 @@ client.create_score(
 )
 ```
 
+### `Client#create_score!`
+
+Create a score for a trace or observation, sent immediately instead of queued.
+
+Same parameters as `create_score`, but bypasses the in-memory batching queue
+and the trace-sampling gate, sending synchronously and raising on failure.
+Use this for a standalone score arriving out-of-band — e.g. user feedback in
+a request unrelated to the turn it's scoring — where the caller needs to know
+whether delivery succeeded in order to retry. `create_score` remains the
+right choice for scoring inline from a still-open span, where fire-and-forget
+matches how the rest of this SDK's tracing already works.
+
+**Signature:**
+
+```ruby
+create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil,
+              comment: nil, metadata: nil, environment: nil, data_type: :numeric,
+              dataset_run_id: nil, config_id: nil)
+```
+
+**Raises:** `ArgumentError` for invalid input; `UnauthorizedError` on a 401; `ApiError` for any other API failure
+
+**Example:**
+
+```ruby
+begin
+  client.create_score!(name: "thumbs_up", value: true, trace_id: trace_id, data_type: :boolean)
+rescue Langfuse::ApiError => e
+  # retry, alert, etc. — the score was not delivered
+end
+```
+
 ### `Client#score_active_observation`
 
 Score the currently active observation (from OTel context).
@@ -1005,6 +1037,7 @@ Convenience methods delegating to `Langfuse.client`:
 
 ```ruby
 Langfuse.create_score(name: "quality", value: 0.85, trace_id: "abc")
+Langfuse.create_score!(name: "quality", value: 0.85, trace_id: "abc") # sends immediately, raises on failure
 Langfuse.score_active_observation(name: "quality", value: 0.9, data_type: :numeric)
 Langfuse.score_active_trace(name: "overall", value: 5, data_type: :numeric)
 Langfuse.flush_scores

@@ -780,14 +780,20 @@ module Langfuse
 
     # Handle HTTP response for batch requests
     #
+    # Ingestion never returns a 4xx for rejected events — per the endpoint's
+    # own spec, "input errors" surface as a 200-series/207 response whose body
+    # lists them instead. That `errors` array is the only real per-event
+    # success/failure signal; HTTP status alone can't distinguish a fully
+    # accepted batch from a fully rejected one.
+    #
     # @param response [Faraday::Response] The HTTP response
     # @return [void]
     # @raise [UnauthorizedError] if status is 401
-    # @raise [ApiError] for other error statuses
+    # @raise [ApiError] for other error statuses, or if the body lists rejected events
     def handle_batch_response(response)
       case response.status
       when 200, 201, 204, 207
-        nil
+        raise_on_batch_errors(response)
       when 401
         raise UnauthorizedError, "Authentication failed. Check your API keys."
       else
@@ -796,22 +802,40 @@ module Langfuse
       end
     end
 
+    # @param response [Faraday::Response] The HTTP response
+    # @return [void]
+    # @raise [ApiError] if the response body's `errors` array is non-empty
+    def raise_on_batch_errors(response)
+      errors = Array(parse_response_body(response)["errors"])
+      return if errors.empty?
+
+      messages = errors.filter_map { |e| e["message"] || e["error"] }
+      summary = messages.empty? ? "#{errors.size} event(s) rejected" : messages.join("; ")
+      raise ApiError, "Batch send failed: #{summary}"
+    end
+
     # Extract error message from response body
     #
     # @param response [Faraday::Response] The HTTP response
     # @return [String] The error message
     def extract_error_message(response)
-      body_hash = case response.body
-                  in Hash => h then h
-                  in String => s then begin
-                    JSON.parse(s)
-                  rescue StandardError
-                    {}
-                  end
-                  else {}
-                  end
+      body_hash = parse_response_body(response)
 
       %w[message error].filter_map { |key| body_hash[key] }.first || "Unknown error"
+    end
+
+    # @param response [Faraday::Response] The HTTP response
+    # @return [Hash] The parsed JSON body, or {} if absent/unparsable
+    def parse_response_body(response)
+      case response.body
+      in Hash => h then h
+      in String => s then begin
+        JSON.parse(s)
+      rescue StandardError
+        {}
+      end
+      else {}
+      end
     end
   end
 end

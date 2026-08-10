@@ -258,6 +258,53 @@ RSpec.describe Langfuse do
     end
   end
 
+  describe ".create_score!" do
+    it "forwards the full score kwarg set to client" do
+      client = instance_double(Langfuse::Client)
+      allow(described_class).to receive(:client).and_return(client)
+
+      expect(client).to receive(:create_score!).with(
+        name: "quality",
+        value: 0.85,
+        id: "score-123",
+        trace_id: "trace-123",
+        session_id: "session-123",
+        observation_id: "observation-123",
+        comment: "High quality",
+        metadata: { source: "manual" },
+        environment: "production",
+        data_type: :numeric,
+        dataset_run_id: "run-123",
+        config_id: "cfg-123"
+      )
+
+      described_class.create_score!(
+        name: "quality",
+        value: 0.85,
+        id: "score-123",
+        trace_id: "trace-123",
+        session_id: "session-123",
+        observation_id: "observation-123",
+        comment: "High quality",
+        metadata: { source: "manual" },
+        environment: "production",
+        data_type: :numeric,
+        dataset_run_id: "run-123",
+        config_id: "cfg-123"
+      )
+    end
+
+    it "propagates errors from client#create_score! instead of swallowing them" do
+      client = instance_double(Langfuse::Client)
+      allow(described_class).to receive(:client).and_return(client)
+      allow(client).to receive(:create_score!).and_raise(Langfuse::ApiError, "Batch send failed (500): boom")
+
+      expect do
+        described_class.create_score!(name: "quality", value: 0.85, trace_id: "trace-123")
+      end.to raise_error(Langfuse::ApiError, "Batch send failed (500): boom")
+    end
+  end
+
   describe ".create_trace_id" do
     it "delegates to TraceId.create with no seed" do
       trace_id = described_class.create_trace_id

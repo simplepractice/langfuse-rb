@@ -1686,6 +1686,44 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "#create_score!" do
+    let(:client) { described_class.new(valid_config) }
+
+    before do
+      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+        .to_return(status: 200, body: "", headers: {})
+    end
+
+    it "delegates to score_client#create!" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:create!).with(
+        name: "quality",
+        value: 0.85,
+        id: nil,
+        trace_id: "abc123",
+        session_id: nil,
+        observation_id: nil,
+        comment: nil,
+        metadata: nil,
+        environment: nil,
+        data_type: :numeric,
+        dataset_run_id: nil,
+        config_id: nil
+      )
+
+      client.create_score!(name: "quality", value: 0.85, trace_id: "abc123")
+    end
+
+    it "propagates errors from score_client#create! instead of swallowing them" do
+      score_client = client.instance_variable_get(:@score_client)
+      allow(score_client).to receive(:create!).and_raise(Langfuse::ApiError, "Batch send failed (500): boom")
+
+      expect do
+        client.create_score!(name: "quality", value: 0.85, trace_id: "abc123")
+      end.to raise_error(Langfuse::ApiError, "Batch send failed (500): boom")
+    end
+  end
+
   describe "#score_active_observation" do
     let(:client) { described_class.new(valid_config) }
     let(:tracer) { OpenTelemetry.tracer_provider.tracer("test") }

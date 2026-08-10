@@ -545,6 +545,56 @@ RSpec.describe Langfuse::ScoreClient do
     end
   end
 
+  describe "#create!" do
+    it "sends the event immediately without queueing it" do
+      expect(api_client).to receive(:send_batch).with(array_including(
+                                                        hash_including(
+                                                          type: "score-create",
+                                                          body: hash_including(
+                                                            name: "quality",
+                                                            value: 0.85,
+                                                            dataType: "NUMERIC",
+                                                            traceId: "abc123"
+                                                          )
+                                                        )
+                                                      ))
+
+      score_client.create!(name: "quality", value: 0.85, trace_id: "abc123", data_type: :numeric)
+
+      expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "bypasses sampling — delivers even when the configured sample_rate would drop it" do
+      strict_config = Langfuse::Config.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+        c.base_url = "https://cloud.langfuse.com"
+        c.sample_rate = 0.0
+        c.flush_interval = 0
+        c.logger = Logger.new(StringIO.new)
+      end
+      strict_api_client = instance_double(Langfuse::ApiClient)
+      strict_client = described_class.new(api_client: strict_api_client, config: strict_config)
+
+      expect(strict_api_client).to receive(:send_batch)
+      strict_client.create!(name: "quality", value: 1.0, trace_id: "abcdef1234567890abcdef1234567890")
+    end
+
+    it "raises the ApiClient error instead of swallowing it" do
+      expect(api_client).to receive(:send_batch).and_raise(Langfuse::ApiError, "Batch send failed (500): boom")
+
+      expect do
+        score_client.create!(name: "quality", value: 0.85)
+      end.to raise_error(Langfuse::ApiError, "Batch send failed (500): boom")
+    end
+
+    it "raises ArgumentError for invalid input, same as #create" do
+      expect do
+        score_client.create!(name: nil, value: 0.85)
+      end.to raise_error(ArgumentError, "name is required")
+    end
+  end
+
   describe "#score_active_observation" do
     let(:tracer) { OpenTelemetry.tracer_provider.tracer("test") }
     let(:span) { tracer.start_span("test-span") }

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `ScoreClient#create!`, `Client#create_score!`, and `Langfuse.create_score!` — synchronous score creation that bypasses the in-memory queue and trace-sampling gate, sending immediately and raising (`UnauthorizedError`/`ApiError`) on delivery failure. For standalone scores arriving out-of-band (e.g. user feedback) where the caller needs to know the outcome to decide whether to retry, as opposed to `create`'s fire-and-forget batching.
+
 ## [0.10.1] - 2026-05-05
 
 ### Changed

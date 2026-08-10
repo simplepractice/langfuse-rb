@@ -1337,6 +1337,83 @@ RSpec.describe Langfuse::ApiClient do
 
         expect { api_client.send_batch(events) }.not_to raise_error
       end
+
+      it "handles a 207 response whose body lists no errors" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 207,
+            body: { successes: [{ id: events.first[:id], status: 201 }], errors: [] }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect { api_client.send_batch(events) }.not_to raise_error
+      end
+    end
+
+    context "with a 207 response listing rejected events" do
+      # The ingestion endpoint never returns a 4xx for rejected events — per its
+      # own spec, "input errors" surface as 200/207 with entries in the body's
+      # `errors` array instead, so that array is the only real signal.
+      it "raises ApiError even though the HTTP status is 207" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 207,
+            body: {
+              successes: [],
+              errors: [{ id: events.first[:id], status: 400, message: "name is required" }]
+            }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, /name is required/)
+      end
+
+      it "raises ApiError for a 200 status whose body still lists errors" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 200,
+            body: { successes: [], errors: [{ id: events.first[:id], status: 400, message: "boom" }] }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, /boom/)
+      end
+
+      it "joins multiple error messages" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 207,
+            body: {
+              successes: [],
+              errors: [
+                { id: events.first[:id], status: 400, message: "name is required" },
+                { id: events.last[:id], status: 400, message: "value is required" }
+              ]
+            }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, "Batch send failed: name is required; value is required")
+      end
+
+      it "falls back to a count when an error entry has no message or error field" do
+        stub_request(:post, "#{base_url}/api/public/ingestion")
+          .to_return(
+            status: 207,
+            body: { successes: [], errors: [{ id: events.first[:id], status: 400 }] }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        expect do
+          api_client.send_batch(events)
+        end.to raise_error(Langfuse::ApiError, "Batch send failed: 1 event(s) rejected")
+      end
     end
 
     context "with validation errors" do

@@ -259,6 +259,48 @@ module Langfuse
     end
     # rubocop:enable Metrics/ParameterLists
 
+    # Create a score event and send it immediately, bypassing the in-memory
+    # queue and the trace-sampling gate. See {ScoreClient#create!}.
+    #
+    # @param name [String] Score name (required)
+    # @param value [Numeric, Integer, String] Score value (type depends on data_type)
+    # @param id [String, nil] Score ID
+    # @param trace_id [String, nil] Trace ID to associate with the score
+    # @param session_id [String, nil] Session ID to associate with the score
+    # @param observation_id [String, nil] Observation ID to associate with the score
+    # @param comment [String, nil] Optional comment
+    # @param metadata [Hash, nil] Optional metadata hash
+    # @param environment [String, nil] Optional environment
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
+    # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
+    # @param config_id [String, nil] Optional score config ID
+    # @return [void]
+    # @raise [ArgumentError] if validation fails
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] if the API request fails
+    #
+    # @example
+    #   Langfuse.create_score!(name: "quality", value: 0.85, trace_id: "abc123")
+    # rubocop:disable Metrics/ParameterLists
+    def create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
+                      metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+      client.create_score!(
+        name: name,
+        value: value,
+        id: id,
+        trace_id: trace_id,
+        session_id: session_id,
+        observation_id: observation_id,
+        comment: comment,
+        metadata: metadata,
+        environment: environment,
+        data_type: data_type,
+        dataset_run_id: dataset_run_id,
+        config_id: config_id
+      )
+    end
+    # rubocop:enable Metrics/ParameterLists
+
     # Create a score for the currently active observation (from OTel span)
     #
     # Extracts observation_id and trace_id from the active OpenTelemetry span.
