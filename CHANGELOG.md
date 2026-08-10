@@ -8,8 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Mint a genuine parentless root span for `trace_id:` on `start_observation`/`observe`, instead of a synthetic never-exported parent, so traces are correctly recognized as roots by Langfuse ingestion, including the public Observations v2 API (same root cause as the still-open langfuse/langfuse#14868)
-- Preserve attributes set via `Langfuse.propagate_attributes` (and baggage) on a `trace_id:` root span, instead of silently dropping them
+- Mint a genuine parentless root span for `trace_id:` on `start_observation`/`observe`, instead of a synthetic never-exported parent, so traces are correctly recognized as roots by Langfuse ingestion, including the public Observations v2 API (same root cause as the still-open langfuse/langfuse#14868), while still preserving attributes set via `Langfuse.propagate_attributes` and baggage on the new root span
 
 ## [0.10.1] - 2026-05-05
 
