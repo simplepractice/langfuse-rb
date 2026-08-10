@@ -361,13 +361,17 @@ module Langfuse
     # Creates a new observation (root or child)
     #
     # This is the module-level factory method that creates observations of any type.
-    # It can create root observations (when parent_span_context is nil) or child
-    # observations (when parent_span_context is provided).
+    # It creates a root observation whenever no `parent_span_context` is given —
+    # with a random trace ID, or (if `trace_id` is given) one pinned to a
+    # caller-chosen trace ID. It creates a child observation whenever
+    # `parent_span_context` is given explicitly, or implicitly by calling this
+    # from within another observation's block, which sets it as the ambient
+    # OTel parent.
     #
     # @param name [String] Descriptive name for the observation
     # @param attrs [Hash, Types::SpanAttributes, Types::GenerationAttributes, nil] Observation attributes
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
-    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID to attach the observation to.
+    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID for a new root observation.
     #   Mutually exclusive with `parent_span_context`. Use {Langfuse.create_trace_id} to generate one.
     # @param parent_span_context [OpenTelemetry::Trace::SpanContext, nil] Parent span context for child observations
     # @param start_time [Time, Integer, nil] Optional start time (Time object or Unix timestamp in nanoseconds)
@@ -390,17 +394,22 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def start_observation(name, attrs = {}, as_type: :span, trace_id: nil, parent_span_context: nil,
                           start_time: nil, skip_validation: false)
-      parent_span_context = resolve_trace_context(trace_id, parent_span_context)
+      raise ArgumentError, "Cannot specify both trace_id and parent_span_context" if trace_id && parent_span_context
+
       type_str = as_type.to_s
       validate_observation_type!(as_type, type_str) unless skip_validation
 
       otel_tracer = otel_tracer()
-      otel_span = create_otel_span(
-        name: name,
-        start_time: start_time,
-        parent_span_context: parent_span_context,
-        otel_tracer: otel_tracer
-      )
+
+      otel_span =
+        if parent_span_context
+          within_parent_context(parent_span_context) { otel_tracer.start_span(name, start_timestamp: start_time) }
+        elsif trace_id
+          TraceId.pin_generation_to(trace_id) { otel_tracer.start_root_span(name, start_timestamp: start_time) }
+        else
+          otel_tracer.start_span(name, start_timestamp: start_time)
+        end
+
       apply_observation_attributes(otel_span, type_str, attrs)
 
       observation = wrap_otel_span(otel_span, type_str, otel_tracer)
@@ -415,7 +424,7 @@ module Langfuse
     # @param name [String] Descriptive name for the observation
     # @param attrs [Hash] Observation attributes (optional positional or keyword)
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
-    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID to attach the observation to.
+    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID for a new root observation.
     #   Use {Langfuse.create_trace_id} to generate one. Forwarded to {.start_observation}.
     # @param kwargs [Hash] Additional keyword arguments merged into observation attributes (e.g., input:, output:, metadata:)
     # @yield [observation] Optional block that receives the observation object
@@ -456,14 +465,6 @@ module Langfuse
     }.freeze
 
     private
-
-    # @api private
-    def resolve_trace_context(trace_id, parent_span_context)
-      return parent_span_context unless trace_id
-      raise ArgumentError, "Cannot specify both trace_id and parent_span_context" if parent_span_context
-
-      TraceId.send(:to_span_context, trace_id)
-    end
 
     # @api private
     def validate_observation_type!(as_type, type_str)
@@ -513,26 +514,15 @@ module Langfuse
       noop_tracer
     end
 
-    # Creates an OpenTelemetry span (root or child)
+    # Runs the block with a non-recording span standing in for +parent_span_context+
+    # as the active OTel context, so a span started inside becomes its child.
     #
-    # @param name [String] Span name
-    # @param start_time [Time, Integer, nil] Optional start time
-    # @param parent_span_context [OpenTelemetry::Trace::SpanContext, nil] Parent span context
-    # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
-    # @return [OpenTelemetry::SDK::Trace::Span] The created span
-    def create_otel_span(name:, otel_tracer:, start_time: nil, parent_span_context: nil)
-      if parent_span_context
-        # Create child span with parent context
-        # Create a non-recording span from the parent context to set in context
-        parent_span = OpenTelemetry::Trace.non_recording_span(parent_span_context)
-        parent_context = OpenTelemetry::Trace.context_with_span(parent_span)
-        OpenTelemetry::Context.with_current(parent_context) do
-          otel_tracer.start_span(name, start_timestamp: start_time)
-        end
-      else
-        # Create root span
-        otel_tracer.start_span(name, start_timestamp: start_time)
-      end
+    # @param parent_span_context [OpenTelemetry::Trace::SpanContext] Parent span context
+    # @return [Object] the block's return value
+    def within_parent_context(parent_span_context, &)
+      parent_span = OpenTelemetry::Trace.non_recording_span(parent_span_context)
+      parent_context = OpenTelemetry::Trace.context_with_span(parent_span)
+      OpenTelemetry::Context.with_current(parent_context, &)
     end
 
     # Wraps an OpenTelemetry span in the appropriate observation class

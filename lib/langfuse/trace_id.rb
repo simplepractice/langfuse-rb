@@ -11,6 +11,9 @@ module Langfuse
   # and score or reference traces later without having to persist the generated
   # Langfuse ID.
   #
+  # Also serves as the OpenTelemetry ID generator installed on Langfuse's
+  # TracerProvider (`id_generator: TraceId`) — see {.generate_trace_id}.
+  #
   # @example Deterministic from an external ID
   #   trace_id = Langfuse::TraceId.create(seed: "order-12345")
   #   Langfuse.observe("process-order", trace_id: trace_id) { |span| ... }
@@ -21,8 +24,9 @@ module Langfuse
   module TraceId
     TRACE_ID_PATTERN = /\A[0-9a-f]{32}\z/
     INVALID_TRACE_ID = ("0" * 32)
+    PINNED_TRACE_ID_KEY = :langfuse_pinned_trace_id
 
-    private_constant :TRACE_ID_PATTERN, :INVALID_TRACE_ID
+    private_constant :TRACE_ID_PATTERN, :INVALID_TRACE_ID, :PINNED_TRACE_ID_KEY
 
     class << self
       # Generate a W3C trace ID (32 lowercase hex chars).
@@ -45,6 +49,55 @@ module Langfuse
         Digest::SHA256.digest(validate_seed!(seed))[0, 16].unpack1("H*")
       end
 
+      # Runs the block with {.generate_trace_id} pinned to +trace_id+.
+      #
+      # Fiber-local (`Fiber[]`, Ruby 3.2+) — `Thread.current[]=` looks
+      # equivalent but doesn't inherit into a fiber spawned mid-call, which
+      # breaks under fiber-based schedulers (e.g. `async`, Falcon). Restores
+      # rather than clears the previous value, so nested calls on the same
+      # fiber stay correct.
+      #
+      # Validates before touching Fiber storage — validating inside the
+      # `ensure` would restore a captured-too-late `previous` of +nil+,
+      # clobbering an outer call's pinned trace ID.
+      #
+      # @param trace_id [String] 32-char lowercase hex trace ID
+      # @return [Object] the block's return value
+      # @raise [ArgumentError] if trace_id is invalid
+      # @api private
+      def pin_generation_to(trace_id)
+        raise ArgumentError, "Invalid trace_id: #{trace_id.inspect}" unless valid?(trace_id)
+
+        previous_trace_id = Fiber[PINNED_TRACE_ID_KEY]
+
+        # Convert a hex trace ID to the raw 16-byte form OpenTelemetry uses internally.
+        Fiber[PINNED_TRACE_ID_KEY] = [trace_id].pack("H*")
+
+        begin
+          yield
+        ensure
+          Fiber[PINNED_TRACE_ID_KEY] = previous_trace_id
+        end
+      end
+
+      # OpenTelemetry ID generator contract (see `TracerProvider.new(id_generator:)`
+      # in otel_setup.rb). OTel only ever consults this for spans with no valid
+      # parent (see `Tracer#start_root_span`); spans with a real or synthetic
+      # parent take their trace ID from that parent's context instead. Falls
+      # back to OpenTelemetry's own random generator whenever
+      # {.pin_generation_to} isn't active, so untouched root spans are
+      # unaffected.
+      #
+      # @api private
+      def generate_trace_id
+        Fiber[PINNED_TRACE_ID_KEY] || OpenTelemetry::Trace.generate_trace_id
+      end
+
+      # @api private
+      def generate_span_id
+        OpenTelemetry::Trace.generate_span_id
+      end
+
       private
 
       # @api private
@@ -63,25 +116,6 @@ module Langfuse
         return false unless trace_id.is_a?(String) && TRACE_ID_PATTERN.match?(trace_id)
 
         trace_id != INVALID_TRACE_ID
-      end
-
-      # Build a sampled OpenTelemetry SpanContext carrying the given hex trace ID.
-      #
-      # A random span_id is generated as a placeholder — only the trace_id is
-      # consumed by the child span that gets created.
-      #
-      # @api private
-      def to_span_context(trace_id)
-        raise ArgumentError, "Invalid trace_id: #{trace_id.inspect}" unless valid?(trace_id)
-
-        OpenTelemetry::Trace::SpanContext.new(
-          trace_id: [trace_id].pack("H*"),
-          span_id: OpenTelemetry::Trace.generate_span_id,
-          trace_flags: OpenTelemetry::Trace::TraceFlags::SAMPLED,
-          # Cross-SDK parity: Python uses is_remote=False (_create_remote_parent_span).
-          # Changing this would alter ParentBased sampler behavior across SDKs.
-          remote: false
-        )
       end
     end
   end

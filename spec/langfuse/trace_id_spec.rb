@@ -77,35 +77,99 @@ RSpec.describe Langfuse::TraceId do
     end
   end
 
-  describe ".to_span_context" do
-    before do
-      OpenTelemetry.tracer_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
-    end
-
-    it "returns a SpanContext carrying the provided trace ID" do
+  describe ".pin_generation_to" do
+    it "makes .generate_trace_id return the raw 16-byte form of the given trace ID for the duration of the block" do
       hex_trace_id = described_class.create(seed: "order-123")
-      ctx = described_class.send(:to_span_context, hex_trace_id)
 
-      expect(ctx).to be_a(OpenTelemetry::Trace::SpanContext)
-      expect(ctx.trace_id.unpack1("H*")).to eq(hex_trace_id)
+      described_class.pin_generation_to(hex_trace_id) do
+        expect(described_class.generate_trace_id).to eq([hex_trace_id].pack("H*"))
+      end
     end
 
-    it "sets the SAMPLED trace flag" do
-      ctx = described_class.send(:to_span_context, described_class.create(seed: "x"))
-      expect(ctx.trace_flags.sampled?).to be(true)
+    it "reverts to random trace ID generation after the block" do
+      pinned = described_class.create(seed: "x")
+      described_class.pin_generation_to(pinned) {}
+
+      after = described_class.generate_trace_id
+      expect(after.bytesize).to eq(16)
+      expect(after).not_to eq([pinned].pack("H*"))
     end
 
-    it "marks the span context as non-remote (cross-SDK parity lock)" do
-      ctx = described_class.send(:to_span_context, described_class.create(seed: "parity"))
-      expect(ctx.remote?).to be(false)
+    it "restores the previous pinned trace ID after a nested call, even if it raises" do
+      outer = described_class.create(seed: "outer")
+      inner = described_class.create(seed: "inner")
+
+      described_class.pin_generation_to(outer) do
+        expect do
+          described_class.pin_generation_to(inner) { raise "boom" }
+        end.to raise_error("boom")
+
+        expect(described_class.generate_trace_id).to eq([outer].pack("H*"))
+      end
     end
 
-    it "raises ArgumentError for an invalid trace ID" do
-      expect { described_class.send(:to_span_context, "not-valid") }.to raise_error(ArgumentError, /Invalid trace_id/)
+    it "isolates concurrent sibling fibers from each other's pinned trace ID" do
+      trace_id_a = described_class.create(seed: "fiber-a")
+      trace_id_b = described_class.create(seed: "fiber-b")
+      seen_by_a = nil
+      seen_by_b = nil
+
+      fiber_a = Fiber.new do
+        described_class.pin_generation_to(trace_id_a) do
+          Fiber.yield
+          seen_by_a = described_class.generate_trace_id
+        end
+      end
+      fiber_b = Fiber.new do
+        described_class.pin_generation_to(trace_id_b) do
+          Fiber.yield
+          seen_by_b = described_class.generate_trace_id
+        end
+      end
+
+      # Interleave: both fibers pin their trace ID, yield, then resume and
+      # read it back — a shared (non-fiber-local) store would leak b's
+      # value into a's read, or vice versa.
+      fiber_a.resume
+      fiber_b.resume
+      fiber_a.resume
+      fiber_b.resume
+
+      expect(seen_by_a).to eq([trace_id_a].pack("H*"))
+      expect(seen_by_b).to eq([trace_id_b].pack("H*"))
     end
 
-    it "raises ArgumentError for nil" do
-      expect { described_class.send(:to_span_context, nil) }.to raise_error(ArgumentError)
+    it "does not leak a child fiber's pinned trace ID back to its parent" do
+      parent_trace_id = described_class.create(seed: "parent-fiber")
+      child_trace_id = described_class.create(seed: "child-fiber")
+
+      described_class.pin_generation_to(parent_trace_id) do
+        Fiber.new do
+          described_class.pin_generation_to(child_trace_id) {}
+        end.resume
+
+        expect(described_class.generate_trace_id).to eq([parent_trace_id].pack("H*"))
+      end
+    end
+
+    it "raises ArgumentError for an invalid trace ID without running the block" do
+      ran = false
+      expect do
+        described_class.pin_generation_to("not-valid") { ran = true }
+      end.to raise_error(ArgumentError, /Invalid trace_id/)
+      expect(ran).to be(false)
+    end
+  end
+
+  describe ".generate_trace_id" do
+    it "falls back to a random trace ID when none is pinned" do
+      expect(described_class.generate_trace_id.bytesize).to eq(16)
+    end
+  end
+
+  describe ".generate_span_id" do
+    it "returns a random 8-byte span ID" do
+      expect(described_class.generate_span_id.bytesize).to eq(8)
     end
   end
 end

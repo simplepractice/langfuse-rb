@@ -412,12 +412,20 @@ RSpec.describe Langfuse do
         expect(observation.trace_id).to eq(trace_id)
       end
 
+      it "creates a genuine root span with no parent, not a phantom-parented child" do
+        trace_id = described_class.create_trace_id(seed: "root-seed")
+        observation = described_class.start_observation("root", {}, trace_id: trace_id)
+
+        expect(observation.otel_span.to_span_data.parent_span_id).to eq("\x00" * 8)
+      end
+
       it "shares the trace ID with child observations created from the root" do
         trace_id = described_class.create_trace_id(seed: "shared-seed")
         root = described_class.start_observation("root", {}, trace_id: trace_id)
         child = root.start_observation("child")
 
         expect(child.trace_id).to eq(trace_id)
+        expect(child.otel_span.to_span_data.parent_span_id).to eq(root.otel_span.context.span_id)
       end
 
       it "raises when both trace_id and parent_span_context are provided" do
