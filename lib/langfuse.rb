@@ -403,9 +403,9 @@ module Langfuse
 
       otel_span =
         if parent_span_context
-          within_parent_context(parent_span_context) { otel_tracer.start_span(name, start_timestamp: start_time) }
+          create_child_span(otel_tracer, name, parent_span_context, start_time)
         elsif trace_id
-          TraceId.pin_generation_to(trace_id) { otel_tracer.start_root_span(name, start_timestamp: start_time) }
+          create_root_otel_span(otel_tracer, name, trace_id, start_time)
         else
           otel_tracer.start_span(name, start_timestamp: start_time)
         end
@@ -514,15 +514,33 @@ module Langfuse
       noop_tracer
     end
 
-    # Runs the block with a non-recording span standing in for +parent_span_context+
-    # as the active OTel context, so a span started inside becomes its child.
+    # Starts a child span under +parent_span_context+, via a non-recording span
+    # standing in for it as the active OTel context.
     #
-    # @param parent_span_context [OpenTelemetry::Trace::SpanContext] Parent span context
-    # @return [Object] the block's return value
-    def within_parent_context(parent_span_context, &)
+    # @api private
+    def create_child_span(otel_tracer, name, parent_span_context, start_time)
       parent_span = OpenTelemetry::Trace.non_recording_span(parent_span_context)
       parent_context = OpenTelemetry::Trace.context_with_span(parent_span)
-      OpenTelemetry::Context.with_current(parent_context, &)
+      OpenTelemetry::Context.with_current(parent_context) do
+        otel_tracer.start_span(name, start_timestamp: start_time)
+      end
+    end
+
+    # Starts a genuine root span (no OTel parent, trace ID pinned to +trace_id+) while
+    # keeping the rest of the ambient OTel context intact — unlike `Tracer#start_root_span`,
+    # which forces `Context.empty` and would silently drop propagated attributes
+    # (see {Propagation.propagate_attributes}) and baggage set by an enclosing block.
+    # Overriding only the "current span" slot (via the same `context_with_span` used by
+    # {#create_child_span}) is enough to make OTel treat this as parentless, since
+    # `TracerProvider#internal_start_span` derives root-ness from that slot alone.
+    #
+    # @api private
+    def create_root_otel_span(otel_tracer, name, trace_id, start_time)
+      root_context = OpenTelemetry::Trace.context_with_span(OpenTelemetry::Trace::Span::INVALID)
+
+      TraceId.pin_generation_to(trace_id) do
+        otel_tracer.start_span(name, with_parent: root_context, start_timestamp: start_time)
+      end
     end
 
     # Wraps an OpenTelemetry span in the appropriate observation class

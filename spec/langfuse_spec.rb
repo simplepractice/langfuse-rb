@@ -428,6 +428,17 @@ RSpec.describe Langfuse do
         expect(child.otel_span.to_span_data.parent_span_id).to eq(root.otel_span.context.span_id)
       end
 
+      it "still applies attributes propagated via Langfuse.propagate_attributes" do
+        trace_id = described_class.create_trace_id(seed: "propagated-seed")
+
+        described_class.propagate_attributes(user_id: "user_123") do
+          root = described_class.start_observation("root", {}, trace_id: trace_id)
+
+          expect(root.otel_span.attributes["user.id"]).to eq("user_123")
+          expect(root.otel_span.to_span_data.parent_span_id).to eq("\x00" * 8)
+        end
+      end
+
       it "raises when both trace_id and parent_span_context are provided" do
         parent = described_class.start_observation("parent", {})
         expect do

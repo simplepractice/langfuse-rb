@@ -82,8 +82,9 @@ module Langfuse
 
       # OpenTelemetry ID generator contract (see `TracerProvider.new(id_generator:)`
       # in otel_setup.rb). OTel only ever consults this for spans with no valid
-      # parent (see `Tracer#start_root_span`); spans with a real or synthetic
-      # parent take their trace ID from that parent's context instead. Falls
+      # parent (see `Langfuse.create_root_otel_span`, which forces this by starting the span
+      # with a context whose "current span" slot is `Span::INVALID`); spans with a real
+      # or synthetic parent take their trace ID from that parent's context instead. Falls
       # back to OpenTelemetry's own random generator whenever
       # {.pin_generation_to} isn't active, so untouched root spans are
       # unaffected.
