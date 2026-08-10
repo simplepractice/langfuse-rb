@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Mint a genuine parentless root span for `trace_id:` on `start_observation`/`observe`, instead of a synthetic never-exported parent, so traces are correctly recognized as roots by Langfuse ingestion, including the public Observations v2 API (same root cause as the still-open langfuse/langfuse#14868)
+
 ## [0.10.1] - 2026-05-05
 
 ### Changed
