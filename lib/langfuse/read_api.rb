@@ -5,13 +5,13 @@ require "json"
 module Langfuse
   # Read endpoints for the current Langfuse query surface.
   #
-  # Implements the Cloud-only v2 observation and metrics reads plus the v3
-  # scores read. Mixed into {ApiClient}, whose private +request+ helper
-  # provides HTTP transport and error handling.
+  # Implements v2 observation and metrics reads plus the v3 scores read.
+  # Mixed into {ApiClient}, whose private +request+ helper provides HTTP
+  # transport and error handling.
   #
-  # @note The v2 observations and v2 metrics endpoints are only available on
-  #   Langfuse Cloud. There is no fallback to legacy endpoints because their
-  #   response and pagination semantics differ.
+  # @note The v2 observations and metrics endpoints require Langfuse v4. There
+  #   is no fallback to legacy endpoints because their response and pagination
+  #   semantics differ.
   module ReadApi
     # Ruby keyword argument -> camelCase query parameter mappings. Start-time
     # bounds are handled separately because they need ISO 8601 formatting.
@@ -19,8 +19,8 @@ module Langfuse
       trace_id: :traceId, fields: :fields, cursor: :cursor, limit: :limit,
       filter: :filter, name: :name, user_id: :userId, type: :type,
       level: :level, parent_observation_id: :parentObservationId,
-      environment: :environment, version: :version,
-      expand_metadata: :expandMetadata
+      is_root_observation: :isRootObservation, environment: :environment,
+      version: :version, expand_metadata: :expandMetadata
     }.freeze
     private_constant :OBSERVATION_QUERY_PARAMS
 
@@ -36,7 +36,7 @@ module Langfuse
 
     # List observations with cursor-based pagination and field selection
     #
-    # Delegates to +GET /api/public/v2/observations+ (Langfuse Cloud only).
+    # Delegates to +GET /api/public/v2/observations+ on Langfuse v4.
     # Returns observation rows, not reconstructed trace objects. The full
     # response envelope is preserved: +"data"+ holds the observation rows and
     # +"meta"+ holds the pagination cursor for the next page.
@@ -58,13 +58,14 @@ module Langfuse
     # @param type [String, nil] Filter by observation type (e.g. "GENERATION", "SPAN")
     # @param level [String, nil] Filter by level (e.g. "DEFAULT", "ERROR")
     # @param parent_observation_id [String, nil] Filter by parent observation ID
+    # @param is_root_observation [Boolean, nil] Filter by logical root status
     # @param environment [String, nil] Filter by environment
     # @param version [String, nil] Filter by observation version
     # @param expand_metadata [String, nil] Comma-separated metadata keys to return non-truncated
     # @return [Hash] Full response hash with "data" rows and "meta" cursor info
     # @raise [ArgumentError] if the read is unbounded (no trace_id and missing start-time bounds)
     # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] for other API errors (including non-Cloud deployments)
+    # @raise [ApiError] for other API errors (including deployments without Langfuse v4)
     #
     # @example Bounded read of recent generations
     #   page = api_client.list_observations(
@@ -79,24 +80,25 @@ module Langfuse
     def list_observations(from_start_time: nil, to_start_time: nil, trace_id: nil,
                           fields: nil, cursor: nil, limit: nil, filter: nil,
                           name: nil, user_id: nil, type: nil, level: nil,
-                          parent_observation_id: nil, environment: nil,
-                          version: nil, expand_metadata: nil)
+                          parent_observation_id: nil, is_root_observation: nil,
+                          environment: nil, version: nil, expand_metadata: nil)
       validate_bounded_observation_read!(trace_id, from_start_time, to_start_time)
       params = build_observations_params(
         from_start_time: from_start_time, to_start_time: to_start_time,
         trace_id: trace_id, fields: fields, cursor: cursor, limit: limit,
         filter: filter, name: name, user_id: user_id, type: type, level: level,
         parent_observation_id: parent_observation_id, environment: environment,
-        version: version, expand_metadata: expand_metadata
+        is_root_observation: is_root_observation, version: version,
+        expand_metadata: expand_metadata
       )
       request(:get, "/api/public/v2/observations", params: params)
     end
     # rubocop:enable Metrics/ParameterLists
 
-    # Query aggregate metrics (Langfuse Cloud only)
+    # Query aggregate metrics on Langfuse v4
     #
     # Delegates to +GET /api/public/v2/metrics+. Supports the +observations+,
-    # +scores-numeric+, and +scores-categorical+ views.
+    # +scores-numeric+, +scores-categorical+, and +scores-boolean+ views.
     #
     # @param query [Hash, String] Metrics query. A Hash is JSON-encoded into
     #   the endpoint's +query+ parameter; a pre-encoded JSON String is passed
@@ -104,7 +106,7 @@ module Langfuse
     # @return [Hash] The parsed metrics response
     # @raise [ArgumentError] if query is neither a Hash nor a String
     # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] for other API errors (including non-Cloud deployments)
+    # @raise [ApiError] for other API errors (including deployments without Langfuse v4)
     #
     # @example Count observations by name
     #   api_client.query_metrics(query: {

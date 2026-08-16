@@ -913,11 +913,10 @@ puts trace["name"]
 
 List observation rows with cursor-based pagination and field selection.
 
-> **Cloud-only.** Delegates to `GET /api/public/v2/observations`, which is only
-> available on Langfuse Cloud. There is no fallback to legacy endpoints because
-> their response and pagination semantics differ. Returns observation rows, not
-> reconstructed trace objects — group rows by `traceId` when you need trace
-> activity.
+> **Requires Langfuse v4.** Delegates to `GET /api/public/v2/observations` on
+> Langfuse Cloud projects in v4 write mode and self-hosted Langfuse v4. There is
+> no fallback to legacy endpoints because their response and pagination
+> semantics differ. Returns observation rows, not reconstructed trace objects.
 
 **Signature:**
 
@@ -941,6 +940,7 @@ list_observations(from_start_time: nil, to_start_time: nil, trace_id: nil, **fil
 | `type`                  | String                | No       | Filter by observation type (e.g. `"GENERATION"`, `"SPAN"`)                                           |
 | `level`                 | String                | No       | Filter by level (e.g. `"DEFAULT"`, `"ERROR"`)                                                        |
 | `parent_observation_id` | String                | No       | Filter by parent observation ID                                                                      |
+| `is_root_observation`   | Boolean               | No       | Filter by logical root status                                                                         |
 | `environment`           | String                | No       | Filter by environment                                                                                |
 | `version`               | String                | No       | Filter by observation version                                                                        |
 | `expand_metadata`       | String                | No       | Comma-separated metadata keys to return non-truncated                                                |
@@ -951,7 +951,7 @@ list_observations(from_start_time: nil, to_start_time: nil, trace_id: nil, **fil
 
 - `ArgumentError` if the read is unbounded (no `trace_id` and missing start-time bounds)
 - `UnauthorizedError` if authentication fails
-- `ApiError` for other API errors (including non-Cloud deployments)
+- `ApiError` for other API errors, including deployments without Langfuse v4
 
 **Examples:**
 
@@ -980,8 +980,9 @@ rows = client.list_observations(trace_id: "trace-uuid-123")["data"]
 
 Query aggregate metrics.
 
-> **Cloud-only.** Delegates to `GET /api/public/v2/metrics`. Supports the
-> `observations`, `scores-numeric`, and `scores-categorical` views.
+> **Requires Langfuse v4.** Delegates to `GET /api/public/v2/metrics`. Supports
+> the `observations`, `scores-numeric`, `scores-categorical`, and
+> `scores-boolean` views.
 
 **Signature:**
 
@@ -1001,7 +1002,7 @@ query_metrics(query:) # => Hash
 
 - `ArgumentError` if query is neither a Hash nor a String
 - `UnauthorizedError` if authentication fails
-- `ApiError` for other API errors (including non-Cloud deployments)
+- `ApiError` for other API errors, including deployments without Langfuse v4
 
 **Example:**
 

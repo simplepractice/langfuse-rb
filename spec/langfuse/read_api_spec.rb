@@ -67,7 +67,7 @@ RSpec.describe Langfuse::ReadApi do
           fromStartTime: from_time.iso8601, toStartTime: to_time.iso8601,
           fields: "core,basic,usage", cursor: "Y3Vyc29y", limit: "100",
           type: "GENERATION", userId: "user-1", name: "chat", level: "ERROR",
-          parentObservationId: "parent-1", environment: "production",
+          parentObservationId: "parent-1", isRootObservation: "true", environment: "production",
           version: "1.0", expandMetadata: "key1,key2"
         }
       end
@@ -87,7 +87,7 @@ RSpec.describe Langfuse::ReadApi do
           from_start_time: from_time, to_start_time: to_time,
           fields: "core,basic,usage", cursor: "Y3Vyc29y", limit: 100,
           type: "GENERATION", user_id: "user-1", name: "chat", level: "ERROR",
-          parent_observation_id: "parent-1", environment: "production",
+          parent_observation_id: "parent-1", is_root_observation: true, environment: "production",
           version: "1.0", expand_metadata: "key1,key2"
         )
         expect(
@@ -116,6 +116,37 @@ RSpec.describe Langfuse::ReadApi do
         expect(
           a_request(:get, "#{base_url}/api/public/v2/observations")
             .with(query: hash_including(filter: filter_json))
+        ).to have_been_made.once
+      end
+    end
+
+    context "when logical root status is false" do
+      before do
+        stub_request(:get, "#{base_url}/api/public/v2/observations")
+          .with(
+            query: {
+              fromStartTime: from_time.iso8601,
+              toStartTime: to_time.iso8601,
+              isRootObservation: "false"
+            }
+          )
+          .to_return(
+            status: 200,
+            body: observations_response.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+      end
+
+      it "preserves false in the query params" do
+        api_client.list_observations(
+          from_start_time: from_time,
+          to_start_time: to_time,
+          is_root_observation: false
+        )
+
+        expect(
+          a_request(:get, "#{base_url}/api/public/v2/observations")
+            .with(query: hash_including(isRootObservation: "false"))
         ).to have_been_made.once
       end
     end
@@ -196,7 +227,7 @@ RSpec.describe Langfuse::ReadApi do
       end
     end
 
-    context "when the endpoint is unavailable (self-hosted)" do
+    context "when Langfuse v4 is unavailable" do
       before do
         stub_request(:get, "#{base_url}/api/public/v2/observations")
           .with(query: hash_including({}))
