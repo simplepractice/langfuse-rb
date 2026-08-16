@@ -21,6 +21,12 @@ module Langfuse
   #
   # rubocop:disable Metrics/ModuleLength
   module Propagation
+    # Baggage key prefix for cross-service propagation
+    BAGGAGE_PREFIX = "langfuse_"
+
+    # Baggage key that records which Langfuse trace already owns the application root
+    LANGFUSE_TRACE_ID_BAGGAGE_KEY = "#{BAGGAGE_PREFIX}trace_id".freeze
+
     # Map of propagated attribute keys to span attribute keys
     SPAN_KEY_MAP = {
       "user_id" => OtelAttributes::TRACE_USER_ID,
@@ -34,22 +40,9 @@ module Langfuse
     }.freeze
 
     # OpenTelemetry context keys for propagated attributes
-    CONTEXT_KEYS = {
-      "user_id" => OpenTelemetry::Context.create_key("langfuse_user_id"),
-      "session_id" => OpenTelemetry::Context.create_key("langfuse_session_id"),
-      "metadata" => OpenTelemetry::Context.create_key("langfuse_metadata"),
-      "version" => OpenTelemetry::Context.create_key("langfuse_version"),
-      "tags" => OpenTelemetry::Context.create_key("langfuse_tags"),
-      "trace_name" => OpenTelemetry::Context.create_key("langfuse_trace_name"),
-      "release" => OpenTelemetry::Context.create_key("langfuse_release"),
-      "environment" => OpenTelemetry::Context.create_key("langfuse_environment")
-    }.freeze
-
-    # List of propagated attribute keys (derived from CONTEXT_KEYS)
-    PROPAGATED_ATTRIBUTES = CONTEXT_KEYS.keys.freeze
-
-    # Baggage key prefix for cross-service propagation
-    BAGGAGE_PREFIX = "langfuse_"
+    CONTEXT_KEYS = SPAN_KEY_MAP.keys.to_h do |key|
+      [key, OpenTelemetry::Context.create_key("#{BAGGAGE_PREFIX}#{key}")]
+    end.freeze
 
     # Propagate trace-level attributes to all spans created within this context.
     #
@@ -90,31 +83,24 @@ module Langfuse
                                   trace_name: nil, release: nil, environment: nil, as_baggage: false, &block)
       raise ArgumentError, "Block required" unless block
 
-      _propagate_attributes(
-        user_id: user_id,
-        session_id: session_id,
-        metadata: metadata,
-        version: version,
-        tags: tags,
-        trace_name: trace_name,
-        release: release,
-        environment: environment,
-        as_baggage: as_baggage,
-        &block
-      )
+      attributes = {
+        "user_id" => user_id, "session_id" => session_id, "metadata" => metadata,
+        "version" => version, "tags" => tags, "trace_name" => trace_name,
+        "release" => release, "environment" => environment
+      }
+      _propagate_attributes(attributes, as_baggage: as_baggage, &block)
     end
 
     # Internal implementation of propagate_attributes
     #
+    # @param attributes [Hash<String, Object>] Propagated attribute values
+    # @param as_baggage [Boolean] Whether to add the values to OpenTelemetry baggage
     # @api private
-    def self._propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil, tags: nil,
-                                   trace_name: nil, release: nil, environment: nil, as_baggage: false, &)
+    def self._propagate_attributes(attributes, as_baggage:, &)
       current_context = OpenTelemetry::Context.current
       current_span = OpenTelemetry::Trace.current_span
 
-      # Process each propagated attribute using PROPAGATED_ATTRIBUTES constant
-      PROPAGATED_ATTRIBUTES.each do |key|
-        value = binding.local_variable_get(key.to_sym)
+      attributes.each do |key, value|
         next if value.nil?
         next if key == "tags" && value.empty?
 
@@ -171,7 +157,7 @@ module Langfuse
       propagated_attributes = _extract_baggage_attributes(context)
 
       # Handle OTEL context values
-      PROPAGATED_ATTRIBUTES.each do |key|
+      SPAN_KEY_MAP.each_key do |key|
         context_key = _get_propagated_context_key(key)
         value = context.value(context_key)
 
@@ -390,6 +376,40 @@ module Langfuse
     # @api private
     def self.baggage_available?
       defined?(OpenTelemetry::Baggage)
+    end
+
+    # Get the Langfuse trace claim from OpenTelemetry baggage.
+    #
+    # @param context [OpenTelemetry::Context] Context to inspect
+    # @return [String, nil] Lowercase trace ID or nil
+    # @api private
+    def self._get_langfuse_trace_id_from_baggage(context)
+      return nil unless baggage_available?
+
+      OpenTelemetry::Baggage.values(context: context)[LANGFUSE_TRACE_ID_BAGGAGE_KEY]&.to_s&.downcase
+    rescue StandardError => e
+      Langfuse.configuration.logger.debug("Langfuse: Trace baggage read failed: #{e.message}")
+      nil
+    end
+
+    # Set the Langfuse trace claim in OpenTelemetry baggage.
+    #
+    # @param trace_id [String] Lowercase hexadecimal trace ID
+    # @param context [OpenTelemetry::Context] Context to extend
+    # @return [OpenTelemetry::Context] Context with the trace claim
+    # @api private
+    def self._set_langfuse_trace_id_in_baggage(trace_id, context:)
+      return context unless baggage_available?
+
+      normalized_trace_id = trace_id.downcase
+      return context if _get_langfuse_trace_id_from_baggage(context) == normalized_trace_id
+
+      OpenTelemetry::Baggage.set_value(
+        LANGFUSE_TRACE_ID_BAGGAGE_KEY, normalized_trace_id, context: context
+      )
+    rescue StandardError => e
+      Langfuse.configuration.logger.debug("Langfuse: Trace baggage write failed: #{e.message}")
+      context
     end
 
     # Extract propagated attributes from baggage

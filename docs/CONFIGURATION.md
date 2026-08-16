@@ -347,7 +347,7 @@ config.release = "2024.1"
 
 - **Type:** `#call` (Proc, Lambda, Method, or any object responding to `call`) or `nil`
 - **Default:** `nil` (uses Langfuse's default export filter)
-- **Description:** Controls whether an ended span handled by Langfuse's tracer provider is exported to Langfuse
+- **Description:** Controls whether a span handled by Langfuse's tracer provider is exported to Langfuse
 
 ```ruby
 config.should_export_span = lambda { |span|
@@ -357,6 +357,8 @@ config.should_export_span = lambda { |span|
 ```
 
 This callback only runs for spans processed by Langfuse's tracer provider. Under the default isolated setup, ambient spans created on some other global OpenTelemetry provider never reach this filter.
+
+The SDK can call the callback when a span starts and when the span ends. The start-time call classifies application roots. Keep the callback side-effect free. Do not require duration or other end-time fields during the start-time call.
 
 If you want shared OpenTelemetry spans to be eligible for this filter, install Langfuse explicitly:
 

@@ -540,6 +540,20 @@ RSpec.describe Langfuse do
       # We can't directly check if the observation was ended, but the block should have executed
     end
 
+    it "sets the active Langfuse trace claim in baggage" do
+      trace_id = nil
+      baggage_trace_id = nil
+
+      described_class.observe("test") do |observation|
+        trace_id = observation.trace_id
+        baggage_trace_id = Langfuse::Propagation._get_langfuse_trace_id_from_baggage(
+          OpenTelemetry::Context.current
+        )
+      end
+
+      expect(baggage_trace_id).to eq(trace_id)
+    end
+
     it "auto-ends events even without block" do
       observation = described_class.observe("test-event", {}, as_type: :event)
       expect(observation).to be_a(Langfuse::Event)

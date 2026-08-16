@@ -20,19 +20,19 @@ module Langfuse
     def self.call(trace_name:, input:, task:, metadata: {})
       trace_id = nil
       observation_id = nil
-      task_result = nil
+      output = nil
+      task_error = nil
 
-      Langfuse.observe(trace_name) do |span|
+      Langfuse.observe(trace_name, input: input, metadata: metadata) do |span|
         trace_id = span.trace_id
         observation_id = span.id
-        span.update(input: input, metadata: metadata)
         Langfuse.propagate_attributes(trace_name: trace_name, metadata: metadata) do
           yield(span, trace_id) if block_given?
-          task_result = execute_task(span, task)
+          output, task_error = execute_task(span, task)
         end
       end
 
-      [task_result.first, trace_id, observation_id, task_result.last]
+      [output, trace_id, observation_id, task_error]
     end
 
     # @api private

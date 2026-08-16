@@ -3,7 +3,7 @@
 require "spec_helper"
 
 RSpec.describe Langfuse::SpanProcessor do
-  let(:logger) { instance_double(Logger, error: nil) }
+  let(:logger) { instance_double(Logger, debug: nil, error: nil) }
   let(:exporter) { OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new }
   let(:config) do
     Langfuse::Config.new do |c|
@@ -30,6 +30,11 @@ RSpec.describe Langfuse::SpanProcessor do
     exporter.finished_spans.map(&:name)
   end
 
+  def exported_spans_by_name
+    tracer_provider.force_flush(timeout: 1)
+    exporter.finished_spans.to_h { |span| [span.name, span] }
+  end
+
   describe "#on_start" do
     it "sets configured environment and release defaults on new spans" do
       span = tracer_provider.tracer("test").start_span("test-span")
@@ -47,6 +52,61 @@ RSpec.describe Langfuse::SpanProcessor do
 
       expect(span.attributes["user.id"]).to eq("user_123")
       expect(span.attributes["session.id"]).to eq("session_abc")
+    end
+
+    it "marks only the exported parent as the application root" do
+      tracer = tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
+      parent = tracer.start_span("parent")
+      parent_context = OpenTelemetry::Trace.context_with_span(parent)
+      child = OpenTelemetry::Context.with_current(parent_context) { tracer.start_span("child") }
+
+      child.finish
+      parent.finish
+      spans = exported_spans_by_name
+
+      expect(spans.fetch("parent").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+      expect(spans.fetch("child").attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
+    end
+
+    it "marks an exported child when its parent is filtered" do
+      filtered_parent = tracer_provider.tracer("rack").start_span("request")
+      parent_context = OpenTelemetry::Trace.context_with_span(filtered_parent)
+      child = OpenTelemetry::Context.with_current(parent_context) do
+        tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span("workflow")
+      end
+
+      child.finish
+      filtered_parent.finish
+      spans = exported_spans_by_name
+
+      expect(spans).not_to have_key("request")
+      expect(spans.fetch("workflow").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+    end
+
+    it "uses the trace baggage claim to prevent a second application root" do
+      langfuse_tracer = tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
+      root = langfuse_tracer.start_span("root")
+      root_context = OpenTelemetry::Trace.context_with_span(root)
+      claimed_context = Langfuse::Propagation._set_langfuse_trace_id_in_baggage(
+        root.context.trace_id.unpack1("H*"), context: root_context
+      )
+      intermediary = OpenTelemetry::Context.with_current(claimed_context) do
+        tracer_provider.tracer("rack").start_span("intermediary")
+      end
+      intermediary_context = OpenTelemetry::Trace.context_with_span(
+        intermediary, parent_context: claimed_context
+      )
+      child = OpenTelemetry::Context.with_current(intermediary_context) do
+        langfuse_tracer.start_span("child")
+      end
+
+      child.finish
+      intermediary.finish
+      root.finish
+      spans = exported_spans_by_name
+
+      expect(spans.fetch("root").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+      expect(spans.fetch("child").attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
     end
   end
 
@@ -90,6 +150,19 @@ RSpec.describe Langfuse::SpanProcessor do
       expect(exporter.finished_spans.map(&:name)).to eq(["keep-me"])
     end
 
+    it "calls a custom filter at span start and span finish" do
+      filter = instance_double(Proc, call: true)
+      config.should_export_span = filter
+      custom_processor = described_class.new(config: config, exporter: exporter)
+      custom_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+      custom_provider.add_span_processor(custom_processor)
+
+      custom_provider.tracer("custom").start_span("span").finish
+      custom_provider.force_flush(timeout: 1)
+
+      expect(filter).to have_received(:call).twice
+    end
+
     it "logs and drops spans when should_export_span raises" do
       config.should_export_span = ->(_span) { raise "boom" }
       custom_processor = described_class.new(config: config, exporter: exporter)
@@ -102,6 +175,39 @@ RSpec.describe Langfuse::SpanProcessor do
       custom_provider.force_flush(timeout: 1)
 
       expect(exporter.finished_spans).to be_empty
+    end
+
+    it "clears application-root tracking after spans finish" do
+      tracer = tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
+      tracer.start_span("root").finish
+
+      exported_span_names
+
+      expectations = processor.instance_variable_get(:@span_export_expectation_by_id)
+      expect(expectations).to be_empty
+    end
+
+    it "keeps application-root tracking consistent across threads" do
+      tracer = tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
+      threads = 8.times.map do |index|
+        Thread.new do
+          parent = tracer.start_span("parent-#{index}")
+          parent_context = OpenTelemetry::Trace.context_with_span(parent)
+          child = OpenTelemetry::Context.with_current(parent_context) do
+            tracer.start_span("child-#{index}")
+          end
+          child.finish
+          parent.finish
+        end
+      end
+      threads.each(&:value)
+
+      spans = exported_spans_by_name
+      roots = spans.values.select { |span| span.name.start_with?("parent-") }
+      expectations = processor.instance_variable_get(:@span_export_expectation_by_id)
+
+      expect(roots).to all(satisfy { |span| span.attributes[Langfuse::OtelAttributes::IS_APP_ROOT] })
+      expect(expectations).to be_empty
     end
   end
 

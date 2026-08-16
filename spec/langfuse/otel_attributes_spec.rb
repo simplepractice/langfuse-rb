@@ -35,6 +35,7 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(described_class::VERSION).to eq("langfuse.version")
       expect(described_class::RELEASE).to eq("langfuse.release")
       expect(described_class::ENVIRONMENT).to eq("langfuse.environment")
+      expect(described_class::IS_APP_ROOT).to eq("langfuse.internal.is_app_root")
     end
   end
 

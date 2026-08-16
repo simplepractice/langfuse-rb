@@ -219,6 +219,8 @@ Direct v4 ingestion requires Langfuse Cloud or a self-hosted Langfuse v4 server.
 
 Each workflow must have one root observation. Put the overall input and output on that observation. The SDK experiment paths follow this rule.
 
+The span processor marks the first exported span after a filtered parent as an application root. A baggage trace claim prevents a second root after a filtered intermediary span.
+
 Use `Langfuse.propagate_attributes` for trace fields that must be available on child observations. The method can propagate `trace_name`, `user_id`, `session_id`, `metadata`, `tags`, `version`, `release`, and `environment`.
 
 The exporter sends each completed span once. Do not reuse an observation ID to send an update after export.
@@ -275,6 +277,8 @@ What Langfuse will not do for you:
 ## Export Filtering
 
 `config.should_export_span` is a filter on spans handled by Langfuse's provider. That is it.
+
+The SDK can call the filter when a span starts and when the span ends. The start-time call classifies application roots. End-time fields are not available during the start-time call.
 
 ```ruby
 Langfuse.configure do |config|
