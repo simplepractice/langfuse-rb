@@ -54,6 +54,7 @@ require_relative "langfuse/otel_setup"
 require_relative "langfuse/masking"
 require_relative "langfuse/otel_attributes"
 require_relative "langfuse/propagation"
+require_relative "langfuse/app_root_tracking"
 require_relative "langfuse/span_processor"
 require_relative "langfuse/observations"
 require_relative "langfuse/trace_id"
@@ -171,9 +172,13 @@ module Langfuse
     # @param metadata [Hash<String, String>, nil] Additional metadata (all values ≤200 characters)
     # @param version [String, nil] Version identifier (≤200 characters)
     # @param tags [Array<String>, nil] List of tags (each ≤200 characters)
+    # @param trace_name [String, nil] Trace name (≤200 characters)
+    # @param release [String, nil] Release identifier (≤200 characters)
+    # @param environment [String, nil] Lowercase environment identifier (≤40 characters)
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
     # @yield Block within which attributes are propagated
     # @return [Object] The result of the block
+    # @raise [ArgumentError] if no block is given
     #
     # @example Basic usage
     #   Langfuse.propagate_attributes(user_id: "user_123", session_id: "session_abc") do
@@ -201,18 +206,23 @@ module Langfuse
     #   ) do
     #     # Attributes propagate via HTTP headers
     #   end
+    # rubocop:disable Metrics/ParameterLists
     def propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil, tags: nil,
-                             as_baggage: false, &)
+                             trace_name: nil, release: nil, environment: nil, as_baggage: false, &)
       Propagation.propagate_attributes(
         user_id: user_id,
         session_id: session_id,
         metadata: metadata,
         version: version,
         tags: tags,
+        trace_name: trace_name,
+        release: release,
+        environment: environment,
         as_baggage: as_baggage,
         &
       )
     end
+    # rubocop:enable Metrics/ParameterLists
 
     # Create a score event and queue it for batching
     #

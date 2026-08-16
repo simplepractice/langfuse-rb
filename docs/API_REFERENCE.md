@@ -138,7 +138,7 @@ OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 
 ### Span Filter Helpers
 
-These public helpers are useful when composing `should_export_span` callbacks. The callback receives ended spans handled by Langfuse's provider.
+These public helpers are useful when composing `should_export_span` callbacks. The callback receives each finished span handled by Langfuse's provider.
 
 #### `Langfuse.default_export_span?`
 
@@ -1524,7 +1524,9 @@ Propagate attributes to all spans created within the block.
 **Signature:**
 
 ```ruby
-propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil, tags: nil, as_baggage: false) { ... }
+propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
+                     tags: nil, trace_name: nil, release: nil, environment: nil,
+                     as_baggage: false) { ... }
 ```
 
 **Parameters:**
@@ -1536,6 +1538,9 @@ propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
 | `metadata`   | Hash<String, String> | No       | Metadata hash                              |
 | `version`    | String               | No       | Version (≤200 chars)                       |
 | `tags`       | Array<String>        | No       | Tags array (each ≤200 chars)               |
+| `trace_name` | String               | No       | Trace name (≤200 chars)                    |
+| `release`    | String               | No       | Release identifier (≤200 chars)            |
+| `environment` | String              | No       | Lowercase environment identifier (≤40 chars) |
 | `as_baggage` | Boolean              | No       | Propagate across services via OTel baggage |
 
 **Example:**
@@ -1546,7 +1551,10 @@ Langfuse.propagate_attributes(
   session_id: "session_456",
   metadata: { env: "production" },
   version: "v1.0",
-  tags: ["api", "v2"]
+  tags: ["api", "v2"],
+  trace_name: "api-request",
+  release: "release-123",
+  environment: "production"
 ) do
   # All observations here inherit these attributes
   Langfuse.observe("operation") { ... }

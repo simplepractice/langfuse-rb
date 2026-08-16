@@ -254,6 +254,7 @@ module Langfuse
     def run_in_context
       parent_ctx = OpenTelemetry::Context.current
       span_ctx = OpenTelemetry::Trace.context_with_span(@otel_span, parent_context: parent_ctx)
+      span_ctx = Propagation._set_langfuse_trace_id_in_baggage(trace_id, context: span_ctx)
       OpenTelemetry::Context.with_current(span_ctx) { yield self }
     ensure
       safe_end

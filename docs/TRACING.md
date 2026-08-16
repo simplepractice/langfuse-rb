@@ -182,8 +182,12 @@ end
 What that means:
 
 - `trace_id:` joins the same trace
-- the job creates a new root observation inside that trace
+- the job creates a new application root inside that trace
 - this is usually enough for consumer workflows
+
+A trace ID does not contain a parent observation ID or an existing root claim. Separate jobs that use only the same `trace_id:` can therefore create multiple application roots. Propagate the full OpenTelemetry parent context when one observation tree must continue across services.
+
+Use separate traces and a shared `session_id` when jobs are related but each job is a self-contained unit of work.
 
 If you need true parent-child continuation across process or service boundaries, that is host-application OpenTelemetry context propagation work. Langfuse does not do that wiring for you automatically.
 
@@ -201,13 +205,31 @@ end
 
 Good use cases:
 
-- retries that should land on the same logical trace
-- linking traces to a durable application record
-- async workflows where a later worker needs to rejoin the trace
+- assigning one workflow trace to a durable application record
+- regenerating the same trace ID for scores or reads
+- matching an external trace ID at the first application entry point
+
+Do not reuse a trace ID as a replacement for parent context. Each disjoint observation tree can become an application root.
 
 Do not use secrets or raw PII as seeds.
 
 ## OpenTelemetry Integration
+
+### Direct v4 Ingestion
+
+The SDK sends completed spans to `/api/public/otel/v1/traces`. The exporter uses Basic Authentication and gzip compression.
+
+The exporter also sends `x-langfuse-ingestion-version: 4`. This header selects the direct Langfuse v4 ingestion path. The SDK does not send a second legacy event.
+
+Direct v4 ingestion requires Langfuse Cloud or a self-hosted Langfuse v4 server. Pin `langfuse` to `0.10.1` to restore the previous ingestion header behavior during rollback.
+
+Each workflow must have one root observation. Put the overall input and output on that observation. The SDK experiment paths follow this rule.
+
+The span processor marks the first exported span after a filtered parent as an application root. A baggage trace claim prevents a second root after a filtered intermediary span.
+
+Use `Langfuse.propagate_attributes` for trace fields that must be available on child observations. The method can propagate `trace_name`, `user_id`, `session_id`, `metadata`, `tags`, `version`, `release`, and `environment`.
+
+The exporter sends each completed span once. Do not reuse an observation ID to send an update after export.
 
 There are three states. Keep them separate in your head or you will misconfigure this.
 
@@ -261,6 +283,10 @@ What Langfuse will not do for you:
 ## Export Filtering
 
 `config.should_export_span` is a filter on spans handled by Langfuse's provider. That is it.
+
+The SDK calls the filter once after each span finishes. The callback can use the span's final attributes.
+
+The processor can defer a finished span while an ancestor span remains active. This delay prevents a provisional application root from reaching Langfuse. Finish each ancestor before you expect `flush` to export the deferred span.
 
 ```ruby
 Langfuse.configure do |config|
