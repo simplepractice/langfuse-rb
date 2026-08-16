@@ -909,6 +909,114 @@ trace = client.get_trace("trace-uuid-123")
 puts trace["name"]
 ```
 
+### `Client#list_observations`
+
+List observation rows with cursor-based pagination and field selection.
+
+> **Requires Langfuse v4.** Delegates to `GET /api/public/v2/observations` on
+> Langfuse Cloud projects in v4 write mode and self-hosted Langfuse v4. There is
+> no fallback to legacy endpoints because their response and pagination
+> semantics differ. Returns observation rows, not reconstructed trace objects.
+
+**Signature:**
+
+```ruby
+list_observations(from_start_time: nil, to_start_time: nil, trace_id: nil, **filters) # => Hash
+```
+
+**Parameters:**
+
+| Parameter               | Type                  | Required | Description                                                                                          |
+| ----------------------- | --------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `from_start_time`       | Time, String          | Yes*     | Inclusive lower bound on observation start time. *Required unless `trace_id` is provided.            |
+| `to_start_time`         | Time, String          | Yes*     | Exclusive upper bound on observation start time. *Required unless `trace_id` is provided.            |
+| `trace_id`              | String                | No       | Filter by trace ID                                                                                   |
+| `fields`                | String                | No       | Comma-separated field groups: `core`, `basic`, `time`, `io`, `metadata`, `model`, `usage`, `prompt`, `metrics`, `trace_context` |
+| `cursor`                | String                | No       | Cursor from the previous response's `meta` for the next page                                         |
+| `limit`                 | Integer               | No       | Items per page (max 1000, default 50)                                                                |
+| `filter`                | String                | No       | JSON string with structured filter conditions (takes precedence over individual filters)             |
+| `name`                  | String                | No       | Filter by observation name                                                                           |
+| `user_id`               | String                | No       | Filter by user ID                                                                                    |
+| `type`                  | String                | No       | Filter by observation type (e.g. `"GENERATION"`, `"SPAN"`)                                           |
+| `level`                 | String                | No       | Filter by level (e.g. `"DEFAULT"`, `"ERROR"`)                                                        |
+| `parent_observation_id` | String                | No       | Filter by parent observation ID                                                                      |
+| `is_root_observation`   | Boolean               | No       | Filter by logical root status                                                                         |
+| `environment`           | Array<String>         | No       | Filter by one or more environments                                                                   |
+| `session_id`            | String                | No       | Filter by session ID                                                                                  |
+| `version`               | String                | No       | Filter by observation version                                                                        |
+| `expand_metadata`       | String                | No       | Comma-separated metadata keys to return non-truncated                                                |
+
+**Returns:** `Hash` with `"data"` (observation rows) and `"meta"` (pagination cursor)
+
+**Raises:**
+
+- `ArgumentError` if the read is unbounded (no `trace_id` and missing start-time bounds)
+- `UnauthorizedError` if authentication fails
+- `ApiError` for other API errors, including deployments without Langfuse v4
+
+**Examples:**
+
+```ruby
+# Bounded read of recent generations
+page = client.list_observations(
+  from_start_time: Time.now - 3600,
+  to_start_time: Time.now,
+  type: "GENERATION",
+  fields: "core,basic,usage"
+)
+page["data"].each { |obs| puts obs["id"] }
+
+# Next page via cursor
+next_page = client.list_observations(
+  from_start_time: Time.now - 3600,
+  to_start_time: Time.now,
+  cursor: page.dig("meta", "cursor")
+)
+
+# All observations for one trace
+rows = client.list_observations(trace_id: "trace-uuid-123")["data"]
+```
+
+### `Client#query_metrics`
+
+Query aggregate metrics.
+
+> **Requires Langfuse v4.** Delegates to `GET /api/public/v2/metrics`. Supports
+> the `observations`, `scores-numeric`, `scores-categorical`, and
+> `scores-boolean` views.
+
+**Signature:**
+
+```ruby
+query_metrics(query:) # => Hash
+```
+
+**Parameters:**
+
+| Parameter | Type         | Required | Description                                                                                |
+| --------- | ------------ | -------- | ------------------------------------------------------------------------------------------ |
+| `query`   | Hash, String | Yes      | Metrics query. A Hash is JSON-encoded; a pre-encoded JSON String is passed through as-is.  |
+
+**Returns:** `Hash` of metrics results
+
+**Raises:**
+
+- `ArgumentError` if query is neither a Hash nor a String
+- `UnauthorizedError` if authentication fails
+- `ApiError` for other API errors, including deployments without Langfuse v4
+
+**Example:**
+
+```ruby
+result = client.query_metrics(query: {
+  view: "observations",
+  metrics: [{ measure: "count", aggregation: "count" }],
+  dimensions: [{ field: "name" }],
+  fromTimestamp: "2026-07-01T00:00:00Z",
+  toTimestamp: "2026-07-02T00:00:00Z"
+})
+```
+
 ## Scoring
 
 ### `Client#create_score`
@@ -1049,6 +1157,62 @@ Langfuse.flush_scores
 ```
 
 See [SCORING.md](SCORING.md) for complete guide.
+
+### `Client#list_scores`
+
+List scores with polymorphic values via the v3 scores API.
+
+**Signature:**
+
+```ruby
+list_scores(**filters) # => Hash
+```
+
+**Parameters:**
+
+| Parameter        | Type         | Required | Description                                                                                     |
+| ---------------- | ------------ | -------- | ------------------------------------------------------------------------------------------------ |
+| `limit`          | Integer      | No       | Items per page (max 100, default 50)                                                             |
+| `cursor`         | String       | No       | Cursor from the previous response's `meta` for the next page                                      |
+| `fields`         | String       | No       | Comma-separated field groups in addition to core: `details`, `subject`, `annotation`             |
+| `id`             | String       | No       | Comma-separated score IDs                                                                        |
+| `name`           | String       | No       | Comma-separated score names                                                                      |
+| `source`         | String       | No       | Comma-separated sources (e.g. `API`, `ANNOTATION`, `EVAL`)                                       |
+| `data_type`      | String       | No       | Comma-separated data types: `NUMERIC`, `BOOLEAN`, `CATEGORICAL`, `TEXT`, `CORRECTION`            |
+| `environment`    | String       | No       | Comma-separated environments                                                                     |
+| `config_id`      | String       | No       | Comma-separated score config IDs                                                                 |
+| `queue_id`       | String       | No       | Comma-separated annotation queue IDs                                                             |
+| `author_user_id` | String       | No       | Comma-separated author user IDs                                                                  |
+| `value`          | String       | No       | Comma-separated exact values (requires a single `NUMERIC`, `BOOLEAN`, or `CATEGORICAL` data type) |
+| `value_min`      | Numeric      | No       | Inclusive lower bound (requires `data_type: "NUMERIC"`)                                          |
+| `value_max`      | Numeric      | No       | Inclusive upper bound (requires `data_type: "NUMERIC"`)                                          |
+| `trace_id`       | String       | No       | Comma-separated trace IDs (mutually exclusive with `session_id`, `experiment_id`)                |
+| `session_id`     | String       | No       | Comma-separated session IDs                                                                      |
+| `observation_id` | String       | No       | Comma-separated observation IDs (requires `trace_id`)                                            |
+| `experiment_id`  | String       | No       | Comma-separated dataset run (experiment) IDs                                                     |
+| `from_timestamp` | Time, String | No       | Inclusive lower bound on score timestamp                                                         |
+| `to_timestamp`   | Time, String | No       | Exclusive upper bound on score timestamp                                                         |
+
+**Returns:** `Hash` with `"data"` (score rows) and `"meta"` (pagination cursor). Score
+values are polymorphic by `dataType`: `NUMERIC` scores return numbers, `BOOLEAN`
+scores return booleans, and `CATEGORICAL`, `TEXT`, and `CORRECTION` scores return
+strings.
+
+**Raises:**
+
+- `UnauthorizedError` if authentication fails
+- `ApiError` for other API errors
+
+**Examples:**
+
+```ruby
+# Scores for a trace
+page = client.list_scores(trace_id: "trace-uuid-123")
+
+# Corrections with subject details
+corrections = client.list_scores(data_type: "CORRECTION", fields: "subject,details")
+corrections["data"].each { |score| puts score["value"] }
+```
 
 ## Datasets
 
