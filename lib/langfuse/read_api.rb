@@ -95,7 +95,12 @@ module Langfuse
         is_root_observation: is_root_observation, session_id: session_id,
         version: version, expand_metadata: expand_metadata
       )
-      request(:get, "/api/public/v2/observations", params: params)
+      request(
+        :get,
+        "/api/public/v2/observations",
+        params: params,
+        params_encoder: Faraday::FlatParamsEncoder
+      )
     end
     # rubocop:enable Metrics/ParameterLists
 

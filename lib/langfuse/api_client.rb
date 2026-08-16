@@ -641,10 +641,14 @@ module Langfuse
     # @param path [String] Request path
     # @param params [Hash, nil] Query string params (GET/DELETE)
     # @param body [Hash, nil] JSON body (POST/PATCH)
+    # @param params_encoder [Object, nil] Faraday query encoder for this request
     # @return [Hash] Parsed response body
-    def request(verb, path, params: nil, body: nil)
+    def request(verb, path, params: nil, body: nil, params_encoder: nil)
       with_faraday_error_handling do
-        handle_response(connection.public_send(verb, path, body || params))
+        response = connection.public_send(verb, path, body || params) do |faraday_request|
+          faraday_request.options.params_encoder = params_encoder if params_encoder
+        end
+        handle_response(response)
       end
     end
 

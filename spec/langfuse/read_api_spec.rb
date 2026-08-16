@@ -76,13 +76,16 @@ RSpec.describe Langfuse::ReadApi do
           fields: "core,basic,usage", cursor: "Y3Vyc29y", limit: "100",
           type: "GENERATION", userId: "user-1", name: "chat", level: "ERROR",
           parentObservationId: "parent-1", isRootObservation: "true",
-          environment: %w[production staging], sessionId: "session-1",
-          version: "1.0", expandMetadata: "key1,key2"
+          sessionId: "session-1", version: "1.0", expandMetadata: "key1,key2"
         }
       end
 
       before do
-        stub_json_get("/api/public/v2/observations", query: query, body: observations_response)
+        stub_json_get(
+          "/api/public/v2/observations",
+          query: hash_including(query),
+          body: observations_response
+        )
       end
 
       it "maps snake_case keywords to camelCase query params" do
@@ -95,8 +98,36 @@ RSpec.describe Langfuse::ReadApi do
           version: "1.0", expand_metadata: "key1,key2"
         )
         expect(
-          a_request(:get, "#{base_url}/api/public/v2/observations").with(query: query)
+          a_request(:get, "#{base_url}/api/public/v2/observations")
+            .with(query: hash_including(query))
         ).to have_been_made.once
+      end
+
+      it "encodes environments as repeated query keys" do
+        captured_query = nil
+        stubs = Faraday::Adapter::Test::Stubs.new
+        stubs.get("/api/public/v2/observations") do |request|
+          captured_query = request.url.query
+          [200, { "Content-Type" => "application/json" }, observations_response.to_json]
+        end
+        connection = Faraday.new(base_url) do |faraday|
+          faraday.response :json, content_type: /\bjson$/
+          faraday.adapter :test, stubs
+        end
+        allow(api_client).to receive(:connection).and_return(connection)
+
+        api_client.list_observations(
+          from_start_time: from_time,
+          to_start_time: to_time,
+          environment: %w[production staging]
+        )
+
+        environment_pairs = URI.decode_www_form(captured_query)
+                               .select { |key, _value| key.start_with?("environment") }
+
+        expect(environment_pairs).to eq(
+          [%w[environment production], %w[environment staging]]
+        )
       end
     end
 
