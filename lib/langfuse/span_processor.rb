@@ -134,7 +134,7 @@ module Langfuse
     end
 
     def copy_with_app_root(span, mark_root)
-      attributes = span.attributes
+      attributes = span.attributes || {}
       return span if (attributes[OtelAttributes::IS_APP_ROOT] == true) == mark_root
 
       copied_attributes = attributes.dup

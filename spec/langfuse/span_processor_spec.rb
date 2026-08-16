@@ -220,6 +220,20 @@ RSpec.describe Langfuse::SpanProcessor do
       expect(exported_span_names).to eq(["known-scope-span"])
     end
 
+    it "marks an attribute-free known instrumentor span as the root" do
+      config.environment = nil
+      config.release = nil
+      custom_processor = described_class.new(config: config, exporter: exporter)
+      custom_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+      custom_provider.add_span_processor(custom_processor)
+
+      custom_provider.tracer("langsmith.client").start_span("attribute-free-span").finish
+      custom_provider.force_flush(timeout: 1)
+      exported_span = exporter.finished_spans.fetch(0)
+
+      expect(exported_span.attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+    end
+
     it "uses a custom should_export_span filter" do
       config.should_export_span = ->(span) { span.name.start_with?("keep") }
       custom_processor = described_class.new(config: config, exporter: exporter)
