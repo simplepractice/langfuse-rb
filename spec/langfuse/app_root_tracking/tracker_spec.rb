@@ -20,7 +20,7 @@ RSpec.describe Langfuse::AppRootTracking::Tracker do
     span_id = OpenTelemetry::Trace.generate_span_id
     span = build_span(span_id: span_id)
 
-    tracker.remember(span, trace_claimed: true, app_root_eligible: true)
+    tracker.remember(span, trace_claimed: true, untracked_parent_root_eligible: true)
 
     ready_spans = tracker.finish(span, exportable: true)
 
@@ -31,7 +31,7 @@ RSpec.describe Langfuse::AppRootTracking::Tracker do
   it "releases a finished span without children" do
     span_id = OpenTelemetry::Trace.generate_span_id
     span = build_span(span_id: span_id)
-    tracker.remember(span, trace_claimed: false, app_root_eligible: true)
+    tracker.remember(span, trace_claimed: false, untracked_parent_root_eligible: true)
 
     tracker.finish(span, exportable: true)
 
@@ -49,8 +49,8 @@ RSpec.describe Langfuse::AppRootTracking::Tracker do
     child_id = OpenTelemetry::Trace.generate_span_id
     parent = build_span(span_id: parent_id)
     child = build_span(span_id: child_id, parent_span_id: parent_id)
-    tracker.remember(parent, trace_claimed: false, app_root_eligible: true)
-    tracker.remember(child, trace_claimed: false, app_root_eligible: true)
+    tracker.remember(parent, trace_claimed: false, untracked_parent_root_eligible: true)
+    tracker.remember(child, trace_claimed: false, untracked_parent_root_eligible: true)
 
     tracker.finish(parent, exportable: true)
 
@@ -66,8 +66,8 @@ RSpec.describe Langfuse::AppRootTracking::Tracker do
     child_id = OpenTelemetry::Trace.generate_span_id
     parent = build_span(span_id: parent_id)
     child = build_span(span_id: child_id, parent_span_id: parent_id)
-    tracker.remember(parent, trace_claimed: false, app_root_eligible: true)
-    tracker.remember(child, trace_claimed: false, app_root_eligible: true)
+    tracker.remember(parent, trace_claimed: false, untracked_parent_root_eligible: true)
+    tracker.remember(child, trace_claimed: false, untracked_parent_root_eligible: true)
 
     expect(tracker.finish(child, exportable: true)).to be_empty
 
@@ -80,12 +80,29 @@ RSpec.describe Langfuse::AppRootTracking::Tracker do
     )
   end
 
-  it "does not mark an ineligible span as an application root" do
+  it "does not mark an ineligible span with an untracked parent as an application root" do
     span = build_span(span_id: OpenTelemetry::Trace.generate_span_id)
-    tracker.remember(span, trace_claimed: false, app_root_eligible: false)
+    tracker.remember(span, trace_claimed: false, untracked_parent_root_eligible: false)
 
     ready_span = tracker.finish(span, exportable: true).fetch(0)
 
     expect(ready_span.app_root).to be(false)
+  end
+
+  it "marks an otherwise-ineligible child when its tracked parent is filtered" do
+    parent_id = OpenTelemetry::Trace.generate_span_id
+    parent = build_span(span_id: parent_id)
+    child = build_span(
+      span_id: OpenTelemetry::Trace.generate_span_id,
+      parent_span_id: parent_id
+    )
+    tracker.remember(parent, trace_claimed: false, untracked_parent_root_eligible: true)
+    tracker.remember(child, trace_claimed: false, untracked_parent_root_eligible: false)
+
+    expect(tracker.finish(child, exportable: true)).to be_empty
+    ready_span = tracker.finish(parent, exportable: false).fetch(0)
+
+    expect(ready_span.span).to be(child)
+    expect(ready_span.app_root).to be(true)
   end
 end

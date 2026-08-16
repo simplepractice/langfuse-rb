@@ -10,15 +10,15 @@ module Langfuse
     ].freeze
     private_constant :APP_ROOT_INELIGIBLE_SPANS
 
-    # Return whether an exported span can be an application root.
+    # Return whether an exported span can be an application root when its parent is untracked.
     #
-    # LiteLLM emits `raw_gen_ai_request` as an internal child span. It must not
-    # become a second application root when its parent has already finished.
+    # LiteLLM can emit `raw_gen_ai_request` after its exported parent finishes.
+    # The late child must not become a second application root.
     #
     # @param span [OpenTelemetry::SDK::Trace::Span] Span to inspect
     # @return [Boolean] Whether the span can be an application root
     # @api private
-    def self.eligible?(span)
+    def self.eligible_without_tracked_parent?(span)
       return true if span.parent_span_id == OpenTelemetry::Trace::INVALID_SPAN_ID
 
       identity = [span.instrumentation_scope&.name, span.name]
@@ -35,7 +35,7 @@ module Langfuse
       State = Struct.new(
         :span,
         :trace_claimed,
-        :app_root_eligible,
+        :untracked_parent_root_eligible,
         :parent_span_id,
         :active_child_count,
         :finished,
@@ -52,16 +52,16 @@ module Langfuse
 
       # @param span [OpenTelemetry::SDK::Trace::Span] The active span
       # @param trace_claimed [Boolean] Whether propagated context already owns the root
-      # @param app_root_eligible [Boolean] Whether the span can be an application root
+      # @param untracked_parent_root_eligible [Boolean] Whether an untracked parent permits a root
       # @return [void]
-      def remember(span, trace_claimed:, app_root_eligible:)
+      def remember(span, trace_claimed:, untracked_parent_root_eligible:)
         @mutex.synchronize do
           parent_state = @state_by_span_id[span.parent_span_id]
           parent_state.active_child_count += 1 if parent_state
           @state_by_span_id[span.context.span_id] = build_state(
             span,
             trace_claimed: trace_claimed,
-            app_root_eligible: app_root_eligible
+            untracked_parent_root_eligible: untracked_parent_root_eligible
           )
         end
       end
@@ -91,11 +91,11 @@ module Langfuse
 
       private
 
-      def build_state(span, trace_claimed:, app_root_eligible:)
+      def build_state(span, trace_claimed:, untracked_parent_root_eligible:)
         State.new(
           span: span,
           trace_claimed: trace_claimed,
-          app_root_eligible: app_root_eligible,
+          untracked_parent_root_eligible: untracked_parent_root_eligible,
           parent_span_id: span.parent_span_id,
           active_child_count: 0,
           finished: false,
@@ -117,16 +117,18 @@ module Langfuse
       end
 
       def app_root_status(state)
-        return false unless state.app_root_eligible
-
         trace_claimed = state.trace_claimed
         parent_span_id = state.parent_span_id
-        while (parent_state = @state_by_span_id[parent_span_id])
+        parent_state = @state_by_span_id[parent_span_id]
+        return false unless parent_state || state.untracked_parent_root_eligible
+
+        while parent_state
           return nil unless parent_state.finished
           return false if parent_state.exportable
 
           trace_claimed = parent_state.trace_claimed
           parent_span_id = parent_state.parent_span_id
+          parent_state = @state_by_span_id[parent_span_id]
         end
         !trace_claimed
       end

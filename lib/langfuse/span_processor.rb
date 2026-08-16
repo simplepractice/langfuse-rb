@@ -95,7 +95,7 @@ module Langfuse
       @app_root_tracker.remember(
         span,
         trace_claimed: trace_claimed,
-        app_root_eligible: AppRootTracking.eligible?(span)
+        untracked_parent_root_eligible: AppRootTracking.eligible_without_tracked_parent?(span)
       )
     rescue StandardError => e
       @logger.error(
