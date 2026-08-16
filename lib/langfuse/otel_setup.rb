@@ -33,7 +33,7 @@ module Langfuse
       # @param config [Langfuse::Config] The Langfuse configuration
       # @return [OpenTelemetry::SDK::Trace::TracerProvider]
       def setup(config)
-        validate_tracing_config!(config)
+        config.validate_tracing!
         return existing_provider_for(config) if initialized?
 
         candidate_provider = nil
@@ -154,31 +154,12 @@ module Langfuse
         config.logger.info("Langfuse tracing initialized with OpenTelemetry (#{mode} mode)")
       end
 
-      def validate_tracing_config!(config)
-        raise ConfigurationError, "public_key is required" if blank?(config.public_key)
-        raise ConfigurationError, "secret_key is required" if blank?(config.secret_key)
-        raise ConfigurationError, "base_url cannot be empty" if blank?(config.base_url)
-
-        validate_callable!(config.should_export_span, "should_export_span")
-        validate_callable!(config.mask_otel_spans, "mask_otel_spans")
-      end
-
-      def validate_callable!(value, name)
-        return if value.nil? || value.respond_to?(:call)
-
-        raise ConfigurationError, "#{name} must respond to #call"
-      end
-
       def tracing_config_snapshot(config)
         TRACING_CONFIG_FIELDS.to_h { |field| [field, config.public_send(field)] }.freeze
       end
 
       def setup_mutex
         @setup_mutex ||= Mutex.new
-      end
-
-      def blank?(value)
-        value.nil? || value.empty?
       end
 
       def build_headers(public_key, secret_key)

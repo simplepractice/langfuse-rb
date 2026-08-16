@@ -669,12 +669,18 @@ Langfuse.client
 # => Raises Langfuse::ConfigurationError: "public_key is required"
 ```
 
+Validation fails before the client or tracing processor starts. Invalid values raise `Langfuse::ConfigurationError`.
+
 Validation rules:
 
-- `public_key` must be present
-- `secret_key` must be present
+- `public_key`, `secret_key`, and `base_url` must be non-empty string-like values
+- `batch_size` must be a positive Integer
+- `flush_interval`, `timeout`, `cache_max_size`, `cache_lock_timeout`, and `cache_refresh_threads` must be positive numbers
+- `cache_ttl` must be a non-negative number
+- `cache_stale_ttl` must be a non-negative number or `:indefinite`
+- `sample_rate` must be between `0.0` and `1.0`
 - `cache_backend` must be `:memory`, `:rails`, or `:auto`
-- If `:rails` is selected, or `:auto` resolves to `:rails`, Rails and `Rails.cache` must be available
+- If `:rails` is selected while caching is enabled, Rails and `Rails.cache` must be available
 - `prompt_cache_observer` must respond to `#call` (if set)
 - `should_export_span` must respond to `#call` (if set)
 - `mask` must respond to `#call` (if set)

@@ -115,7 +115,7 @@ module Langfuse
     # Return Langfuse's internal tracer provider for explicit global OpenTelemetry installation.
     #
     # @return [OpenTelemetry::SDK::Trace::TracerProvider]
-    # @raise [ConfigurationError] if tracing is not fully configured
+    # @raise [ConfigurationError] if tracing configuration is invalid
     #
     # @example
     #   Langfuse.configure do |config|
@@ -125,13 +125,10 @@ module Langfuse
     #
     #   OpenTelemetry.tracer_provider = Langfuse.tracer_provider
     def tracer_provider
-      unless tracing_config_ready?
-        raise ConfigurationError,
-              "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
-      end
-
       OtelSetup.setup(configuration) unless OtelSetup.initialized?
       OtelSetup.tracer_provider
+    rescue ConfigurationError => e
+      raise ConfigurationError, tracing_disabled_message(e.message)
     end
 
     # Shutdown Langfuse and flush any pending traces and scores
@@ -563,7 +560,6 @@ module Langfuse
     def otel_tracer
       return tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION) if setup_tracing_if_ready
 
-      warn_tracing_disabled_once
       noop_tracer
     end
 
@@ -601,37 +597,29 @@ module Langfuse
       observation_class.new(otel_span, otel_tracer, attributes: attributes)
     end
 
-    # rubocop:disable Naming/PredicateMethod
     def setup_tracing_if_ready
       return true if OtelSetup.initialized?
-      return false unless tracing_config_ready?
 
       OtelSetup.setup(configuration)
       true
-    end
-    # rubocop:enable Naming/PredicateMethod
-
-    def tracing_config_ready?
-      configured?(configuration.public_key) &&
-        configured?(configuration.secret_key) &&
-        configured?(configuration.base_url)
+    rescue ConfigurationError => e
+      warn_tracing_disabled_once(e.message)
+      false
     end
 
-    def configured?(value)
-      !value.nil? && !value.empty?
-    end
-
-    def warn_tracing_disabled_once
+    def warn_tracing_disabled_once(detail)
       return if @tracing_disabled_warning_emitted
 
       tracing_warning_mutex.synchronize do
         return if @tracing_disabled_warning_emitted
 
-        configuration.logger.warn(
-          "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
-        )
+        configuration.logger.warn(tracing_disabled_message(detail))
         @tracing_disabled_warning_emitted = true
       end
+    end
+
+    def tracing_disabled_message(detail)
+      "Langfuse tracing is disabled: #{detail}"
     end
 
     def tracing_warning_mutex

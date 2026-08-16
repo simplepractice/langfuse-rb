@@ -88,6 +88,26 @@ RSpec.describe Langfuse::OtelSetup do
       )
     end
 
+    it "rejects invalid batch_size before building the span processor" do
+      config.batch_size = "abc"
+      Langfuse.configuration = config
+
+      expect(described_class).not_to receive(:build_tracer_provider)
+      expect { Langfuse.tracer_provider }.to raise_error(
+        Langfuse::ConfigurationError,
+        /batch_size/
+      )
+    end
+
+    it "validates mask_otel_spans in setup" do
+      config.mask_otel_spans = "bad"
+
+      expect { described_class.setup(config) }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask_otel_spans must respond to #call"
+      )
+    end
+
     context "with sample_rate below 1.0" do
       before do
         config.sample_rate = 0.1

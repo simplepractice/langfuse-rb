@@ -20,6 +20,14 @@ module Langfuse
 
     GENERATION_MEMO_TTL_SECONDS = 1.0
 
+    # Check whether Rails has a configured cache store.
+    #
+    # @api private
+    # @return [Boolean]
+    def self.available?
+      !!(defined?(Rails) && Rails.respond_to?(:cache) && !Rails.cache.nil?)
+    end
+
     # @return [Integer] Time-to-live in seconds
     attr_reader :ttl
 
@@ -416,7 +424,7 @@ module Langfuse
     # @raise [ConfigurationError] if Rails.cache is not available
     # @return [void]
     def validate_rails_cache!
-      return if defined?(Rails) && Rails.respond_to?(:cache)
+      return if self.class.available?
 
       raise ConfigurationError,
             "Rails.cache is not available. Rails cache backend requires Rails with a configured cache store."

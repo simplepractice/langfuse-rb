@@ -193,30 +193,26 @@ module Langfuse
     #
     # @raise [ConfigurationError] if configuration is invalid
     # @return [void]
-    # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def validate!
-      raise ConfigurationError, "public_key is required" if public_key.nil? || public_key.empty?
-      raise ConfigurationError, "secret_key is required" if secret_key.nil? || secret_key.empty?
-      raise ConfigurationError, "base_url cannot be empty" if base_url.nil? || base_url.empty?
-      raise ConfigurationError, "timeout must be positive" if timeout.nil? || timeout <= 0
-      raise ConfigurationError, "cache_ttl must be non-negative" if cache_ttl.nil? || cache_ttl.negative?
-      raise ConfigurationError, "cache_max_size must be positive" if cache_max_size.nil? || cache_max_size <= 0
-
-      if cache_lock_timeout.nil? || cache_lock_timeout <= 0
-        raise ConfigurationError,
-              "cache_lock_timeout must be positive"
-      end
-
-      validate_swr_config!
-
-      validate_cache_backend!
+      validate_connection_settings!
+      validate_batching_settings!
       validate_sample_rate!
-      validate_callable!(prompt_cache_observer, "prompt_cache_observer")
+      validate_client_settings!
+      validate_callables!
+    end
+
+    # Validate only settings consumed by tracing setup and export.
+    #
+    # @api private
+    # @raise [ConfigurationError] if tracing configuration is invalid
+    # @return [void]
+    def validate_tracing!
+      validate_connection_settings!
+      validate_batching_settings!
+      validate_sample_rate!
       validate_callable!(should_export_span, "should_export_span")
-      validate_callable!(mask, "mask")
       validate_callable!(mask_otel_spans, "mask_otel_spans")
     end
-    # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     # Normalize stale_ttl value
     #
@@ -263,12 +259,68 @@ module Langfuse
       @mask_otel_spans = nil
     end
 
+    def validate_connection_settings!
+      validate_required_string!("public_key", public_key)
+      validate_required_string!("secret_key", secret_key)
+      validate_required_string!("base_url", base_url, empty_message: "base_url cannot be empty")
+    end
+
+    def validate_batching_settings!
+      unless batch_size.is_a?(Integer) && batch_size.positive?
+        raise ConfigurationError, "batch_size must be a positive Integer"
+      end
+
+      validate_positive_number!("flush_interval", flush_interval)
+    end
+
+    def validate_client_settings!
+      validate_positive_number!("timeout", timeout)
+      validate_non_negative_number!("cache_ttl", cache_ttl)
+      validate_positive_number!("cache_max_size", cache_max_size)
+      validate_positive_number!("cache_lock_timeout", cache_lock_timeout)
+      validate_swr_config!
+      validate_cache_backend!
+    end
+
+    def validate_callables!
+      validate_callable!(prompt_cache_observer, "prompt_cache_observer")
+      validate_callable!(mask, "mask")
+      validate_callable!(mask_otel_spans, "mask_otel_spans")
+      validate_callable!(should_export_span, "should_export_span")
+    end
+
+    def validate_required_string!(name, value, empty_message: "#{name} is required")
+      raise ConfigurationError, empty_message if value.nil?
+
+      raise ConfigurationError, "#{name} must be a String" unless value.respond_to?(:to_str)
+
+      raise ConfigurationError, empty_message if value.to_str.empty?
+    end
+
+    def validate_positive_number!(name, value)
+      return if value.is_a?(Numeric) && value.positive?
+
+      raise ConfigurationError, "#{name} must be positive"
+    end
+
+    def validate_non_negative_number!(name, value)
+      return if value.is_a?(Numeric) && !value.negative?
+
+      raise ConfigurationError, "#{name} must be non-negative"
+    end
+
     def validate_cache_backend!
       valid_backends = %i[memory rails auto]
-      return if valid_backends.include?(cache_backend)
+      unless valid_backends.include?(cache_backend)
+        raise ConfigurationError,
+              "cache_backend must be one of #{valid_backends.inspect}, got #{cache_backend.inspect}"
+      end
+
+      return unless cache_backend == :rails && cache_ttl.positive?
+      return if RailsCacheAdapter.available?
 
       raise ConfigurationError,
-            "cache_backend must be one of #{valid_backends.inspect}, got #{cache_backend.inspect}"
+            "Rails.cache is not available. Rails cache backend requires Rails with a configured cache store."
     end
 
     def validate_callable!(value, name)
@@ -296,17 +348,15 @@ module Langfuse
               "cache_stale_ttl must be non-negative or :indefinite"
       end
 
-      # Validate numeric values are non-negative
-      return unless cache_stale_ttl.is_a?(Integer) && cache_stale_ttl.negative?
+      return if cache_stale_ttl == :indefinite
+      return if cache_stale_ttl.is_a?(Numeric) && !cache_stale_ttl.negative?
 
       raise ConfigurationError,
             "cache_stale_ttl must be non-negative or :indefinite"
     end
 
     def validate_refresh_threads!
-      return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
-
-      raise ConfigurationError, "cache_refresh_threads must be positive"
+      validate_positive_number!("cache_refresh_threads", cache_refresh_threads)
     end
 
     def validate_sample_rate!

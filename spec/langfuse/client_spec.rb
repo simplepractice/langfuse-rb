@@ -32,6 +32,16 @@ RSpec.describe Langfuse::Client do
       end.to raise_error(Langfuse::ConfigurationError)
     end
 
+    it "rejects invalid batching before constructing ScoreClient" do
+      valid_config.batch_size = nil
+
+      expect(Langfuse::ScoreClient).not_to receive(:new)
+      expect { described_class.new(valid_config) }.to raise_error(
+        Langfuse::ConfigurationError,
+        "batch_size must be a positive Integer"
+      )
+    end
+
     context "with caching enabled" do
       let(:config_with_cache) do
         Langfuse::Config.new do |config|

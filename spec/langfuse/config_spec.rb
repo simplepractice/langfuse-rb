@@ -209,6 +209,55 @@ RSpec.describe Langfuse::Config do
           "timeout must be positive"
         )
       end
+
+      it "raises ConfigurationError when the value is a String" do
+        config.timeout = "5"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "timeout must be positive"
+        )
+      end
+    end
+
+    context "when connection settings have invalid types" do
+      it "reports a present non-string public key as a type error" do
+        config.public_key = 123
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "public_key must be a String"
+        )
+      end
+
+      it "accepts a string-like public key" do
+        string_like_key = Object.new
+        def string_like_key.to_str = "pk_test"
+
+        config.public_key = string_like_key
+
+        expect { config.validate! }.not_to raise_error
+      end
+    end
+
+    context "when batching settings are invalid" do
+      it "raises ConfigurationError when batch_size is a String" do
+        config.batch_size = "50"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "batch_size must be a positive Integer"
+        )
+      end
+
+      it "raises ConfigurationError when flush_interval is nil" do
+        config.flush_interval = nil
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "flush_interval must be positive"
+        )
+      end
     end
 
     context "when should_export_span is invalid" do
@@ -254,6 +303,15 @@ RSpec.describe Langfuse::Config do
         config.cache_ttl = 300
         expect { config.validate! }.not_to raise_error
       end
+
+      it "raises ConfigurationError when the value is a Symbol" do
+        config.cache_ttl = :sixty
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_ttl must be non-negative"
+        )
+      end
     end
 
     context "when cache_max_size is invalid" do
@@ -296,9 +354,23 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.not_to raise_error
       end
 
-      it "allows :rails backend" do
+      it "allows :rails backend when Rails.cache is available" do
+        rails_class = Class.new do
+          def self.cache = Object.new
+        end
+        stub_const("Rails", rails_class)
         config.cache_backend = :rails
+
         expect { config.validate! }.not_to raise_error
+      end
+
+      it "rejects :rails backend when Rails.cache is unavailable" do
+        config.cache_backend = :rails
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          /Rails\.cache is not available/
+        )
       end
 
       it "allows :auto backend" do
@@ -319,6 +391,26 @@ RSpec.describe Langfuse::Config do
       it "allows callable observers" do
         config.prompt_cache_observer = ->(_event, _payload) {}
         expect { config.validate! }.not_to raise_error
+      end
+    end
+
+    context "when masking callables are invalid" do
+      it "rejects a non-callable creation-time mask" do
+        config.mask = "not callable"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "mask must respond to #call"
+        )
+      end
+
+      it "rejects a non-callable export-stage mask" do
+        config.mask_otel_spans = "not callable"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "mask_otel_spans must respond to #call"
+        )
       end
     end
 
@@ -386,6 +478,15 @@ RSpec.describe Langfuse::Config do
         config.cache_stale_ttl = :indefinite
         expect { config.validate! }.not_to raise_error
       end
+
+      it "raises ConfigurationError when the value is a String" do
+        config.cache_stale_ttl = "300"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_stale_ttl must be non-negative or :indefinite"
+        )
+      end
     end
 
     context "when cache_refresh_threads is invalid" do
@@ -417,6 +518,15 @@ RSpec.describe Langfuse::Config do
         config.cache_refresh_threads = 5
         expect { config.validate! }.not_to raise_error
       end
+
+      it "raises ConfigurationError when the value is a Symbol" do
+        config.cache_refresh_threads = :many
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_refresh_threads must be positive"
+        )
+      end
     end
 
     context "when validating stale-while-revalidate with cache backend" do
@@ -429,8 +539,8 @@ RSpec.describe Langfuse::Config do
         )
       end
 
-      it "allows SWR with Rails cache backend" do
-        config.cache_backend = :rails
+      it "allows SWR with auto cache backend" do
+        config.cache_backend = :auto
         config.cache_stale_while_revalidate = true
         expect { config.validate! }.not_to raise_error
       end
@@ -441,8 +551,8 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.not_to raise_error
       end
 
-      it "allows SWR disabled with Rails cache backend" do
-        config.cache_backend = :rails
+      it "allows SWR disabled with auto cache backend" do
+        config.cache_backend = :auto
         config.cache_stale_while_revalidate = false
         expect { config.validate! }.not_to raise_error
       end
@@ -452,6 +562,39 @@ RSpec.describe Langfuse::Config do
         config.cache_stale_while_revalidate = false
         expect { config.validate! }.not_to raise_error
       end
+    end
+  end
+
+  describe "#validate_tracing!" do
+    let(:config) do
+      described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+      end
+    end
+
+    it "does not validate client-only cache settings" do
+      config.cache_backend = :unknown
+
+      expect { config.validate_tracing! }.not_to raise_error
+    end
+
+    it "validates shared batching settings" do
+      config.batch_size = nil
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "batch_size must be a positive Integer"
+      )
+    end
+
+    it "validates export-stage masking" do
+      config.mask_otel_spans = "not callable"
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask_otel_spans must respond to #call"
+      )
     end
   end
 
@@ -624,6 +767,13 @@ RSpec.describe Langfuse::Config do
   end
 
   describe "stale-while-revalidate integration" do
+    before do
+      rails_class = Class.new do
+        def self.cache = Object.new
+      end
+      stub_const("Rails", rails_class)
+    end
+
     it "works with all configuration options together" do
       config = described_class.new do |c|
         c.public_key = "pk_test"
