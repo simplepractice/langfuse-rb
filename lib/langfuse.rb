@@ -646,10 +646,10 @@ module Langfuse
     def warn_tracing_disabled_once(detail)
       return if @tracing_disabled_warning_emitted
 
-      tracing_warning_mutex.synchronize do
+      warning_mutex.synchronize do
         return if @tracing_disabled_warning_emitted
 
-        configuration.logger.warn(tracing_disabled_message(detail))
+        warning_logger.warn(tracing_disabled_message(detail))
         @tracing_disabled_warning_emitted = true
       end
     end
@@ -657,24 +657,28 @@ module Langfuse
     def warn_invalid_configuration_once(detail)
       return if @invalid_configuration_warning_emitted
 
-      tracing_warning_mutex.synchronize do
+      warning_mutex.synchronize do
         return if @invalid_configuration_warning_emitted
 
-        readiness_logger.warn("Langfuse configuration is invalid: #{detail}")
+        warning_logger.warn("Langfuse configuration is invalid: #{detail}")
         @invalid_configuration_warning_emitted = true
       end
     end
 
-    def readiness_logger
-      @configuration&.logger || (@readiness_logger ||= Logger.new($stdout, level: Logger::WARN))
+    # Both warning paths fire precisely when configuration is known-bad, which
+    # includes the case where building it raises. Reading `configuration` here
+    # would re-raise and escape the rescue that called us, so use the memoized
+    # object only if it already exists.
+    def warning_logger
+      @configuration&.logger || (@fallback_logger ||= Logger.new($stdout, level: Logger::WARN))
     end
 
     def tracing_disabled_message(detail)
       "Langfuse tracing is disabled: #{detail}"
     end
 
-    def tracing_warning_mutex
-      @tracing_warning_mutex ||= Mutex.new
+    def warning_mutex
+      @warning_mutex ||= Mutex.new
     end
 
     def noop_tracer

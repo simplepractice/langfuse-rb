@@ -611,6 +611,18 @@ RSpec.describe Langfuse do
       expect(second.otel_span.recording?).to be(false)
     end
 
+    it "uses a no-op tracer when configuration construction itself fails" do
+      described_class.reset!
+      ENV["LANGFUSE_SAMPLE_RATE"] = "invalid"
+      allow(RSpec.configuration.test_logger).to receive(:warn)
+
+      observation = nil
+      expect { observation = described_class.observe("construction-failure") }.not_to raise_error
+      expect(observation.otel_span.recording?).to be(false)
+    ensure
+      ENV.delete("LANGFUSE_SAMPLE_RATE")
+    end
+
     it "creates and returns observation without block" do
       observation = described_class.observe("test", input: { data: "test" })
       expect(observation).to be_a(Langfuse::Span)
