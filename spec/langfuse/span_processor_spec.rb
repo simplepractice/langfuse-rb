@@ -343,6 +343,17 @@ RSpec.describe Langfuse::SpanProcessor do
       expect(exporter.finished_spans).to be_empty
     end
 
+    it "logs and drops a span when application-root tracking fails" do
+      app_root_tracker = processor.instance_variable_get(:@app_root_tracker)
+      allow(app_root_tracker).to receive(:remember).and_raise("boom")
+      expect(logger).to receive(:error).with(/span will not export/)
+
+      tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span("drop-me").finish
+      tracer_provider.force_flush(timeout: 1)
+
+      expect(exporter.finished_spans).to be_empty
+    end
+
     it "clears application-root tracking after spans finish" do
       tracer = tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
       tracer.start_span("root").finish

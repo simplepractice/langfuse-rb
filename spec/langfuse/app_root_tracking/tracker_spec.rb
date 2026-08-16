@@ -38,6 +38,12 @@ RSpec.describe Langfuse::AppRootTracking::Tracker do
     expect(tracker).to be_empty
   end
 
+  it "does not classify a span that has no tracking state" do
+    span = build_span(span_id: OpenTelemetry::Trace.generate_span_id)
+
+    expect(tracker.finish(span, exportable: true)).to be_empty
+  end
+
   it "retains a finished parent until its child finishes" do
     parent_id = OpenTelemetry::Trace.generate_span_id
     child_id = OpenTelemetry::Trace.generate_span_id

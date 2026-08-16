@@ -48,9 +48,7 @@ module Langfuse
       def finish(span, exportable:)
         @mutex.synchronize do
           state = @state_by_span_id[span.context.span_id]
-          unless state
-            return exportable ? [ReadySpan.new(span: span, app_root: true)] : []
-          end
+          return [] unless state
 
           state.finished = true
           state.exportable = exportable

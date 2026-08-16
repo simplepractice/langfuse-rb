@@ -94,8 +94,9 @@ module Langfuse
       trace_claimed = propagated_trace_id == span.context.trace_id.unpack1("H*")
       @app_root_tracker.remember(span, trace_claimed: trace_claimed)
     rescue StandardError => e
-      @logger.debug(
-        "Langfuse app-root tracking failed for span '#{span.name}': #{e.class}: #{e.message}"
+      @logger.error(
+        "Langfuse app-root tracking failed for span '#{span.name}'. The span will not export: " \
+        "#{e.class}: #{e.message}"
       )
     end
 
