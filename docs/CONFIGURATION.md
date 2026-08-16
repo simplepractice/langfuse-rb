@@ -358,7 +358,7 @@ config.should_export_span = lambda { |span|
 
 This callback only runs for spans processed by Langfuse's tracer provider. Under the default isolated setup, ambient spans created on some other global OpenTelemetry provider never reach this filter.
 
-The SDK can call the callback more than once while spans start or end. Start-time calls help classify application roots. Keep the callback side-effect free. Do not require duration or other end-time fields during those calls.
+The SDK calls the callback once after each span finishes. The callback can use final attributes, duration, and status.
 
 If you want shared OpenTelemetry spans to be eligible for this filter, install Langfuse explicitly:
 

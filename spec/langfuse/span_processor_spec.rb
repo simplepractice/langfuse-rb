@@ -238,6 +238,29 @@ RSpec.describe Langfuse::SpanProcessor do
       end
       expect(roots.map(&:name)).to contain_exactly("entry-0", "entry-1")
     end
+
+    it "does not mark a LiteLLM raw request with an ended parent as an application root" do
+      tracer = tracer_provider.tracer("litellm")
+      parent = tracer.start_span("litellm_request")
+      parent_context = OpenTelemetry::Trace.context_with_span(parent)
+      parent.finish
+      raw_request = OpenTelemetry::Context.with_current(parent_context) do
+        tracer.start_span("raw_gen_ai_request")
+      end
+      raw_request.finish
+      spans = exported_spans_by_name
+
+      expect(spans.fetch("litellm_request").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+      expect(spans.fetch("raw_gen_ai_request").attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
+    end
+
+    it "marks a parentless LiteLLM raw request as an application root" do
+      tracer_provider.tracer("litellm").start_span("raw_gen_ai_request").finish
+
+      span = exported_spans_by_name.fetch("raw_gen_ai_request")
+
+      expect(span.attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+    end
   end
 
   describe "#on_finish" do

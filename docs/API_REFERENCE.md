@@ -1540,7 +1540,7 @@ propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
 | `tags`       | Array<String>        | No       | Tags array (each ≤200 chars)               |
 | `trace_name` | String               | No       | Trace name (≤200 chars)                    |
 | `release`    | String               | No       | Release identifier (≤200 chars)            |
-| `environment` | String              | No       | Environment identifier (≤200 chars)        |
+| `environment` | String              | No       | Lowercase environment identifier (≤40 chars) |
 | `as_baggage` | Boolean              | No       | Propagate across services via OTel baggage |
 
 **Example:**

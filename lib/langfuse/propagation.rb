@@ -27,6 +27,9 @@ module Langfuse
     # Baggage key that records which Langfuse trace already owns the application root
     LANGFUSE_TRACE_ID_BAGGAGE_KEY = "#{BAGGAGE_PREFIX}trace_id".freeze
 
+    ENVIRONMENT_VALUE_PATTERN = /\A(?!langfuse)[a-z0-9_-]+\z/
+    private_constant :ENVIRONMENT_VALUE_PATTERN
+
     # Map of propagated attribute keys to span attribute keys
     SPAN_KEY_MAP = {
       "user_id" => OtelAttributes::TRACE_USER_ID,
@@ -58,7 +61,7 @@ module Langfuse
     # @param tags [Array<String>, nil] List of tags (each ≤200 characters)
     # @param trace_name [String, nil] Trace name (≤200 characters)
     # @param release [String, nil] Release identifier (≤200 characters)
-    # @param environment [String, nil] Environment identifier (≤200 characters)
+    # @param environment [String, nil] Lowercase environment identifier (≤40 characters)
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
     # @yield Block within which attributes are propagated
     # @return [Object] The result of the block
@@ -140,6 +143,8 @@ module Langfuse
           validated_metadata[k.to_s] = v.to_s if _validate_string_value(v, "metadata.#{k}")
         end
         validated_metadata.any? ? validated_metadata : nil
+      when "environment"
+        _validate_environment_value(value)
       else
         _validate_propagated_value(value, key)
       end
@@ -165,7 +170,10 @@ module Langfuse
 
         span_key = _get_propagated_span_key(key)
 
-        if key == "metadata" && value.is_a?(Hash)
+        if key == "environment"
+          validated_environment = _validate_environment_value(value)
+          propagated_attributes[span_key] = validated_environment if validated_environment
+        elsif key == "metadata" && value.is_a?(Hash)
           value.each do |k, v|
             metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
             propagated_attributes[metadata_key] = v.to_s
@@ -318,6 +326,36 @@ module Langfuse
     end
     # rubocop:enable Naming/PredicateMethod
 
+    # Validate a propagated environment value against the cross-SDK contract.
+    #
+    # @param value [Object] Environment value to validate
+    # @return [String, nil] Validated environment or nil
+    # @api private
+    def self._validate_environment_value(value)
+      unless value.is_a?(String)
+        Langfuse.configuration.logger.warn(
+          "Langfuse: Propagated attribute 'environment' value is not a string. Dropping value."
+        )
+        return nil
+      end
+
+      if value.length > 40
+        Langfuse.configuration.logger.warn(
+          "Langfuse: Propagated attribute 'environment' value is over 40 characters " \
+          "(#{value.length} chars). Dropping value."
+        )
+        return nil
+      end
+
+      return value if ENVIRONMENT_VALUE_PATTERN.match?(value)
+
+      Langfuse.configuration.logger.warn(
+        "Langfuse: Propagated attribute 'environment' must use lowercase letters, numbers, hyphens, or " \
+        "underscores and must not start with 'langfuse'. Dropping value."
+      )
+      nil
+    end
+
     # Get context key for a propagated attribute
     #
     # @param key [String] Attribute key (user_id, session_id, etc.)
@@ -433,7 +471,7 @@ module Langfuse
 
         attributes[span_key] = _parse_baggage_value(span_key, baggage_value)
       end
-      attributes
+      attributes.compact
     rescue StandardError => e
       Langfuse.configuration.logger.debug("Langfuse: Baggage extraction failed: #{e.message}")
       {}
@@ -447,7 +485,9 @@ module Langfuse
     #
     # @api private
     def self._parse_baggage_value(span_key, baggage_value)
-      if span_key == OtelAttributes::TRACE_TAGS && baggage_value.is_a?(String)
+      if span_key == OtelAttributes::ENVIRONMENT
+        _validate_environment_value(baggage_value)
+      elsif span_key == OtelAttributes::TRACE_TAGS && baggage_value.is_a?(String)
         baggage_value.split(",")
       else
         baggage_value.to_s

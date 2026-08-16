@@ -203,6 +203,22 @@ RSpec.describe Langfuse::Propagation do
           end
         end
       end
+
+      it "applies the cross-SDK environment format" do
+        invalid_environments = ["a" * 41, "Production", "langfuse-prod", "prod.us"]
+
+        Langfuse.observe("test-operation") do |span|
+          invalid_environments.each do |environment|
+            described_class.propagate_attributes(environment: environment) do
+              expect(span.otel_span.attributes["langfuse.environment"]).to be_nil
+            end
+          end
+
+          described_class.propagate_attributes(environment: "prod-us_1") do
+            expect(span.otel_span.attributes["langfuse.environment"]).to eq("prod-us_1")
+          end
+        end
+      end
     end
 
     context "with no active span" do

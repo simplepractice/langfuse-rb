@@ -174,7 +174,7 @@ module Langfuse
     # @param tags [Array<String>, nil] List of tags (each ≤200 characters)
     # @param trace_name [String, nil] Trace name (≤200 characters)
     # @param release [String, nil] Release identifier (≤200 characters)
-    # @param environment [String, nil] Environment identifier (≤200 characters)
+    # @param environment [String, nil] Lowercase environment identifier (≤40 characters)
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
     # @yield Block within which attributes are propagated
     # @return [Object] The result of the block
