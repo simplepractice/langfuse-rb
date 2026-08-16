@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "time"
 
 module Langfuse
   # Read endpoints for the current Langfuse query surface.
@@ -20,7 +21,8 @@ module Langfuse
       filter: :filter, name: :name, user_id: :userId, type: :type,
       level: :level, parent_observation_id: :parentObservationId,
       is_root_observation: :isRootObservation, environment: :environment,
-      version: :version, expand_metadata: :expandMetadata
+      session_id: :sessionId, version: :version,
+      expand_metadata: :expandMetadata
     }.freeze
     private_constant :OBSERVATION_QUERY_PARAMS
 
@@ -59,7 +61,8 @@ module Langfuse
     # @param level [String, nil] Filter by level (e.g. "DEFAULT", "ERROR")
     # @param parent_observation_id [String, nil] Filter by parent observation ID
     # @param is_root_observation [Boolean, nil] Filter by logical root status
-    # @param environment [String, nil] Filter by environment
+    # @param environment [Array<String>, nil] Filter by one or more environments
+    # @param session_id [String, nil] Filter by session ID
     # @param version [String, nil] Filter by observation version
     # @param expand_metadata [String, nil] Comma-separated metadata keys to return non-truncated
     # @return [Hash] Full response hash with "data" rows and "meta" cursor info
@@ -81,15 +84,16 @@ module Langfuse
                           fields: nil, cursor: nil, limit: nil, filter: nil,
                           name: nil, user_id: nil, type: nil, level: nil,
                           parent_observation_id: nil, is_root_observation: nil,
-                          environment: nil, version: nil, expand_metadata: nil)
+                          environment: nil, session_id: nil, version: nil,
+                          expand_metadata: nil)
       validate_bounded_observation_read!(trace_id, from_start_time, to_start_time)
       params = build_observations_params(
         from_start_time: from_start_time, to_start_time: to_start_time,
         trace_id: trace_id, fields: fields, cursor: cursor, limit: limit,
         filter: filter, name: name, user_id: user_id, type: type, level: level,
         parent_observation_id: parent_observation_id, environment: environment,
-        is_root_observation: is_root_observation, version: version,
-        expand_metadata: expand_metadata
+        is_root_observation: is_root_observation, session_id: session_id,
+        version: version, expand_metadata: expand_metadata
       )
       request(:get, "/api/public/v2/observations", params: params)
     end
@@ -200,20 +204,20 @@ module Langfuse
     end
 
     def build_observations_params(**options)
-      camelize_params(OBSERVATION_QUERY_PARAMS, options).merge(
+      map_query_params(OBSERVATION_QUERY_PARAMS, options).merge(
         fromStartTime: format_query_time(options[:from_start_time]),
         toStartTime: format_query_time(options[:to_start_time])
       ).compact
     end
 
     def build_scores_params(**options)
-      camelize_params(SCORE_QUERY_PARAMS, options).merge(
+      map_query_params(SCORE_QUERY_PARAMS, options).merge(
         fromTimestamp: format_query_time(options[:from_timestamp]),
         toTimestamp: format_query_time(options[:to_timestamp])
       ).compact
     end
 
-    def camelize_params(mapping, options)
+    def map_query_params(mapping, options)
       mapping.to_h { |ruby_key, api_key| [api_key, options[ruby_key]] }
     end
 

@@ -941,7 +941,8 @@ list_observations(from_start_time: nil, to_start_time: nil, trace_id: nil, **fil
 | `level`                 | String                | No       | Filter by level (e.g. `"DEFAULT"`, `"ERROR"`)                                                        |
 | `parent_observation_id` | String                | No       | Filter by parent observation ID                                                                      |
 | `is_root_observation`   | Boolean               | No       | Filter by logical root status                                                                         |
-| `environment`           | String                | No       | Filter by environment                                                                                |
+| `environment`           | Array<String>         | No       | Filter by one or more environments                                                                   |
+| `session_id`            | String                | No       | Filter by session ID                                                                                  |
 | `version`               | String                | No       | Filter by observation version                                                                        |
 | `expand_metadata`       | String                | No       | Comma-separated metadata keys to return non-truncated                                                |
 

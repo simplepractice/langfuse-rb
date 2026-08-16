@@ -14,6 +14,16 @@ RSpec.describe Langfuse::ReadApi do
   let(:from_time) { Time.utc(2026, 7, 1, 0, 0, 0) }
   let(:to_time) { Time.utc(2026, 7, 2, 0, 0, 0) }
 
+  def stub_json_get(path, query:, body:, status: 200)
+    stub_request(:get, "#{base_url}#{path}")
+      .with(query: query)
+      .to_return(
+        status: status,
+        body: body.to_json,
+        headers: { "Content-Type" => "application/json" }
+      )
+  end
+
   describe "#list_observations" do
     let(:observations_response) do
       {
@@ -27,13 +37,11 @@ RSpec.describe Langfuse::ReadApi do
 
     context "with a bounded read" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v2/observations")
-          .with(query: { fromStartTime: from_time.iso8601, toStartTime: to_time.iso8601 })
-          .to_return(
-            status: 200,
-            body: observations_response.to_json,
-            headers: { "Content-Type" => "application/json" }
-          )
+        stub_json_get(
+          "/api/public/v2/observations",
+          query: { fromStartTime: from_time.iso8601, toStartTime: to_time.iso8601 },
+          body: observations_response
+        )
       end
 
       it "preserves the full data and meta envelope" do
@@ -67,19 +75,14 @@ RSpec.describe Langfuse::ReadApi do
           fromStartTime: from_time.iso8601, toStartTime: to_time.iso8601,
           fields: "core,basic,usage", cursor: "Y3Vyc29y", limit: "100",
           type: "GENERATION", userId: "user-1", name: "chat", level: "ERROR",
-          parentObservationId: "parent-1", isRootObservation: "true", environment: "production",
+          parentObservationId: "parent-1", isRootObservation: "true",
+          environment: %w[production staging], sessionId: "session-1",
           version: "1.0", expandMetadata: "key1,key2"
         }
       end
 
       before do
-        stub_request(:get, "#{base_url}/api/public/v2/observations")
-          .with(query: query)
-          .to_return(
-            status: 200,
-            body: observations_response.to_json,
-            headers: { "Content-Type" => "application/json" }
-          )
+        stub_json_get("/api/public/v2/observations", query: query, body: observations_response)
       end
 
       it "maps snake_case keywords to camelCase query params" do
@@ -87,7 +90,8 @@ RSpec.describe Langfuse::ReadApi do
           from_start_time: from_time, to_start_time: to_time,
           fields: "core,basic,usage", cursor: "Y3Vyc29y", limit: 100,
           type: "GENERATION", user_id: "user-1", name: "chat", level: "ERROR",
-          parent_observation_id: "parent-1", is_root_observation: true, environment: "production",
+          parent_observation_id: "parent-1", is_root_observation: true,
+          environment: %w[production staging], session_id: "session-1",
           version: "1.0", expand_metadata: "key1,key2"
         )
         expect(
@@ -100,13 +104,11 @@ RSpec.describe Langfuse::ReadApi do
       let(:filter_json) { '[{"type":"string","column":"id","operator":"=","value":"obs-1"}]' }
 
       before do
-        stub_request(:get, "#{base_url}/api/public/v2/observations")
-          .with(query: hash_including(filter: filter_json))
-          .to_return(
-            status: 200,
-            body: observations_response.to_json,
-            headers: { "Content-Type" => "application/json" }
-          )
+        stub_json_get(
+          "/api/public/v2/observations",
+          query: hash_including(filter: filter_json),
+          body: observations_response
+        )
       end
 
       it "passes the filter JSON through to the query string" do
@@ -122,19 +124,15 @@ RSpec.describe Langfuse::ReadApi do
 
     context "when logical root status is false" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v2/observations")
-          .with(
-            query: {
-              fromStartTime: from_time.iso8601,
-              toStartTime: to_time.iso8601,
-              isRootObservation: "false"
-            }
-          )
-          .to_return(
-            status: 200,
-            body: observations_response.to_json,
-            headers: { "Content-Type" => "application/json" }
-          )
+        stub_json_get(
+          "/api/public/v2/observations",
+          query: {
+            fromStartTime: from_time.iso8601,
+            toStartTime: to_time.iso8601,
+            isRootObservation: "false"
+          },
+          body: observations_response
+        )
       end
 
       it "preserves false in the query params" do
@@ -153,13 +151,11 @@ RSpec.describe Langfuse::ReadApi do
 
     context "with a trace-scoped read" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v2/observations")
-          .with(query: { traceId: "trace-1" })
-          .to_return(
-            status: 200,
-            body: observations_response.to_json,
-            headers: { "Content-Type" => "application/json" }
-          )
+        stub_json_get(
+          "/api/public/v2/observations",
+          query: { traceId: "trace-1" },
+          body: observations_response
+        )
       end
 
       it "allows omitting start-time bounds when trace_id is provided" do
@@ -205,20 +201,20 @@ RSpec.describe Langfuse::ReadApi do
       end
 
       it "does not issue an HTTP request" do
-        begin
-          api_client.list_observations
-        rescue ArgumentError
-          nil
-        end
+        expect { api_client.list_observations }.to raise_error(ArgumentError)
+
         expect(a_request(:get, "#{base_url}/api/public/v2/observations")).not_to have_been_made
       end
     end
 
     context "when authentication fails" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v2/observations")
-          .with(query: hash_including({}))
-          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+        stub_json_get(
+          "/api/public/v2/observations",
+          query: hash_including({}),
+          body: { message: "Unauthorized" },
+          status: 401
+        )
       end
 
       it "raises UnauthorizedError" do
@@ -229,9 +225,12 @@ RSpec.describe Langfuse::ReadApi do
 
     context "when Langfuse v4 is unavailable" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v2/observations")
-          .with(query: hash_including({}))
-          .to_return(status: 404, body: { message: "Not found" }.to_json)
+        stub_json_get(
+          "/api/public/v2/observations",
+          query: hash_including({}),
+          body: { message: "Not found" },
+          status: 404
+        )
       end
 
       it "raises NotFoundError rather than falling back to legacy endpoints" do
@@ -254,13 +253,11 @@ RSpec.describe Langfuse::ReadApi do
     let(:metrics_response) { { "data" => [{ "count_count" => "42" }] } }
 
     before do
-      stub_request(:get, "#{base_url}/api/public/v2/metrics")
-        .with(query: { query: JSON.generate(metrics_query) })
-        .to_return(
-          status: 200,
-          body: metrics_response.to_json,
-          headers: { "Content-Type" => "application/json" }
-        )
+      stub_json_get(
+        "/api/public/v2/metrics",
+        query: { query: JSON.generate(metrics_query) },
+        body: metrics_response
+      )
     end
 
     it "JSON-encodes a Hash query into the query parameter" do
@@ -283,9 +280,12 @@ RSpec.describe Langfuse::ReadApi do
 
     context "when authentication fails" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v2/metrics")
-          .with(query: hash_including({}))
-          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+        stub_json_get(
+          "/api/public/v2/metrics",
+          query: hash_including({}),
+          body: { message: "Unauthorized" },
+          status: 401
+        )
       end
 
       it "raises UnauthorizedError" do
@@ -309,13 +309,11 @@ RSpec.describe Langfuse::ReadApi do
 
     context "with a successful response" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v3/scores")
-          .with(query: hash_including({}))
-          .to_return(
-            status: 200,
-            body: scores_response.to_json,
-            headers: { "Content-Type" => "application/json" }
-          )
+        stub_json_get(
+          "/api/public/v3/scores",
+          query: hash_including({}),
+          body: scores_response
+        )
       end
 
       it "preserves the full data and meta envelope" do
@@ -343,13 +341,7 @@ RSpec.describe Langfuse::ReadApi do
       end
 
       before do
-        stub_request(:get, "#{base_url}/api/public/v3/scores")
-          .with(query: query)
-          .to_return(
-            status: 200,
-            body: scores_response.to_json,
-            headers: { "Content-Type" => "application/json" }
-          )
+        stub_json_get("/api/public/v3/scores", query: query, body: scores_response)
       end
 
       it "maps snake_case keywords to camelCase query params" do
@@ -369,13 +361,11 @@ RSpec.describe Langfuse::ReadApi do
 
     context "with numeric value bounds" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v3/scores")
-          .with(query: { dataType: "NUMERIC", valueMin: "0.5", valueMax: "1" })
-          .to_return(
-            status: 200,
-            body: scores_response.to_json,
-            headers: { "Content-Type" => "application/json" }
-          )
+        stub_json_get(
+          "/api/public/v3/scores",
+          query: { dataType: "NUMERIC", valueMin: "0.5", valueMax: "1" },
+          body: scores_response
+        )
       end
 
       it "sends valueMin and valueMax" do
@@ -389,9 +379,12 @@ RSpec.describe Langfuse::ReadApi do
 
     context "when authentication fails" do
       before do
-        stub_request(:get, "#{base_url}/api/public/v3/scores")
-          .with(query: hash_including({}))
-          .to_return(status: 401, body: { message: "Unauthorized" }.to_json)
+        stub_json_get(
+          "/api/public/v3/scores",
+          query: hash_including({}),
+          body: { message: "Unauthorized" },
+          status: 401
+        )
       end
 
       it "raises UnauthorizedError" do
