@@ -304,6 +304,20 @@ module Langfuse
       raise ApiError, "Batch send failed: #{e.message}"
     end
 
+    # Create a score through the synchronous Scores API.
+    #
+    # @param payload [Hash] Validated score attributes in API format
+    # @return [String] ID of the created score
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] if the API request fails or omits the created score ID
+    def create_score(payload:)
+      response = request(:post, "/api/public/scores", body: payload)
+      score_id = response["id"]
+      return score_id if score_id.is_a?(String) && !score_id.empty?
+
+      raise ApiError, "Score creation response did not include an id"
+    end
+
     # Create a dataset run item (link a trace to a dataset item within a run)
     #
     # @param dataset_item_id [String] Dataset item ID (required)
@@ -689,7 +703,7 @@ module Langfuse
     # - Max 2 retries (3 total attempts)
     # - Exponential backoff (0.05s * 2^retry_count)
     # - Retries GET, PATCH, and DELETE requests (idempotent operations)
-    # - Retries POST requests to batch endpoint (idempotent due to event UUIDs)
+    # - Retries ingestion batches and score creation (both include stable IDs)
     # - Note: POST to create_prompt is NOT idempotent; retries may create duplicate versions
     # - Retries on: 429 (rate limit), 503 (service unavailable), 504 (gateway timeout)
     # - Does NOT retry on: 4xx errors (except 429), 5xx errors (except 503, 504)
@@ -780,14 +794,20 @@ module Langfuse
 
     # Handle HTTP response for batch requests
     #
+    # Per-event input errors can arrive with HTTP 207 instead of a 4xx response.
+    # The `errors` array reports rejected events, so HTTP status alone cannot
+    # identify a batch with rejected events. An empty array confirms only that
+    # the response reported no rejection; it does not prove downstream
+    # processing or immediate read visibility.
+    #
     # @param response [Faraday::Response] The HTTP response
     # @return [void]
     # @raise [UnauthorizedError] if status is 401
-    # @raise [ApiError] for other error statuses
+    # @raise [ApiError] for other error statuses, or if the body lists rejected events
     def handle_batch_response(response)
       case response.status
       when 200, 201, 204, 207
-        nil
+        raise_on_batch_errors(response)
       when 401
         raise UnauthorizedError, "Authentication failed. Check your API keys."
       else
@@ -796,22 +816,40 @@ module Langfuse
       end
     end
 
+    # @param response [Faraday::Response] The HTTP response
+    # @return [void]
+    # @raise [ApiError] if the response body's `errors` array is non-empty
+    def raise_on_batch_errors(response)
+      errors = Array(parse_response_body(response)["errors"])
+      return if errors.empty?
+
+      messages = errors.filter_map { |e| e["message"] || e["error"] }
+      summary = messages.empty? ? "#{errors.size} event(s) rejected" : messages.join("; ")
+      raise ApiError, "Batch send failed: #{summary}"
+    end
+
     # Extract error message from response body
     #
     # @param response [Faraday::Response] The HTTP response
     # @return [String] The error message
     def extract_error_message(response)
-      body_hash = case response.body
-                  in Hash => h then h
-                  in String => s then begin
-                    JSON.parse(s)
-                  rescue StandardError
-                    {}
-                  end
-                  else {}
-                  end
+      body_hash = parse_response_body(response)
 
       %w[message error].filter_map { |key| body_hash[key] }.first || "Unknown error"
+    end
+
+    # @param response [Faraday::Response] The HTTP response
+    # @return [Hash] The parsed JSON body, or {} if absent/unparsable
+    def parse_response_body(response)
+      case response.body
+      in Hash => h then h
+      in String => s then begin
+        JSON.parse(s)
+      rescue StandardError
+        {}
+      end
+      else {}
+      end
     end
   end
 end

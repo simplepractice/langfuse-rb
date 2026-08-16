@@ -347,7 +347,7 @@ module Langfuse
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
-    # @param id [String, nil] Score ID
+    # @param id [String, nil] Score ID; use a stable value as an idempotency key
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
@@ -380,6 +380,47 @@ module Langfuse
     def create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                      metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       @score_client.create(
+        name: name,
+        value: value,
+        id: id,
+        trace_id: trace_id,
+        session_id: session_id,
+        observation_id: observation_id,
+        comment: comment,
+        metadata: metadata,
+        environment: environment,
+        data_type: data_type,
+        dataset_run_id: dataset_run_id,
+        config_id: config_id
+      )
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Create a score immediately through the Scores API. See {ScoreClient#create!}.
+    #
+    # @param name [String] Score name (required)
+    # @param value [Numeric, Integer, String] Score value (type depends on data_type)
+    # @param id [String, nil] Score ID; use a stable value as an idempotency key
+    # @param trace_id [String, nil] Trace ID to associate with the score
+    # @param session_id [String, nil] Session ID to associate with the score
+    # @param observation_id [String, nil] Observation ID to associate with the score
+    # @param comment [String, nil] Optional comment
+    # @param metadata [Hash, nil] Optional metadata hash
+    # @param environment [String, nil] Optional environment
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
+    # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
+    # @param config_id [String, nil] Optional score config ID
+    # @return [String] ID of the created score
+    # @raise [ArgumentError] if validation fails
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] if the API request fails
+    #
+    # @example Create a score with an idempotency key
+    #   client.create_score!(id: "feedback-abc123", name: "quality", value: 0.85, trace_id: "abc123")
+    # rubocop:disable Metrics/ParameterLists
+    def create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
+                      metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+      @score_client.create!(
         name: name,
         value: value,
         id: id,

@@ -936,7 +936,7 @@ create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation
 | `comment`        | String                 | No       | Score comment                             |
 | `metadata`       | Hash                   | No       | Additional metadata                       |
 | `environment`    | String                 | No       | Environment tag for the score             |
-| `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, or `:categorical` |
+| `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, `:categorical`, `:text`, or `:correction` |
 | `dataset_run_id` | String                 | No       | Dataset run ID to associate with          |
 | `config_id`      | String                 | No       | Score config ID                           |
 
@@ -949,6 +949,43 @@ client.create_score(
   trace_id: "abc123",
   data_type: :numeric,
   comment: "High quality response"
+)
+```
+
+### `Client#create_score!`
+
+Create a score through the synchronous Scores API instead of the ingestion queue.
+
+The method returns the created score ID after Langfuse accepts the request.
+It bypasses the in-memory queue and trace-sampling gate. Use `create_score`
+for fire-and-forget batching.
+
+For retryable workflows, generate a stable `id` before the first request and
+reuse the complete score payload. A network failure can occur after Langfuse
+accepts a request, so the failure alone does not prove that the score was rejected.
+
+**Signature:**
+
+```ruby
+create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil,
+              comment: nil, metadata: nil, environment: nil, data_type: :numeric,
+              dataset_run_id: nil, config_id: nil)
+```
+
+**Returns:** The created score ID as a String
+
+**Raises:** `ArgumentError` for invalid input; `UnauthorizedError` on a 401; `ApiError` for any other API failure
+
+**Example:**
+
+```ruby
+score_id = "user-thumbs-#{trace_id}"
+created_id = client.create_score!(
+  id: score_id,
+  name: "user-thumbs",
+  value: true,
+  trace_id: trace_id,
+  data_type: :boolean
 )
 ```
 
@@ -1005,6 +1042,7 @@ Convenience methods delegating to `Langfuse.client`:
 
 ```ruby
 Langfuse.create_score(name: "quality", value: 0.85, trace_id: "abc")
+score_id = Langfuse.create_score!(name: "quality", value: 0.85, trace_id: "abc")
 Langfuse.score_active_observation(name: "quality", value: 0.9, data_type: :numeric)
 Langfuse.score_active_trace(name: "overall", value: 5, data_type: :numeric)
 Langfuse.flush_scores

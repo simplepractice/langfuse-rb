@@ -1686,6 +1686,66 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "#create_score!" do
+    let(:client) { described_class.new(valid_config) }
+
+    it "delegates to score_client#create! and returns the score ID" do
+      score_client = client.instance_variable_get(:@score_client)
+      expect(score_client).to receive(:create!).with(
+        name: "quality",
+        value: 0.85,
+        id: nil,
+        trace_id: "abc123",
+        session_id: nil,
+        observation_id: nil,
+        comment: nil,
+        metadata: nil,
+        environment: nil,
+        data_type: :numeric,
+        dataset_run_id: nil,
+        config_id: nil
+      ).and_return("score-123")
+
+      expect(client.create_score!(name: "quality", value: 0.85, trace_id: "abc123")).to eq("score-123")
+    end
+
+    it "creates a correction score through the direct Scores API" do
+      payload = {
+        id: "score-123",
+        name: "output",
+        value: "Synthetic corrected output",
+        dataType: "CORRECTION",
+        traceId: "abcdef1234567890abcdef1234567890"
+      }
+      stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+        .with(body: payload.to_json)
+        .to_return(
+          status: 200,
+          body: { id: "score-123" }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      result = client.create_score!(
+        id: "score-123",
+        name: "output",
+        value: "Synthetic corrected output",
+        trace_id: "abcdef1234567890abcdef1234567890",
+        data_type: :correction
+      )
+
+      expect(result).to eq("score-123")
+    end
+
+    it "propagates errors from score_client#create! instead of swallowing them" do
+      score_client = client.instance_variable_get(:@score_client)
+      allow(score_client).to receive(:create!).and_raise(Langfuse::ApiError, "API request failed (500): boom")
+
+      expect do
+        client.create_score!(name: "quality", value: 0.85, trace_id: "abc123")
+      end.to raise_error(Langfuse::ApiError, "API request failed (500): boom")
+    end
+  end
+
   describe "#score_active_observation" do
     let(:client) { described_class.new(valid_config) }
     let(:tracer) { OpenTelemetry.tracer_provider.tracer("test") }
