@@ -56,18 +56,32 @@ module Langfuse
     # - `numeric`: Numeric values (Integer, Float, BigDecimal)
     # - `boolean`: Boolean values (true/false or 0/1)
     # - `categorical`: String values for categorical scores
+    # - `text`: Free-form String values (1 to 500 characters)
+    # - `correction`: Corrected output String attached to a trace or observation
+    #   (conventionally named "output")
     #
     # @return [Hash<Symbol, String>] Hash mapping symbol keys to API string values
     SCORE_DATA_TYPES = {
       numeric: "NUMERIC",
       boolean: "BOOLEAN",
-      categorical: "CATEGORICAL"
+      categorical: "CATEGORICAL",
+      text: "TEXT",
+      correction: "CORRECTION"
     }.freeze
 
     # Valid score data type symbols
     #
     # @return [Array<Symbol>] Array of valid data type symbols
     VALID_SCORE_DATA_TYPES = SCORE_DATA_TYPES.keys.freeze
+
+    # Score data types accepted by experiment evaluations
+    #
+    # Experiment evaluations represent metrics, so this set is intentionally
+    # narrower than {SCORE_DATA_TYPES}: text notes and corrected outputs are
+    # general scores, not experiment metrics (matching langfuse-python).
+    #
+    # @return [Array<Symbol>] Array of experiment-safe data type symbols
+    EXPERIMENT_SCORE_DATA_TYPES = %i[numeric boolean categorical].freeze
 
     # Attributes for Langfuse span observations
     #

@@ -248,6 +248,106 @@ RSpec.describe Langfuse::ScoreClient do
       end
     end
 
+    context "with text score" do
+      it "emits dataType TEXT with the string value" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(
+                                                              name: "reviewer_notes",
+                                                              value: "Helpful but verbose",
+                                                              dataType: "TEXT"
+                                                            )
+                                                          )
+                                                        ))
+
+        score_client.create(name: "reviewer_notes", value: "Helpful but verbose", data_type: :text)
+        score_client.flush
+      end
+
+      it "accepts a 500-character value" do
+        expect(api_client).to receive(:send_batch)
+
+        score_client.create(name: "notes", value: "a" * 500, data_type: :text)
+        score_client.flush
+      end
+
+      it "rejects an empty value" do
+        expect do
+          score_client.create(name: "notes", value: "", data_type: :text)
+        end.to raise_error(ArgumentError, /Text value must contain 1 to 500 characters, got 0/)
+      end
+
+      it "rejects a value longer than 500 characters" do
+        expect do
+          score_client.create(name: "notes", value: "a" * 501, data_type: :text)
+        end.to raise_error(ArgumentError, /Text value must contain 1 to 500 characters, got 501/)
+      end
+
+      it "rejects non-string values" do
+        expect do
+          score_client.create(name: "notes", value: 42, data_type: :text)
+        end.to raise_error(ArgumentError, /Text value must be a String, got Integer/)
+      end
+    end
+
+    context "with correction score" do
+      it "emits dataType CORRECTION with the caller's name and string value" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(
+                                                              name: "output",
+                                                              value: "The corrected output",
+                                                              dataType: "CORRECTION",
+                                                              traceId: "trace-1",
+                                                              observationId: "obs-1"
+                                                            )
+                                                          )
+                                                        ))
+
+        score_client.create(name: "output", value: "The corrected output",
+                            trace_id: "trace-1", observation_id: "obs-1", data_type: :correction)
+        score_client.flush
+      end
+
+      it "preserves an arbitrary caller-supplied name without rewriting it" do
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(body: hash_including(name: "custom-name"))
+                                                        ))
+
+        score_client.create(name: "custom-name", value: "corrected", trace_id: "trace-1", data_type: :correction)
+        score_client.flush
+      end
+
+      it "does not enforce a length limit" do
+        expect(api_client).to receive(:send_batch)
+
+        score_client.create(name: "output", value: "a" * 10_000, trace_id: "trace-1", data_type: :correction)
+        score_client.flush
+      end
+
+      it "rejects non-string values" do
+        expect do
+          score_client.create(name: "output", value: { text: "corrected" }, data_type: :correction)
+        end.to raise_error(ArgumentError, /Correction value must be a String, got Hash/)
+      end
+
+      it "rejects subjects that Langfuse cannot attach a correction to" do
+        invalid_subjects = [
+          {},
+          { observation_id: "obs-1" },
+          { trace_id: "trace-1", session_id: "session-1" },
+          { trace_id: "trace-1", dataset_run_id: "run-1" },
+          { trace_id: "trace-1", config_id: "config-1" }
+        ]
+
+        invalid_subjects.each do |subject|
+          expect do
+            score_client.create(name: "output", value: "corrected", data_type: :correction, **subject)
+          end.to raise_error(ArgumentError, /Correction scores require trace_id/)
+        end
+      end
+    end
+
     context "with validation errors" do
       it "raises ArgumentError for missing name" do
         expect do
@@ -442,6 +542,69 @@ RSpec.describe Langfuse::ScoreClient do
         strict_client.create(name: "quality", value: 1.0, trace_id: "abcdef1234567890abcdef1234567890")
         strict_client.flush
       end
+    end
+  end
+
+  describe "#create!" do
+    it "creates the score directly, returns its ID, and leaves the queue empty" do
+      expect(api_client).to receive(:create_score).with(
+        payload: hash_including(
+          id: "score-123",
+          name: "quality",
+          value: 0.85,
+          dataType: "NUMERIC",
+          traceId: "abc123"
+        )
+      ).and_return("score-123")
+
+      result = score_client.create!(
+        id: "score-123",
+        name: "quality",
+        value: 0.85,
+        trace_id: "abc123",
+        data_type: :numeric
+      )
+
+      expect(result).to eq("score-123")
+      expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "returns an automatically generated score ID" do
+      allow(api_client).to receive(:create_score) { |payload:| payload.fetch(:id) }
+
+      result = score_client.create!(name: "quality", value: 0.85, trace_id: "abc123")
+
+      expect(result).to match(/\A[0-9a-f-]{36}\z/)
+    end
+
+    it "bypasses sampling — delivers even when the configured sample_rate would drop it" do
+      strict_config = Langfuse::Config.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+        c.base_url = "https://cloud.langfuse.com"
+        c.sample_rate = 0.0
+        c.flush_interval = 0
+        c.logger = Logger.new(StringIO.new)
+      end
+      strict_api_client = instance_double(Langfuse::ApiClient)
+      strict_client = described_class.new(api_client: strict_api_client, config: strict_config)
+
+      expect(strict_api_client).to receive(:create_score)
+      strict_client.create!(name: "quality", value: 1.0, trace_id: "abcdef1234567890abcdef1234567890")
+    end
+
+    it "raises the ApiClient error instead of swallowing it" do
+      expect(api_client).to receive(:create_score).and_raise(Langfuse::ApiError, "API request failed (500): boom")
+
+      expect do
+        score_client.create!(name: "quality", value: 0.85)
+      end.to raise_error(Langfuse::ApiError, "API request failed (500): boom")
+    end
+
+    it "raises ArgumentError for invalid input, same as #create" do
+      expect do
+        score_client.create!(name: nil, value: 0.85)
+      end.to raise_error(ArgumentError, "name is required")
     end
   end
 

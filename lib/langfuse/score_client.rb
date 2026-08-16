@@ -56,14 +56,14 @@ module Langfuse
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
-    # @param id [String, nil] Score ID
+    # @param id [String, nil] Score ID; use a stable value as an idempotency key
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
     # @param environment [String, nil] Optional environment
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
     # @return [void]
@@ -77,27 +77,89 @@ module Langfuse
     #
     # @example Categorical score
     #   create(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
+    #
+    # @example Text score (1 to 500 characters)
+    #   create(name: "reviewer_notes", value: "Helpful but verbose", trace_id: "abc123", data_type: :text)
+    #
+    # @example Corrected output (conventionally named "output")
+    #   create(name: "output", value: "The corrected output", trace_id: "abc123",
+    #          observation_id: "def456", data_type: :correction)
     # rubocop:disable Metrics/ParameterLists
     def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
-      validate_name(name)
-      normalized_value = normalize_value(value, data_type)
-      data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
+      score = build_score_body(
+        name: name,
+        value: value,
+        id: id,
+        trace_id: trace_id,
+        session_id: session_id,
+        observation_id: observation_id,
+        comment: comment,
+        metadata: metadata,
+        environment: environment,
+        data_type: data_type,
+        dataset_run_id: dataset_run_id,
+        config_id: config_id
+      )
 
       return unless enqueue_trace_linked_score?(trace_id)
 
-      event = build_score_event(
-        name: name, value: normalized_value, id: id, trace_id: trace_id,
-        session_id: session_id, observation_id: observation_id, comment: comment,
-        metadata: metadata, environment: environment, data_type: data_type_str,
-        dataset_run_id: dataset_run_id, config_id: config_id
-      )
-
-      @queue << event
+      @queue << build_score_event(score)
       flush if @queue.size >= config.batch_size
     rescue StandardError => e
       logger.error("Langfuse score creation failed: #{e.message}")
       raise
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # Create a score immediately through the Scores API.
+    #
+    # {#create} is fire-and-forget — it queues the event and reports nothing
+    # about whether it was actually delivered, matching how this SDK's
+    # tracing already works. That fits scoring inline from a still-open span
+    # (see {#score_active_observation}/{#score_active_trace}), but not a
+    # standalone verdict arriving out-of-band (e.g. user feedback landing in
+    # a request unrelated to the turn it's scoring). Pass a stable +id+ when
+    # the caller may retry after an ambiguous network failure.
+    #
+    # @param name [String] Score name (required)
+    # @param value [Numeric, Integer, String] Score value (type depends on data_type)
+    # @param id [String, nil] Score ID; use a stable value as an idempotency key
+    # @param trace_id [String, nil] Trace ID to associate with the score
+    # @param session_id [String, nil] Session ID to associate with the score
+    # @param observation_id [String, nil] Observation ID to associate with the score
+    # @param comment [String, nil] Optional comment
+    # @param metadata [Hash, nil] Optional metadata hash
+    # @param environment [String, nil] Optional environment
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
+    # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
+    # @param config_id [String, nil] Optional score config ID
+    # @return [String] ID of the created score
+    # @raise [ArgumentError] if validation fails
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] if the API request fails
+    #
+    # @example Create a score with an idempotency key
+    #   score_client.create!(id: "feedback-abc123", name: "quality", value: 0.85, trace_id: "abc123")
+    # rubocop:disable Metrics/ParameterLists
+    def create!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
+                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+      score = build_score_body(
+        name: name,
+        value: value,
+        id: id,
+        trace_id: trace_id,
+        session_id: session_id,
+        observation_id: observation_id,
+        comment: comment,
+        metadata: metadata,
+        environment: environment,
+        data_type: data_type,
+        dataset_run_id: dataset_run_id,
+        config_id: config_id
+      )
+
+      api_client.create_score(payload: score)
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -109,7 +171,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
@@ -140,7 +202,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
@@ -203,10 +265,10 @@ module Langfuse
 
     private
 
-    # Build a score event hash for ingestion API
+    # Validate score inputs and build the canonical API body.
     #
     # @param name [String] Score name
-    # @param value [Object] Normalized score value
+    # @param value [Numeric, Integer, String] Raw score value (type depends on data_type)
     # @param id [String, nil] Score ID
     # @param trace_id [String, nil] Trace ID
     # @param session_id [String, nil] Session ID
@@ -214,16 +276,24 @@ module Langfuse
     # @param comment [String, nil] Comment
     # @param metadata [Hash, nil] Metadata
     # @param environment [String, nil] Environment
-    # @param data_type [String] Data type string (NUMERIC, BOOLEAN, CATEGORICAL)
-    # @return [Hash] Event hash
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
+    # @param dataset_run_id [String, nil] Dataset run ID
+    # @param config_id [String, nil] Score config ID
+    # @return [Hash] Score attributes in API format
+    # @raise [ArgumentError] if validation fails
     # rubocop:disable Metrics/ParameterLists
-    def build_score_event(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
-                          environment:, data_type:, dataset_run_id: nil, config_id: nil)
-      body = {
+    def build_score_body(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
+                         environment:, data_type:, dataset_run_id: nil, config_id: nil)
+      validate_name(name)
+      normalized_value = ScoreValue.normalize(value, data_type)
+      data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
+      validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
+
+      {
         id: id || SecureRandom.uuid,
         name: name,
-        value: value,
-        dataType: data_type,
+        value: normalized_value,
+        dataType: data_type_str,
         traceId: trace_id,
         sessionId: session_id,
         observationId: observation_id,
@@ -233,46 +303,20 @@ module Langfuse
         datasetRunId: dataset_run_id,
         configId: config_id
       }.compact
-      {
-        id: SecureRandom.uuid,
-        type: "score-create",
-        timestamp: Time.now.utc.iso8601(3),
-        body: body
-      }
     end
     # rubocop:enable Metrics/ParameterLists
 
-    # Normalize and validate score value based on data type
-    #
-    # @param value [Object] Raw score value
-    # @param data_type [Symbol] Data type symbol
-    # @return [Object] Normalized value
-    # @raise [ArgumentError] if value doesn't match data type
-    # rubocop:disable Metrics/CyclomaticComplexity
-    def normalize_value(value, data_type)
-      case data_type
-      when :numeric
-        raise ArgumentError, "Numeric value must be Numeric, got #{value.class}" unless value.is_a?(Numeric)
-
-        value
-      when :boolean
-        case value
-        when true, 1
-          1
-        when false, 0
-          0
-        else
-          raise ArgumentError, "Boolean value must be true/false or 0/1, got #{value.inspect}"
-        end
-      when :categorical
-        raise ArgumentError, "Categorical value must be a String, got #{value.class}" unless value.is_a?(String)
-
-        value
-      else
-        raise ArgumentError, "Invalid data_type: #{data_type}"
-      end
+    def build_score_event(score)
+      { id: SecureRandom.uuid, type: "score-create", timestamp: Time.now.utc.iso8601(3), body: score }
     end
-    # rubocop:enable Metrics/CyclomaticComplexity
+
+    def validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
+      return unless data_type == :correction
+      return if trace_id.is_a?(String) && !trace_id.empty? && !session_id && !dataset_run_id && !config_id
+
+      raise ArgumentError,
+            "Correction scores require trace_id and cannot use session_id, dataset_run_id, or config_id"
+    end
 
     # Validate score name
     #
