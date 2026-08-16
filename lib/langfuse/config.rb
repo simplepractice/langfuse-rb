@@ -92,13 +92,11 @@ module Langfuse
     attr_accessor :mask
 
     # @return [#call, nil] Export-stage masking hook for spans exported to Langfuse.
-    #   Receives a `spans:` keyword argument — a frozen Hash mapping stable span
-    #   identifiers (`"<hex trace_id>:<hex span_id>"`) to {OtelSpanSnapshot}
-    #   values covering every span in one export batch, including spans created
-    #   by third-party instrumentations. Returns nil to export the batch
-    #   unchanged, or a sparse Hash of patches keyed by the same identifiers.
-    #   Each patch is a Hash with optional +:delete+ (Array of attribute keys)
-    #   and +:set+ (Hash of replacement attributes); deletes run before sets.
+    #   Receives a +params:+ keyword argument containing {MaskOtelSpansParams}.
+    #   Its frozen +spans+ Hash maps {OtelSpanIdentifier} keys to {OtelSpanData}
+    #   snapshots for one export batch, including third-party spans. Returns nil
+    #   to export the batch unchanged or {MaskOtelSpansResult} with sparse
+    #   {OtelSpanPatch} values. Deletes run before sets.
     #   Only the copy exported to Langfuse is transformed — any other
     #   OpenTelemetry exporter receives the original, unmasked spans, so
     #   Langfuse masking does not protect other telemetry backends.

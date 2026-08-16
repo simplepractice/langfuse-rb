@@ -610,7 +610,7 @@ RSpec.describe Langfuse::Config do
     end
 
     it "passes validation when mask_otel_spans responds to #call" do
-      config.mask_otel_spans = ->(spans:) { spans and nil }
+      config.mask_otel_spans = ->(params:) { params and nil }
       expect { config.validate! }.not_to raise_error
     end
 

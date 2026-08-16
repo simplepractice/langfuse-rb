@@ -13,8 +13,6 @@ RSpec.describe Langfuse::MaskingExporter do
                     attributes: { "langfuse.observation.input" => "secret input" })
   end
   let(:third_party_span) do
-    # Unfrozen attribute values so specs can prove snapshots copy rather than
-    # freeze the originals.
     build_span_data(name: "chat gpt-4o", scope_name: "ruby-openai",
                     attributes: { "gen_ai.prompt" => +"ssn 123-45-6789", "gen_ai.system" => +"openai" })
   end
@@ -23,19 +21,21 @@ RSpec.describe Langfuse::MaskingExporter do
     [langfuse_span, third_party_span]
   end
 
-  def build_span_data(name:, scope_name:, attributes: {})
+  def build_span_data(name:, scope_name:, attributes: {}, parent_span_id: OpenTelemetry::Trace::INVALID_SPAN_ID,
+                      span_id: OpenTelemetry::Trace.generate_span_id,
+                      trace_id: OpenTelemetry::Trace.generate_trace_id)
     OpenTelemetry::SDK::Trace::SpanData.new(
-      name, :internal, OpenTelemetry::Trace::Status.ok, OpenTelemetry::Trace::INVALID_SPAN_ID,
+      name, :internal, OpenTelemetry::Trace::Status.ok, parent_span_id,
       attributes.size, 0, 0, 1_000, 2_000, attributes, nil, nil,
       OpenTelemetry::SDK::Resources::Resource.create({ "service.name" => "test-app" }),
       OpenTelemetry::SDK::InstrumentationScope.new(scope_name, "1.0.0"),
-      OpenTelemetry::Trace.generate_span_id, OpenTelemetry::Trace.generate_trace_id,
-      OpenTelemetry::Trace::TraceFlags::DEFAULT, OpenTelemetry::Trace::Tracestate::DEFAULT, false
+      span_id, trace_id, OpenTelemetry::Trace::TraceFlags::DEFAULT,
+      OpenTelemetry::Trace::Tracestate::DEFAULT, false
     )
   end
 
   def identifier(span)
-    "#{span.hex_trace_id}:#{span.hex_span_id}"
+    Langfuse::OtelSpanIdentifier.new(trace_id: span.hex_trace_id, span_id: span.hex_span_id)
   end
 
   describe "#export" do
@@ -57,81 +57,69 @@ RSpec.describe Langfuse::MaskingExporter do
 
     context "with snapshots given to the hook" do
       let(:seen) { [] }
-      let(:hook) do
-        lambda do |spans:|
-          seen << spans
-          nil
-        end
-      end
+      let(:hook) { ->(params:) { seen << params } }
 
-      it "exposes both Langfuse-owned and third-party spans" do
+      it "uses explicit value objects" do
         exporter.export(batch)
 
-        expect(seen.first.keys).to contain_exactly(identifier(langfuse_span), identifier(third_party_span))
+        expect(seen.first).to be_a(Langfuse::MaskOtelSpansParams)
+        expect(seen.first.spans.keys).to all(be_a(Langfuse::OtelSpanIdentifier))
+        expect(seen.first.spans.values).to all(be_a(Langfuse::OtelSpanData))
+        expect(seen.first.spans.keys.first.trace_id).to be_frozen
+        expect(seen.first.spans.keys.first.span_id).to be_frozen
       end
 
-      it "exposes trace/span ids, name, scope, and frozen attributes" do
-        exporter.export(batch)
+      it "exposes the complete supported span snapshot" do
+        parent_span_id = OpenTelemetry::Trace.generate_span_id
+        span = build_span_data(name: "child", scope_name: "ruby-openai", parent_span_id: parent_span_id,
+                               attributes: { "gen_ai.prompt" => "secret" })
 
-        snapshot = seen.first[identifier(third_party_span)]
-        expect(snapshot.trace_id).to eq(third_party_span.hex_trace_id)
-        expect(snapshot.span_id).to eq(third_party_span.hex_span_id)
-        expect(snapshot.name).to eq("chat gpt-4o")
-        expect(snapshot.scope_name).to eq("ruby-openai")
-        expect(snapshot.name).to be_frozen
-        expect(snapshot.scope_name).to be_frozen
-        expect(snapshot.attributes).to be_frozen
-        expect(snapshot.attributes["gen_ai.prompt"]).to be_frozen
+        exporter.export([span])
+
+        snapshot = seen.first.spans.fetch(identifier(span))
+        expect(snapshot).to have_attributes(
+          trace_id: span.hex_trace_id,
+          span_id: span.hex_span_id,
+          parent_span_id: parent_span_id.unpack1("H*"),
+          name: "child",
+          instrumentation_scope_name: "ruby-openai",
+          instrumentation_scope_version: "1.0.0"
+        )
+        expect(snapshot.attributes).to eq("gen_ai.prompt" => "secret")
         expect(snapshot.resource_attributes).to include("service.name" => "test-app")
       end
 
-      it "gives the hook a frozen mapping" do
-        exporter.export(batch)
-
-        expect(seen.first).to be_frozen
-      end
-
-      it "does not freeze the original span attribute values" do
-        exporter.export(batch)
-
-        expect(third_party_span.attributes["gen_ai.prompt"]).not_to be_frozen
-      end
-
-      it "copies array attribute elements instead of aliasing them" do
+      it "gives the hook a frozen mapping with frozen copied values" do
         original = [+"tag-one", +"tag-two"]
-        span = build_span_data(name: "array-span", scope_name: "ruby-openai",
+        span = build_span_data(name: +"mutable-name", scope_name: +"mutable-scope",
                                attributes: { "gen_ai.tags" => original })
 
         exporter.export([span])
 
-        snapshot_value = seen.first[identifier(span)].attributes["gen_ai.tags"]
-        expect(snapshot_value).to be_frozen
-        expect(snapshot_value.first).to be_frozen
-        expect(snapshot_value.first).not_to equal(original.first)
+        snapshot = seen.first.spans.fetch(identifier(span))
+        expect(seen.first.spans).to be_frozen
+        expect(snapshot.name).to be_frozen
+        expect(snapshot.instrumentation_scope_name).to be_frozen
+        expect(snapshot.attributes).to be_frozen
+        expect(snapshot.attributes["gen_ai.tags"]).to be_frozen
+        expect(snapshot.attributes["gen_ai.tags"].first).to be_frozen
+        expect(snapshot.attributes["gen_ai.tags"].first).not_to equal(original.first)
         expect(original.first).not_to be_frozen
-      end
-
-      it "copies span and scope names instead of exposing shared strings" do
-        span = build_span_data(name: +"mutable-name", scope_name: +"mutable-scope")
-
-        exporter.export([span])
-
-        snapshot = seen.first[identifier(span)]
-        expect(snapshot.name).not_to equal(span.name)
-        expect(snapshot.scope_name).not_to equal(span.instrumentation_scope.name)
       end
     end
 
     context "with sparse patches" do
       let(:hook) do
-        lambda do |spans:|
-          target = spans.values.find { |snapshot| snapshot.scope_name == "ruby-openai" }
-          {
-            "#{target.trace_id}:#{target.span_id}" => {
-              delete: ["gen_ai.prompt"],
-              set: { "gen_ai.prompt.masked" => true }
+        lambda do |params:|
+          target = params.spans.find { |_identifier, span| span.instrumentation_scope_name == "ruby-openai" }.first
+          Langfuse::MaskOtelSpansResult.new(
+            span_patches: {
+              target => Langfuse::OtelSpanPatch.new(
+                delete_attributes: ["gen_ai.prompt"],
+                set_attributes: { "gen_ai.prompt.masked" => true }
+              )
             }
-          }
+          )
         end
       end
 
@@ -157,33 +145,33 @@ RSpec.describe Langfuse::MaskingExporter do
       end
     end
 
-    context "with delete-then-set precedence" do
-      let(:hook) do
-        lambda do |spans:|
-          spans.each_key.to_h do |id|
-            [id, { delete: ["gen_ai.prompt"], set: { "gen_ai.prompt" => "<redacted>" } }]
-          end
+    it "applies deletes before sets" do
+      replacement_hook = lambda do |params:|
+        patches = params.spans.to_h do |span_identifier, _span|
+          [span_identifier, Langfuse::OtelSpanPatch.new(
+            delete_attributes: ["gen_ai.prompt"], set_attributes: { "gen_ai.prompt" => "<redacted>" }
+          )]
         end
+        Langfuse::MaskOtelSpansResult.new(span_patches: patches)
       end
+      replacement_exporter = described_class.new(delegate: delegate, hook: replacement_hook, logger: logger)
 
-      it "lets the replacement win when a key appears in both" do
-        exporter.export([third_party_span])
+      replacement_exporter.export([third_party_span])
 
-        expect(delegate.finished_spans.first.attributes["gen_ai.prompt"]).to eq("<redacted>")
-      end
+      expect(delegate.finished_spans.first.attributes["gen_ai.prompt"]).to eq("<redacted>")
     end
 
     context "when the hook raises" do
       let(:hook) { ->(**) { raise "leaky ssn 123-45-6789" } }
 
-      it "drops the whole batch and returns FAILURE" do
+      it "consumes and drops the batch without reporting a transport failure" do
         result = exporter.export(batch)
 
-        expect(result).to eq(OpenTelemetry::SDK::Trace::Export::FAILURE)
+        expect(result).to eq(OpenTelemetry::SDK::Trace::Export::SUCCESS)
         expect(delegate.finished_spans).to be_empty
       end
 
-      it "logs only the exception class, never the message" do
+      it "logs only the exception class" do
         exporter.export(batch)
 
         expect(logger).to have_received(:error) do |message|
@@ -193,75 +181,96 @@ RSpec.describe Langfuse::MaskingExporter do
       end
     end
 
-    context "when the hook returns an invalid top-level result" do
-      let(:hook) { ->(**) { "not a hash" } }
+    it "drops the batch when the hook returns an invalid result" do
+      invalid_exporter = described_class.new(delegate: delegate, hook: ->(**) { { span_patches: {} } }, logger: logger)
 
-      it "drops the whole batch and returns FAILURE" do
-        result = exporter.export(batch)
+      result = invalid_exporter.export(batch)
 
-        expect(result).to eq(OpenTelemetry::SDK::Trace::Export::FAILURE)
-        expect(delegate.finished_spans).to be_empty
-        expect(logger).to have_received(:error).with(/returned String/)
-      end
+      expect(result).to eq(OpenTelemetry::SDK::Trace::Export::SUCCESS)
+      expect(delegate.finished_spans).to be_empty
+      expect(logger).to have_received(:error).with(/invalid result/)
     end
 
-    context "when one span patch is malformed" do
-      let(:hook) do
-        lambda do |spans:|
-          langfuse_id, third_party_id = spans.keys
-          {
-            langfuse_id => "not a patch",
-            third_party_id => { delete: ["gen_ai.prompt"] }
-          }
-        end
-      end
+    it "drops the batch when span_patches is not a Hash" do
+      invalid_hook = ->(**) { Langfuse::MaskOtelSpansResult.new(span_patches: []) }
+      invalid_exporter = described_class.new(delegate: delegate, hook: invalid_hook, logger: logger)
 
-      it "drops only that span and keeps the rest of the batch" do
-        exporter.export(batch)
-
-        expect(delegate.finished_spans.map(&:name)).to eq(["chat gpt-4o"])
-        expect(logger).to have_received(:error).with(/malformed patch for span 'langfuse-span'/)
-      end
+      expect(invalid_exporter.export(batch)).to eq(OpenTelemetry::SDK::Trace::Export::SUCCESS)
+      expect(delegate.finished_spans).to be_empty
     end
 
-    context "when a present patch is false" do
-      let(:hook) { ->(spans:) { { spans.keys.first => false } } }
-
-      it "drops the span instead of exporting it unchanged" do
-        exporter.export([third_party_span])
-
-        expect(delegate.finished_spans).to be_empty
-        expect(logger).to have_received(:error).with(/malformed patch/)
+    it "leaves a span unchanged when its patch is nil" do
+      nil_patch_hook = lambda do |params:|
+        Langfuse::MaskOtelSpansResult.new(span_patches: { params.spans.keys.first => nil })
       end
+      nil_patch_exporter = described_class.new(delegate: delegate, hook: nil_patch_hook, logger: logger)
+
+      nil_patch_exporter.export([third_party_span])
+
+      expect(delegate.finished_spans.first).to equal(third_party_span)
     end
 
-    context "when a patch has unknown keys" do
-      let(:hook) do
-        ->(spans:) { spans.each_key.to_h { |id| [id, { remove: ["gen_ai.prompt"] }] } }
+    it "drops only the span with an invalid patch object" do
+      invalid_patch_hook = lambda do |params:|
+        first, second = params.spans.keys
+        Langfuse::MaskOtelSpansResult.new(
+          span_patches: { first => { set_attributes: {} }, second => Langfuse::OtelSpanPatch.new }
+        )
       end
+      invalid_exporter = described_class.new(delegate: delegate, hook: invalid_patch_hook, logger: logger)
 
-      it "treats the patch as malformed and drops the span" do
-        exporter.export([third_party_span])
+      invalid_exporter.export(batch)
 
-        expect(delegate.finished_spans).to be_empty
-        expect(logger).to have_received(:error).with(/malformed patch/)
+      expect(delegate.finished_spans.map(&:name)).to eq(["chat gpt-4o"])
+      expect(logger).to have_received(:error).with(/invalid span patch/)
+    end
+
+    it "drops only the span with invalid patch containers" do
+      invalid_patch_hook = lambda do |params:|
+        patch = Langfuse::OtelSpanPatch.new(set_attributes: [], delete_attributes: "secret")
+        Langfuse::MaskOtelSpansResult.new(span_patches: { params.spans.keys.first => patch })
       end
+      invalid_exporter = described_class.new(delegate: delegate, hook: invalid_patch_hook, logger: logger)
+
+      invalid_exporter.export([third_party_span])
+
+      expect(delegate.finished_spans).to be_empty
+      expect(logger).to have_received(:error).with(/invalid span patch/)
+    end
+
+    it "ignores invalid attribute keys without dropping valid patch entries" do
+      invalid_keys_hook = lambda do |params:|
+        patch = Langfuse::OtelSpanPatch.new(
+          delete_attributes: [nil, "gen_ai.prompt"],
+          set_attributes: { nil => "ignored", "masking.applied" => true }
+        )
+        Langfuse::MaskOtelSpansResult.new(span_patches: { params.spans.keys.first => patch })
+      end
+      invalid_keys_exporter = described_class.new(delegate: delegate, hook: invalid_keys_hook, logger: logger)
+
+      invalid_keys_exporter.export([third_party_span])
+
+      expect(delegate.finished_spans.first.attributes).to eq(
+        "gen_ai.system" => "openai", "masking.applied" => true
+      )
+      expect(logger).to have_received(:warn).twice
     end
 
     context "when a replacement attribute value is invalid" do
       let(:hook) do
-        ->(spans:) { spans.each_key.to_h { |id| [id, { set: { "gen_ai.prompt" => Object.new } }] } }
+        lambda do |params:|
+          patch = Langfuse::OtelSpanPatch.new(set_attributes: { "gen_ai.prompt" => Object.new })
+          Langfuse::MaskOtelSpansResult.new(span_patches: { params.spans.keys.first => patch })
+        end
       end
 
       it "omits the attribute instead of exporting the original value" do
         exporter.export([third_party_span])
 
-        exported = delegate.finished_spans.first
-        expect(exported.attributes).not_to have_key("gen_ai.prompt")
-        expect(exported.attributes["gen_ai.system"]).to eq("openai")
+        expect(delegate.finished_spans.first.attributes).to eq("gen_ai.system" => "openai")
       end
 
-      it "logs the key without the value" do
+      it "logs the key without the original value" do
         exporter.export([third_party_span])
 
         expect(logger).to have_received(:warn) do |message|
@@ -271,75 +280,83 @@ RSpec.describe Langfuse::MaskingExporter do
       end
     end
 
-    context "with valid replacement value types" do
-      let(:hook) do
-        lambda do |spans:|
-          spans.each_key.to_h do |id|
-            [id, { set: {
-              "string" => "ok", "int" => 1, "float" => 1.5, "bool" => true,
-              "bools" => [true, false], "numbers" => [1, 2.5],
-              "strings" => %w[a b], "empty" => []
-            } }]
-          end
-        end
+    it "accepts OpenTelemetry scalar and homogeneous array values" do
+      valid_values = {
+        "string" => "ok", "int" => 1, "float" => 1.5, "bool" => true,
+        "bools" => [true, false], "numbers" => [1, 2.5], "strings" => %w[a b], "empty" => []
+      }
+      valid_hook = lambda do |params:|
+        patch = Langfuse::OtelSpanPatch.new(set_attributes: valid_values)
+        Langfuse::MaskOtelSpansResult.new(span_patches: { params.spans.keys.first => patch })
       end
+      valid_exporter = described_class.new(delegate: delegate, hook: valid_hook, logger: logger)
 
-      it "accepts scalars and homogeneous scalar arrays" do
-        exporter.export([third_party_span])
+      valid_exporter.export([third_party_span])
 
-        attributes = delegate.finished_spans.first.attributes
-        expect(attributes).to include(
-          "string" => "ok", "int" => 1, "float" => 1.5, "bool" => true,
-          "bools" => [true, false], "numbers" => [1, 2.5],
-          "strings" => %w[a b], "empty" => []
+      expect(delegate.finished_spans.first.attributes).to include(valid_values)
+      expect(delegate.finished_spans.first.total_recorded_attributes).to be >= valid_values.size
+      expect(logger).not_to have_received(:warn)
+    end
+
+    it "copies mutable replacement values" do
+      replacement = +"masked"
+      copy_hook = lambda do |params:|
+        patch = Langfuse::OtelSpanPatch.new(set_attributes: { "gen_ai.prompt" => replacement })
+        Langfuse::MaskOtelSpansResult.new(span_patches: { params.spans.keys.first => patch })
+      end
+      copy_exporter = described_class.new(delegate: delegate, hook: copy_hook, logger: logger)
+
+      copy_exporter.export([third_party_span])
+
+      exported_value = delegate.finished_spans.first.attributes["gen_ai.prompt"]
+      expect(exported_value).to eq("masked")
+      expect(exported_value).to be_frozen
+      expect(exported_value).not_to equal(replacement)
+    end
+
+    it "deletes a heterogeneous array replacement" do
+      invalid_value_hook = lambda do |params:|
+        patch = Langfuse::OtelSpanPatch.new(set_attributes: { "mixed" => ["a", 1] })
+        Langfuse::MaskOtelSpansResult.new(span_patches: { params.spans.keys.first => patch })
+      end
+      invalid_exporter = described_class.new(delegate: delegate, hook: invalid_value_hook, logger: logger)
+
+      invalid_exporter.export([third_party_span])
+
+      expect(delegate.finished_spans.first.attributes).not_to have_key("mixed")
+    end
+
+    it "drops the batch when a patch uses an unknown identifier" do
+      unknown_identifier = Langfuse::OtelSpanIdentifier.new(trace_id: "1" * 32, span_id: "2" * 16)
+      unknown_hook = lambda do |**|
+        Langfuse::MaskOtelSpansResult.new(
+          span_patches: { unknown_identifier => Langfuse::OtelSpanPatch.new(delete_attributes: ["secret"]) }
         )
-        expect(logger).not_to have_received(:warn)
       end
+      unknown_exporter = described_class.new(delegate: delegate, hook: unknown_hook, logger: logger)
 
-      it "keeps OpenTelemetry dropped-attribute accounting valid" do
-        exporter.export([third_party_span])
-
-        exported = delegate.finished_spans.first
-        expect(exported.total_recorded_attributes).to be >= exported.attributes.size
-      end
+      expect(unknown_exporter.export(batch)).to eq(OpenTelemetry::SDK::Trace::Export::SUCCESS)
+      expect(delegate.finished_spans).to be_empty
+      expect(logger).to have_received(:error).with(/unknown span identifier/)
     end
 
-    context "with a heterogeneous array replacement" do
-      let(:hook) do
-        ->(spans:) { spans.each_key.to_h { |id| [id, { set: { "mixed" => ["a", 1] } }] } }
-      end
+    it "keeps the last span when identifiers are duplicated" do
+      duplicate = third_party_span.dup
+      duplicate.name = "duplicate-last"
 
-      it "rejects the value and omits the attribute" do
-        exporter.export([third_party_span])
+      exporter.export([third_party_span, langfuse_span, duplicate])
 
-        expect(delegate.finished_spans.first.attributes).not_to have_key("mixed")
-        expect(logger).to have_received(:warn).with(/'mixed'/)
-      end
+      expect(delegate.finished_spans.map(&:name)).to eq(%w[langfuse-span duplicate-last])
     end
 
-    context "with patches keyed by unknown identifiers" do
-      let(:hook) { ->(**) { { "deadbeef:cafebabe" => { delete: ["x"] } } } }
+    it "drops invalid-context spans without dropping the rest of the batch" do
+      invalid = third_party_span.dup
+      invalid.trace_id = OpenTelemetry::Trace::INVALID_TRACE_ID
 
-      it "drops the batch instead of exporting unmatched sensitive spans" do
-        result = exporter.export(batch)
+      exporter.export([invalid, langfuse_span])
 
-        expect(result).to eq(OpenTelemetry::SDK::Trace::Export::FAILURE)
-        expect(delegate.finished_spans).to be_empty
-        expect(logger).to have_received(:error).with(/unknown span identifier/)
-      end
-    end
-
-    context "with duplicate span identifiers" do
-      it "drops the batch instead of silently collapsing snapshots" do
-        duplicate = third_party_span.dup
-        duplicate.name = "duplicate"
-
-        result = exporter.export([third_party_span, duplicate])
-
-        expect(result).to eq(OpenTelemetry::SDK::Trace::Export::FAILURE)
-        expect(delegate.finished_spans).to be_empty
-        expect(logger).to have_received(:error).with(/duplicate span identifiers/)
-      end
+      expect(delegate.finished_spans.map(&:name)).to eq(["langfuse-span"])
+      expect(logger).to have_received(:warn).with(/invalid span context/)
     end
   end
 

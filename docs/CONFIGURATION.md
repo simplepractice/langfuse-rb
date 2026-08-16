@@ -399,17 +399,31 @@ See [TRACING.md](TRACING.md#masking) for usage patterns and behavior details.
 
 - **Type:** `#call` (Proc, Lambda, or any object responding to `call`) or `nil`
 - **Default:** `nil` (export-stage masking disabled)
-- **Description:** Export-stage masking hook applied to every span batch exported to Langfuse, including spans created by third-party instrumentations. Receives a `spans:` keyword argument — a frozen Hash mapping stable span identifiers (`"<hex trace_id>:<hex span_id>"`) to immutable `Langfuse::OtelSpanSnapshot` values (trace/span IDs, name, instrumentation scope name, frozen span attributes, frozen resource attributes). Return `nil` to export the batch unchanged, or a sparse Hash of patches keyed by the same identifiers. Each patch is a Hash with optional `:delete` (Array of attribute keys) and `:set` (Hash of replacement attributes); deletes run before sets, so a replacement wins when a key appears in both.
+- **Description:** Export-stage masking hook applied to each span batch exported to Langfuse, including spans from third-party instrumentations. Receives a `params:` keyword with `Langfuse::MaskOtelSpansParams`. Its frozen `spans` Hash maps `Langfuse::OtelSpanIdentifier` keys to immutable `Langfuse::OtelSpanData` snapshots. Return `nil` to export the batch unchanged. Return `Langfuse::MaskOtelSpansResult` with sparse `Langfuse::OtelSpanPatch` values to delete or replace attributes on selected spans.
 
 ```ruby
-config.mask_otel_spans = lambda { |spans:|
-  spans.filter_map { |id, snapshot|
-    next unless snapshot.attributes.key?("gen_ai.prompt")
+config.mask_otel_spans = lambda { |params:|
+  patches = params.spans.filter_map { |identifier, span|
+    next unless span.attributes.key?("gen_ai.prompt")
 
-    [id, { set: { "gen_ai.prompt" => "[REDACTED]" } }]
+    [
+      identifier,
+      Langfuse::OtelSpanPatch.new(
+        set_attributes: { "gen_ai.prompt" => "[REDACTED]" }
+      )
+    ]
   }.to_h
+
+  Langfuse::MaskOtelSpansResult.new(span_patches: patches)
 }
 ```
+
+`Langfuse::OtelSpanData` exposes the trace ID, span ID, parent span ID, name,
+instrumentation scope name and version, frozen span attributes, and frozen
+resource attributes. The hook can patch span attributes only. Reuse identifiers
+from `params.spans` when building the result. A `nil` patch leaves that span
+unchanged. `delete_attributes` runs before `set_attributes`, so a set wins when
+the same key appears in both collections.
 
 Fail-closed behavior:
 
@@ -417,7 +431,7 @@ Fail-closed behavior:
 - A malformed per-span patch drops that span from the Langfuse export.
 - An invalid replacement attribute value omits that attribute rather than exporting its original value.
 
-Only the copy exported to Langfuse is transformed. Any other OpenTelemetry exporter receives the original, unmasked spans — Langfuse masking does not protect other telemetry backends. The hook is synchronous and runs on the batch export thread; it must not rely on request context, the current span, async work, or network calls.
+Only the copy exported to Langfuse is transformed. Any other OpenTelemetry exporter receives the original, unmasked spans. The hook is synchronous and usually runs on the batch export thread. Keep it deterministic and fast. Do not rely on request context, the current span, async work, or network calls.
 
 See [TRACING.md](TRACING.md#masking) for how the two masking boundaries relate.
 

@@ -148,7 +148,7 @@ RSpec.describe Langfuse::OtelSetup do
     end
   end
 
-  describe ".build_exporter" do
+  describe ".build_exporter transport" do
     it "configures direct v4 OTLP ingestion without changing transport settings" do
       expected_headers = {
         "Authorization" => "Basic #{Base64.strict_encode64('pk_test_123:sk_test_456')}",
@@ -290,7 +290,7 @@ RSpec.describe Langfuse::OtelSetup do
     end
   end
 
-  describe ".build_exporter" do
+  describe ".build_exporter masking" do
     before do
       allow(described_class).to receive(:build_exporter).and_call_original
     end
@@ -308,13 +308,14 @@ RSpec.describe Langfuse::OtelSetup do
   describe "export-stage masking" do
     let(:seen_spans) { [] }
     let(:mask_hook) do
-      lambda do |spans:|
-        seen_spans.concat(spans.values)
-        spans.filter_map do |id, snapshot|
+      lambda do |params:|
+        seen_spans.concat(params.spans.values)
+        patches = params.spans.filter_map do |id, snapshot|
           next unless snapshot.attributes.key?("gen_ai.prompt")
 
-          [id, { set: { "gen_ai.prompt" => "<redacted>" } }]
+          [id, Langfuse::OtelSpanPatch.new(set_attributes: { "gen_ai.prompt" => "<redacted>" })]
         end.to_h
+        Langfuse::MaskOtelSpansResult.new(span_patches: patches)
       end
     end
 
