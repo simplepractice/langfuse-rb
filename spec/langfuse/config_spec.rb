@@ -117,6 +117,41 @@ RSpec.describe Langfuse::Config do
       config = described_class.new
       expect(config.logger).to be_a(Logger)
     end
+
+    it "uses a null logger when the configured logger is nil" do
+      config = described_class.new { |c| c.logger = nil }
+
+      expect(config.logger).to equal(described_class::NULL_LOGGER)
+      expect { config.logger.warn("not emitted") }.not_to raise_error
+    end
+
+    it "uses the default logger when Rails.logger is nil" do
+      rails_class = Class.new do
+        def self.logger = nil
+      end
+      stub_const("Rails", rails_class)
+
+      expect(described_class.new.logger).to be_a(Logger)
+    end
+  end
+
+  describe "#valid?" do
+    let(:config) do
+      described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+      end
+    end
+
+    it "returns true for configuration that can construct a client" do
+      expect(config.valid?).to be true
+    end
+
+    it "returns false instead of raising for invalid configuration" do
+      config.batch_size = "invalid"
+
+      expect(config.valid?).to be false
+    end
   end
 
   describe "#validate!" do

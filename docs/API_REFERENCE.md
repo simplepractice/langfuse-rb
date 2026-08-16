@@ -112,6 +112,28 @@ RSpec.configure do |config|
 end
 ```
 
+### `Langfuse.configured?`
+
+Check whether the local configuration can construct `Langfuse.client`.
+
+```ruby
+Langfuse.configured? # => true or false
+```
+
+This method does not access the network. A `true` result does not prove that credentials are valid or that trace export works.
+
+### `Langfuse.auth_check` and `Langfuse.auth_check!`
+
+Check the configured credentials through `GET /api/public/projects`.
+
+```ruby
+Langfuse.auth_check  # => true or false
+Langfuse.auth_check! # => true or raises
+Langfuse.client.auth_check! # => true or raises
+```
+
+`auth_check` returns `false` for invalid local configuration and API failures. The bang methods raise `ConfigurationError`, `UnauthorizedError`, or `ApiError`.
+
 ### `Langfuse.tracer_provider`
 
 Return Langfuse's internal tracer provider so you can explicitly install it as the global OpenTelemetry provider.

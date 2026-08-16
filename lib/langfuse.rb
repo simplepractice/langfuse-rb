@@ -112,6 +112,40 @@ module Langfuse
       @client ||= Client.new(configuration)
     end
 
+    # Check whether the local configuration can construct a client.
+    #
+    # This method does not access the network or validate credentials.
+    #
+    # @return [Boolean] true when the local configuration is valid
+    # @raise [Exception] if a fatal non-StandardError exception occurs
+    def configured?
+      configuration.valid?
+    rescue ConfigurationError => e
+      warn_invalid_configuration_once(e.message)
+      false
+    end
+
+    # Check whether Langfuse accepts the configured credentials.
+    #
+    # @return [Boolean] true when authentication succeeds, otherwise false
+    # @raise [Exception] if a fatal non-StandardError exception occurs
+    def auth_check
+      auth_check!
+      true
+    rescue ConfigurationError, ApiError
+      false
+    end
+
+    # Check authentication and raise when the check fails.
+    #
+    # @return [true] true when authentication succeeds
+    # @raise [ConfigurationError] if the local configuration is invalid
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] if the API request fails or returns no project
+    def auth_check!
+      client.auth_check!
+    end
+
     # Return Langfuse's internal tracer provider for explicit global OpenTelemetry installation.
     #
     # @return [OpenTelemetry::SDK::Trace::TracerProvider]
@@ -401,12 +435,14 @@ module Langfuse
       @client = nil
       @noop_tracer = nil
       @tracing_disabled_warning_emitted = false
+      @invalid_configuration_warning_emitted = false
     rescue StandardError
       # Ignore shutdown errors during reset (e.g., in tests)
       @configuration = nil
       @client = nil
       @noop_tracer = nil
       @tracing_disabled_warning_emitted = false
+      @invalid_configuration_warning_emitted = false
     end
 
     # Creates a new observation (root or child)
@@ -616,6 +652,21 @@ module Langfuse
         configuration.logger.warn(tracing_disabled_message(detail))
         @tracing_disabled_warning_emitted = true
       end
+    end
+
+    def warn_invalid_configuration_once(detail)
+      return if @invalid_configuration_warning_emitted
+
+      tracing_warning_mutex.synchronize do
+        return if @invalid_configuration_warning_emitted
+
+        readiness_logger.warn("Langfuse configuration is invalid: #{detail}")
+        @invalid_configuration_warning_emitted = true
+      end
+    end
+
+    def readiness_logger
+      @configuration&.logger || (@readiness_logger ||= Logger.new($stdout, level: Logger::WARN))
     end
 
     def tracing_disabled_message(detail)

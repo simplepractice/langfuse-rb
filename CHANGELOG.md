@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `ScoreClient#create!`, `Client#create_score!`, and `Langfuse.create_score!` create scores through the synchronous Scores API, return the created score ID, and raise API errors. The existing `create` methods retain fire-and-forget ingestion batching.
+- `Langfuse.configured?` checks locally whether the global client can be constructed without accessing the network.
+- `Langfuse.auth_check`, `Langfuse.auth_check!`, and `Client#auth_check!` check credentials through the projects API.
 
 ### Changed
 - Client construction now rejects invalid `batch_size` and `flush_interval` values before score batching can fail later.
 - Configuration validation now requires string-like credentials. Present values with another type raise a specific type error.
+- Assigning `nil` to `Config#logger` now selects a null logger so SDK logger calls remain safe.
 
 ### Fixed
 - Configuration validation now reports invalid numeric types, stale cache settings, and tracing callables as `ConfigurationError`.

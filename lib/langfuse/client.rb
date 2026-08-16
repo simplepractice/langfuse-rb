@@ -98,6 +98,18 @@ module Langfuse
       @score_client = ScoreClient.new(api_client: @api_client, config: config)
     end
 
+    # Check whether the configured credentials authenticate with Langfuse.
+    #
+    # @return [true] true when Langfuse accepts the credentials
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] if the API request fails or returns no project
+    def auth_check!
+      projects = api_client.get_projects.fetch("data", [])
+      return true unless projects.empty?
+
+      raise ApiError, "Authentication succeeded but no project is available"
+    end
+
     # Fetch a prompt and return the appropriate client
     #
     # Fetches the prompt from the Langfuse API and returns either a

@@ -33,7 +33,7 @@ module Langfuse
     attr_accessor :timeout
 
     # @return [Logger] Logger instance for debugging
-    attr_accessor :logger
+    attr_reader :logger
 
     # @return [Integer] Cache TTL in seconds
     attr_accessor :cache_ttl
@@ -144,6 +144,9 @@ module Langfuse
     # @return [Float] Default trace sampling rate (sample all traces)
     DEFAULT_SAMPLE_RATE = 1.0
 
+    # @return [Logger] Logger used when logging is explicitly disabled
+    NULL_LOGGER = Logger.new(IO::NULL)
+
     # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
 
@@ -184,9 +187,18 @@ module Langfuse
       @flush_interval = DEFAULT_FLUSH_INTERVAL
       @job_queue = DEFAULT_JOB_QUEUE
       initialize_tracing_defaults
-      @logger = default_logger
+      self.logger = default_logger
 
       yield(self) if block_given?
+    end
+
+    # Set the logger. A nil value disables output while preserving the logger contract.
+    #
+    # @param value [Logger, nil] Logger instance, or nil to disable logging
+    # @return [Logger] The normalized logger
+    # @raise [Exception] if assigning the logger fails at the Ruby runtime level
+    def logger=(value)
+      @logger = value || NULL_LOGGER
     end
 
     # Validate the configuration
@@ -199,6 +211,19 @@ module Langfuse
       validate_sample_rate!
       validate_client_settings!
       validate_callables!
+    end
+
+    # Check whether the configuration can construct a client.
+    #
+    # This check is local. It does not validate credentials or network access.
+    #
+    # @return [Boolean] true when {#validate!} succeeds
+    # @raise [Exception] if a fatal non-StandardError exception occurs
+    def valid?
+      validate!
+      true
+    rescue ConfigurationError
+      false
     end
 
     # Validate only settings consumed by tracing setup and export.
@@ -243,11 +268,9 @@ module Langfuse
     private
 
     def default_logger
-      if defined?(Rails) && Rails.respond_to?(:logger)
-        Rails.logger
-      else
-        Logger.new($stdout, level: Logger::WARN)
-      end
+      return Rails.logger if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
+
+      Logger.new($stdout, level: Logger::WARN)
     end
 
     def initialize_tracing_defaults

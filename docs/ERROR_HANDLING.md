@@ -441,14 +441,10 @@ puts "Cache enabled: #{stats[:enabled]}"
 ### Test Credentials
 
 ```ruby
-begin
-  prompts = Langfuse.client.list_prompts(limit: 1)
-  puts "✓ Credentials valid, found #{prompts.size} prompt(s)"
-rescue Langfuse::UnauthorizedError
-  puts "✗ Invalid credentials"
-rescue Langfuse::ApiError => e
-  puts "✗ API error: #{e.message}"
-end
+puts Langfuse.configured? # Local only. Does not access the network.
+puts Langfuse.auth_check  # Network check. Returns true or false.
+
+Langfuse.auth_check!      # Raises ConfigurationError or ApiError on failure.
 ```
 
 ### Validate Environment Variables

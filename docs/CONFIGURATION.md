@@ -294,8 +294,10 @@ config.logger = Logger.new('log/langfuse.log')
 config.logger.level = Logger::DEBUG
 
 # Disable logging
-config.logger = Logger.new(IO::NULL)
+config.logger = nil
 ```
+
+The SDK normalizes `nil` to a null logger. Logger calls remain safe when output is disabled.
 
 #### `tracing_async` ⚠️ Experimental
 
@@ -670,6 +672,8 @@ Langfuse.client
 ```
 
 Validation fails before the client or tracing processor starts. Invalid values raise `Langfuse::ConfigurationError`.
+
+Use `Langfuse.configured?` for a local, non-raising readiness check. This method does not validate credentials or network access. Use `Langfuse.auth_check` when the application must verify credentials against Langfuse.
 
 Validation rules:
 
