@@ -87,7 +87,23 @@ module Langfuse
 
     # @return [#call, nil] Mask callable applied to input, output, and metadata before serialization.
     #   Receives `data:` keyword argument. nil disables masking.
+    #   This is a creation-time hook for Langfuse-owned attributes; it never sees
+    #   raw third-party span attributes. See {#mask_otel_spans} for those.
     attr_accessor :mask
+
+    # @return [#call, nil] Export-stage masking hook for spans exported to Langfuse.
+    #   Receives a +params:+ keyword argument containing {MaskOtelSpansParams}.
+    #   Its frozen +spans+ Hash maps {OtelSpanIdentifier} keys to {OtelSpanData}
+    #   snapshots for one export batch, including third-party spans. Returns nil
+    #   to export the batch unchanged or {MaskOtelSpansResult} with sparse
+    #   {OtelSpanPatch} values. Deletes run before sets.
+    #   Only the copy exported to Langfuse is transformed — any other
+    #   OpenTelemetry exporter receives the original, unmasked spans, so
+    #   Langfuse masking does not protect other telemetry backends.
+    #   The hook is synchronous and must not rely on request context, the
+    #   current span, async work, or network calls. Exceptions and invalid
+    #   results fail closed by dropping the Langfuse export batch.
+    attr_accessor :mask_otel_spans
 
     # @return [String] Default Langfuse API base URL
     DEFAULT_BASE_URL = "https://cloud.langfuse.com"
@@ -194,10 +210,11 @@ module Langfuse
       validate_swr_config!
 
       validate_cache_backend!
-      validate_prompt_cache_observer!
       validate_sample_rate!
-      validate_should_export_span!
-      validate_mask!
+      validate_callable!(prompt_cache_observer, "prompt_cache_observer")
+      validate_callable!(should_export_span, "should_export_span")
+      validate_callable!(mask, "mask")
+      validate_callable!(mask_otel_spans, "mask_otel_spans")
     end
     # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
@@ -243,6 +260,7 @@ module Langfuse
       self.sample_rate = env_value("LANGFUSE_SAMPLE_RATE") || DEFAULT_SAMPLE_RATE
       @should_export_span = nil
       @mask = nil
+      @mask_otel_spans = nil
     end
 
     def validate_cache_backend!
@@ -253,10 +271,10 @@ module Langfuse
             "cache_backend must be one of #{valid_backends.inspect}, got #{cache_backend.inspect}"
     end
 
-    def validate_prompt_cache_observer!
-      return if prompt_cache_observer.nil? || prompt_cache_observer.respond_to?(:call)
+    def validate_callable!(value, name)
+      return if value.nil? || value.respond_to?(:call)
 
-      raise ConfigurationError, "prompt_cache_observer must respond to #call"
+      raise ConfigurationError, "#{name} must respond to #call"
     end
 
     def validate_swr_config!
@@ -295,18 +313,6 @@ module Langfuse
       return if sample_rate.is_a?(Numeric) && sample_rate.between?(0.0, 1.0)
 
       raise ConfigurationError, "sample_rate must be between 0.0 and 1.0"
-    end
-
-    def validate_mask!
-      return if mask.nil? || mask.respond_to?(:call)
-
-      raise ConfigurationError, "mask must respond to #call"
-    end
-
-    def validate_should_export_span!
-      return if should_export_span.nil? || should_export_span.respond_to?(:call)
-
-      raise ConfigurationError, "should_export_span must respond to #call"
     end
 
     def detect_release_from_ci_env

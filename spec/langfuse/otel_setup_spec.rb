@@ -148,7 +148,7 @@ RSpec.describe Langfuse::OtelSetup do
     end
   end
 
-  describe ".build_exporter" do
+  describe ".build_exporter transport" do
     it "configures direct v4 OTLP ingestion without changing transport settings" do
       expected_headers = {
         "Authorization" => "Basic #{Base64.strict_encode64('pk_test_123:sk_test_456')}",
@@ -287,6 +287,68 @@ RSpec.describe Langfuse::OtelSetup do
       Langfuse.force_flush(timeout: 1)
 
       expect(exporter.finished_spans).to be_empty
+    end
+  end
+
+  describe ".build_exporter masking" do
+    before do
+      allow(described_class).to receive(:build_exporter).and_call_original
+    end
+
+    it "returns the plain OTLP exporter when mask_otel_spans is nil" do
+      expect(described_class.send(:build_exporter, config)).to be_a(OpenTelemetry::Exporter::OTLP::Exporter)
+    end
+
+    it "wraps the OTLP exporter in a MaskingExporter when mask_otel_spans is configured" do
+      config.mask_otel_spans = ->(**) {}
+      expect(described_class.send(:build_exporter, config)).to be_a(Langfuse::MaskingExporter)
+    end
+  end
+
+  describe "export-stage masking" do
+    let(:seen_spans) { [] }
+    let(:mask_hook) do
+      lambda do |params:|
+        seen_spans.concat(params.spans.values)
+        patches = params.spans.filter_map do |id, snapshot|
+          next unless snapshot.attributes.key?("gen_ai.prompt")
+
+          [id, Langfuse::OtelSpanPatch.new(set_attributes: { "gen_ai.prompt" => "<redacted>" })]
+        end.to_h
+        Langfuse::MaskOtelSpansResult.new(span_patches: patches)
+      end
+    end
+
+    before do
+      allow(described_class).to receive(:build_exporter).and_call_original
+      allow(OpenTelemetry::Exporter::OTLP::Exporter).to receive(:new).and_return(exporter)
+      Langfuse.reset!
+      Langfuse.configure do |c|
+        c.public_key = config.public_key
+        c.secret_key = config.secret_key
+        c.base_url = config.base_url
+        c.tracing_async = false
+        c.mask_otel_spans = mask_hook
+        c.logger = logger
+      end
+    end
+
+    it "masks accepted third-party gen_ai spans on the Langfuse export copy" do
+      tracer = Langfuse.tracer_provider.tracer("langsmith.client")
+      tracer.start_span("llm-call", attributes: { "gen_ai.prompt" => "secret" }).finish
+      Langfuse.force_flush(timeout: 1)
+
+      exported = exporter.finished_spans.find { |span| span.name == "llm-call" }
+      expect(exported.attributes["gen_ai.prompt"]).to eq("<redacted>")
+    end
+
+    it "runs should_export_span before masking so rejected spans never reach the hook" do
+      Langfuse.tracer_provider.tracer("dalli").start_span("cache-span").finish
+      tracer = Langfuse.tracer_provider.tracer("langsmith.client")
+      tracer.start_span("llm-call", attributes: { "gen_ai.prompt" => "x" }).finish
+      Langfuse.force_flush(timeout: 1)
+
+      expect(seen_spans.map(&:name)).to eq(["llm-call"])
     end
   end
 end

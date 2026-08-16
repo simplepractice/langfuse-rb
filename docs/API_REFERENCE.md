@@ -58,6 +58,7 @@ Block receives a `Langfuse::Config` object with these properties:
 | `release`                      | String  | No       | `nil` (or `ENV["LANGFUSE_RELEASE"]` / common CI commit SHA env) | Default release identifier         |
 | `should_export_span`           | `#call` | No       | `nil`                          | Span export filter callback        |
 | `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
+| `mask_otel_spans`              | `#call` | No       | `nil`                          | Export-stage span masking hook (receives `params:` keyword; see [CONFIGURATION.md](CONFIGURATION.md#mask_otel_spans)) |
 
 **Example:**
 
