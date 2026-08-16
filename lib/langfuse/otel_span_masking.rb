@@ -13,7 +13,7 @@ module Langfuse
     # @param trace_id [String] 32-character lowercase hexadecimal trace ID
     # @param span_id [String] 16-character lowercase hexadecimal span ID
     # @return [OtelSpanIdentifier]
-    # @raise [TypeError] if an identifier cannot be copied
+    # @raise [ArgumentError] if an unknown keyword is given
     def initialize(trace_id:, span_id:)
       super(trace_id: trace_id.dup.freeze, span_id: span_id.dup.freeze)
     end

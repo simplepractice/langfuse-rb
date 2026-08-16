@@ -425,11 +425,24 @@ from `params.spans` when building the result. A `nil` patch leaves that span
 unchanged. `delete_attributes` runs before `set_attributes`, so a set wins when
 the same key appears in both collections.
 
+Batch semantics:
+
+- One call receives one OpenTelemetry export batch, which is not necessarily a complete trace, request, or observation tree. Batch contents depend on `batch_size`, `flush_interval`, explicit `Langfuse.flush`, and shutdown. Do not write a hook that assumes it can see a whole trace.
+- If a batch contains duplicate trace and span identifier pairs, only the last matching span is kept before the hook is called.
+- Spans with a missing or invalid span context are dropped from the Langfuse export before the hook is called. Enabling `mask_otel_spans` therefore drops spans that would otherwise have been exported.
+
 Fail-closed behavior:
 
 - A hook exception or an invalid top-level result drops the whole Langfuse export batch.
 - A malformed per-span patch drops that span from the Langfuse export.
 - An invalid replacement attribute value omits that attribute rather than exporting its original value.
+
+Returning a deliberately invalid patch to drop a span is not a supported API. Use
+[`should_export_span`](#should_export_span) when you need span-level export filtering.
+
+Masking failures are logged with the affected `trace_id` and `span_id`, or the batch
+size when the whole batch is dropped. Exception messages and attribute values are never
+logged, because both can carry the data being masked.
 
 Only the copy exported to Langfuse is transformed. Any other OpenTelemetry exporter receives the original, unmasked spans. The hook is synchronous and usually runs on the batch export thread. Keep it deterministic and fast. Do not rely on request context, the current span, async work, or network calls.
 

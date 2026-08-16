@@ -14,7 +14,8 @@ module Langfuse
     def apply(span, patch)
       unless valid_patch_containers?(patch)
         @logger.error(
-          "Langfuse mask_otel_spans produced an invalid span patch; dropping the span from the Langfuse export"
+          "Langfuse mask_otel_spans produced an invalid span patch; dropping the span " \
+          "from the Langfuse export (#{span_identity(span)})"
         )
         return nil
       end
@@ -33,41 +34,49 @@ module Langfuse
     def patched_attributes(span, patch)
       attributes = (span.attributes || {}).dup
       patch.delete_attributes.each do |key|
-        next warn_invalid_key("delete") unless valid_attribute_key?(key)
+        next warn_invalid_key("delete", span) unless valid_attribute_key?(key)
 
         attributes.delete(key)
       end
       patch.set_attributes.each do |key, value|
-        next warn_invalid_key("set") unless valid_attribute_key?(key)
+        next warn_invalid_key("set", span) unless valid_attribute_key?(key)
 
-        apply_replacement(attributes, key, value)
+        apply_replacement(attributes, key, value, span)
       end
       attributes.freeze
     end
 
-    def warn_invalid_key(operation)
-      @logger.warn("Langfuse mask_otel_spans ignored an invalid #{operation} attribute key")
+    def warn_invalid_key(operation, span)
+      @logger.warn(
+        "Langfuse mask_otel_spans ignored an invalid #{operation} attribute key (#{span_identity(span)})"
+      )
     end
 
-    def apply_replacement(attributes, key, value)
+    def apply_replacement(attributes, key, value, span)
       if OpenTelemetry::SDK::Internal.valid_value?(value)
         attributes[key] = frozen_copy(value)
       else
         attributes.delete(key)
         @logger.warn(
           "Langfuse mask_otel_spans replacement for attribute '#{key}' is not a valid " \
-          "OpenTelemetry attribute value (#{value.class}); omitting the attribute"
+          "OpenTelemetry attribute value (#{value.class}); omitting the attribute (#{span_identity(span)})"
         )
       end
+    end
+
+    # Trace and span IDs are opaque hex, unlike the attribute values being masked.
+    def span_identity(span)
+      "trace_id=#{span.hex_trace_id} span_id=#{span.hex_span_id}"
     end
 
     def valid_attribute_key?(key)
       OpenTelemetry::SDK::Internal.valid_key?(key) && !key.empty?
     end
 
+    # Replacement payloads can be large, so skip copying anything already immutable.
     def frozen_copy(value)
       case value
-      when String then value.dup.freeze
+      when String then value.frozen? ? value : value.dup.freeze
       when Array then value.map { |element| frozen_copy(element) }.freeze
       else value
       end

@@ -19,6 +19,10 @@ module Langfuse
       @spans_by_identifier.empty?
     end
 
+    def size
+      @spans_by_identifier.size
+    end
+
     def include_identifier?(identifier)
       @spans_by_identifier.key?(identifier)
     end
@@ -39,11 +43,14 @@ module Langfuse
     def index_spans(span_data)
       span_data.each_with_object({}) do |span, indexed_spans|
         unless valid_span_context?(span)
-          @logger.warn("Langfuse mask_otel_spans dropped a span with an invalid span context")
+          # No usable IDs here, so the span name is the only way to identify the drop.
+          @logger.warn("Langfuse mask_otel_spans dropped a span with an invalid span context (name=#{span.name})")
           next
         end
 
         identifier = span_identifier(span)
+        # Delete before re-inserting so a duplicated identifier takes the position of
+        # its last occurrence rather than its first, matching the Python SDK.
         indexed_spans.delete(identifier)
         indexed_spans[identifier] = span
       end
@@ -92,9 +99,11 @@ module Langfuse
       end.freeze
     end
 
+    # Attribute payloads can be large serialized prompts, so skip copying anything
+    # already immutable rather than duplicating it on every export.
     def frozen_copy(value)
       case value
-      when String then value.dup.freeze
+      when String then value.frozen? ? value : value.dup.freeze
       when Array then value.map { |element| frozen_copy(element) }.freeze
       else value
       end

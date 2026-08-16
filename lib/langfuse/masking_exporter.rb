@@ -15,6 +15,12 @@ module Langfuse
     SUCCESS = OpenTelemetry::SDK::Trace::Export::SUCCESS
     private_constant :SUCCESS
 
+    # Distinguishes "the hook raised" from a hook that legitimately returned nil.
+    # A constant rather than a memoized ivar because BatchSpanProcessor#force_flush
+    # exports on the caller's thread while the background thread may also be exporting.
+    HOOK_FAILURE = Object.new.freeze
+    private_constant :HOOK_FAILURE
+
     # @param delegate [#export, #force_flush, #shutdown] Langfuse OTLP exporter
     # @param hook [#call] configured mask_otel_spans callable
     # @param logger [Logger]
@@ -32,7 +38,7 @@ module Langfuse
     # @return [Integer] OpenTelemetry export result code
     def export(span_data, timeout: nil)
       masked_spans = mask_batch(span_data.to_a)
-      return SUCCESS unless masked_spans&.any?
+      return SUCCESS if masked_spans.nil? || masked_spans.empty?
 
       @delegate.export(masked_spans, timeout: timeout)
     end
@@ -49,43 +55,43 @@ module Langfuse
 
     private
 
+    # Returns nil to drop the whole Langfuse batch, otherwise the spans to export.
     def mask_batch(span_data)
       batch = OtelSpanBatch.new(span_data: span_data, logger: @logger)
       return [] if batch.empty?
 
-      result = call_hook(batch.masking_params)
-      return if result.equal?(hook_failure)
+      result = call_hook(batch)
+      return if result.equal?(HOOK_FAILURE)
       return batch.spans if result.nil?
       return unless valid_result?(result, batch)
 
       batch.apply(result.span_patches, patch_applier: @patch_applier)
     end
 
-    def call_hook(params)
-      @hook.call(params: params)
+    def call_hook(batch)
+      @hook.call(params: batch.masking_params)
     rescue StandardError => e
       # Hook exception messages can contain the sensitive values being masked.
-      @logger.error("Langfuse mask_otel_spans raised #{e.class}; dropping the Langfuse export batch")
-      hook_failure
+      @logger.error("Langfuse mask_otel_spans raised #{e.class}; #{dropping_batch(batch)}")
+      HOOK_FAILURE
     end
 
     def valid_result?(result, batch)
       unless result.is_a?(MaskOtelSpansResult) && result.span_patches.is_a?(Hash)
-        @logger.error("Langfuse mask_otel_spans returned an invalid result; dropping the Langfuse export batch")
+        @logger.error("Langfuse mask_otel_spans returned an invalid result; #{dropping_batch(batch)}")
         return false
       end
 
       return true if result.span_patches.each_key.all? { |identifier| batch.include_identifier?(identifier) }
 
       @logger.error(
-        "Langfuse mask_otel_spans returned a patch for an unknown span identifier; " \
-        "dropping the Langfuse export batch"
+        "Langfuse mask_otel_spans returned a patch for an unknown span identifier; #{dropping_batch(batch)}"
       )
       false
     end
 
-    def hook_failure
-      @hook_failure ||= Object.new.freeze
+    def dropping_batch(batch)
+      "dropping the Langfuse export batch of #{batch.size} spans"
     end
   end
 end

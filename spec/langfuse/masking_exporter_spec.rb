@@ -106,6 +106,17 @@ RSpec.describe Langfuse::MaskingExporter do
         expect(snapshot.attributes["gen_ai.tags"].first).not_to equal(original.first)
         expect(original.first).not_to be_frozen
       end
+
+      it "reuses already-frozen attribute values instead of copying them" do
+        frozen_payload = "already frozen prompt"
+        span = build_span_data(name: "frozen", scope_name: "ruby-openai",
+                               attributes: { "gen_ai.prompt" => frozen_payload })
+
+        exporter.export([span])
+
+        snapshot = seen.first.spans.fetch(identifier(span))
+        expect(snapshot.attributes["gen_ai.prompt"]).to equal(frozen_payload)
+      end
     end
 
     context "with sparse patches" do
@@ -179,6 +190,12 @@ RSpec.describe Langfuse::MaskingExporter do
           expect(message).not_to include("leaky ssn")
         end
       end
+
+      it "logs the number of dropped spans" do
+        exporter.export(batch)
+
+        expect(logger).to have_received(:error).with(/dropping the Langfuse export batch of 2 spans/)
+      end
     end
 
     it "drops the batch when the hook returns an invalid result" do
@@ -236,6 +253,19 @@ RSpec.describe Langfuse::MaskingExporter do
 
       expect(delegate.finished_spans).to be_empty
       expect(logger).to have_received(:error).with(/invalid span patch/)
+    end
+
+    it "identifies the dropped span by trace and span ID" do
+      invalid_patch_hook = lambda do |params:|
+        Langfuse::MaskOtelSpansResult.new(span_patches: { params.spans.keys.first => Object.new })
+      end
+      invalid_exporter = described_class.new(delegate: delegate, hook: invalid_patch_hook, logger: logger)
+
+      invalid_exporter.export([third_party_span])
+
+      expect(logger).to have_received(:error).with(
+        /trace_id=#{third_party_span.hex_trace_id} span_id=#{third_party_span.hex_span_id}/
+      )
     end
 
     it "ignores invalid attribute keys without dropping valid patch entries" do
@@ -356,7 +386,7 @@ RSpec.describe Langfuse::MaskingExporter do
       exporter.export([invalid, langfuse_span])
 
       expect(delegate.finished_spans.map(&:name)).to eq(["langfuse-span"])
-      expect(logger).to have_received(:warn).with(/invalid span context/)
+      expect(logger).to have_received(:warn).with(/invalid span context \(name=chat gpt-4o\)/)
     end
   end
 
