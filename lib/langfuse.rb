@@ -57,6 +57,7 @@ require_relative "langfuse/propagation"
 require_relative "langfuse/span_processor"
 require_relative "langfuse/observations"
 require_relative "langfuse/trace_id"
+require_relative "langfuse/score_value"
 require_relative "langfuse/score_client"
 require_relative "langfuse/prompt_renderer"
 require_relative "langfuse/text_prompt_client"
@@ -224,7 +225,7 @@ module Langfuse
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
     # @param environment [String, nil] Optional environment
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
     # @return [void]
@@ -266,7 +267,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
@@ -292,7 +293,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #

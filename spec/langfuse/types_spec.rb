@@ -31,6 +31,38 @@ RSpec.describe Langfuse::Types do
     end
   end
 
+  describe "SCORE_DATA_TYPES" do
+    it "maps all five general score data types to API strings" do
+      expect(described_class::SCORE_DATA_TYPES).to eq(
+        numeric: "NUMERIC",
+        boolean: "BOOLEAN",
+        categorical: "CATEGORICAL",
+        text: "TEXT",
+        correction: "CORRECTION"
+      )
+    end
+
+    it "is frozen" do
+      expect(described_class::SCORE_DATA_TYPES).to be_frozen
+    end
+  end
+
+  describe "EXPERIMENT_SCORE_DATA_TYPES" do
+    it "contains only metric-style data types" do
+      expect(described_class::EXPERIMENT_SCORE_DATA_TYPES).to contain_exactly(
+        :numeric, :boolean, :categorical
+      )
+    end
+
+    it "excludes the general-score text and correction types" do
+      expect(described_class::EXPERIMENT_SCORE_DATA_TYPES).not_to include(:text, :correction)
+    end
+
+    it "is frozen" do
+      expect(described_class::EXPERIMENT_SCORE_DATA_TYPES).to be_frozen
+    end
+  end
+
   describe Langfuse::Types::SpanAttributes do
     describe "#initialize" do
       it "accepts keyword arguments" do

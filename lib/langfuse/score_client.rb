@@ -63,7 +63,7 @@ module Langfuse
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
     # @param environment [String, nil] Optional environment
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
     # @return [void]
@@ -77,12 +77,20 @@ module Langfuse
     #
     # @example Categorical score
     #   create(name: "category", value: "high", trace_id: "abc123", data_type: :categorical)
+    #
+    # @example Text score (1 to 500 characters)
+    #   create(name: "reviewer_notes", value: "Helpful but verbose", trace_id: "abc123", data_type: :text)
+    #
+    # @example Corrected output (conventionally named "output")
+    #   create(name: "output", value: "The corrected output", trace_id: "abc123",
+    #          observation_id: "def456", data_type: :correction)
     # rubocop:disable Metrics/ParameterLists
     def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       validate_name(name)
-      normalized_value = normalize_value(value, data_type)
+      normalized_value = ScoreValue.normalize(value, data_type)
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
+      validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
 
       return unless enqueue_trace_linked_score?(trace_id)
 
@@ -109,7 +117,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
@@ -140,7 +148,7 @@ module Langfuse
     # @param value [Numeric, Integer, String] Score value
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical)
+    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
@@ -214,7 +222,7 @@ module Langfuse
     # @param comment [String, nil] Comment
     # @param metadata [Hash, nil] Metadata
     # @param environment [String, nil] Environment
-    # @param data_type [String] Data type string (NUMERIC, BOOLEAN, CATEGORICAL)
+    # @param data_type [String] API score data type string
     # @return [Hash] Event hash
     # rubocop:disable Metrics/ParameterLists
     def build_score_event(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
@@ -242,37 +250,13 @@ module Langfuse
     end
     # rubocop:enable Metrics/ParameterLists
 
-    # Normalize and validate score value based on data type
-    #
-    # @param value [Object] Raw score value
-    # @param data_type [Symbol] Data type symbol
-    # @return [Object] Normalized value
-    # @raise [ArgumentError] if value doesn't match data type
-    # rubocop:disable Metrics/CyclomaticComplexity
-    def normalize_value(value, data_type)
-      case data_type
-      when :numeric
-        raise ArgumentError, "Numeric value must be Numeric, got #{value.class}" unless value.is_a?(Numeric)
+    def validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
+      return unless data_type == :correction
+      return if trace_id.is_a?(String) && !trace_id.empty? && !session_id && !dataset_run_id && !config_id
 
-        value
-      when :boolean
-        case value
-        when true, 1
-          1
-        when false, 0
-          0
-        else
-          raise ArgumentError, "Boolean value must be true/false or 0/1, got #{value.inspect}"
-        end
-      when :categorical
-        raise ArgumentError, "Categorical value must be a String, got #{value.class}" unless value.is_a?(String)
-
-        value
-      else
-        raise ArgumentError, "Invalid data_type: #{data_type}"
-      end
+      raise ArgumentError,
+            "Correction scores require trace_id and cannot use session_id, dataset_run_id, or config_id"
     end
-    # rubocop:enable Metrics/CyclomaticComplexity
 
     # Validate score name
     #

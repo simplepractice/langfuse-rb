@@ -26,17 +26,21 @@ module Langfuse
     # @param name [String] Score name (required, must be non-empty)
     # @param value [Numeric, Boolean, String] Score value (type depends on data_type)
     # @param comment [String, nil] Optional comment describing the evaluation
-    # @param data_type [Symbol] One of :numeric, :boolean, or :categorical
+    # @param data_type [Symbol] One of :numeric, :boolean, or :categorical.
+    #   Experiment evaluations are metrics, so the general-score :text and
+    #   :correction types are rejected here; create those through
+    #   {Client#create_score} instead.
     # @param config_id [String, nil] Optional score config ID
     # @param metadata [Hash, nil] Optional metadata hash
     # @raise [ArgumentError] if name is nil or empty
-    # @raise [ArgumentError] if data_type is not a valid score data type
+    # @raise [ArgumentError] if data_type is not an experiment score data type
     def initialize(name:, value:, comment: nil, data_type: :numeric, config_id: nil, metadata: nil)
       raise ArgumentError, "name is required" if name.to_s.empty?
 
-      unless Types::SCORE_DATA_TYPES.key?(data_type)
+      unless Types::EXPERIMENT_SCORE_DATA_TYPES.include?(data_type)
         raise ArgumentError,
-              "Invalid data_type: #{data_type}. Valid types: #{Types::VALID_SCORE_DATA_TYPES.join(', ')}"
+              "Invalid data_type: #{data_type}. Experiment evaluations accept: " \
+              "#{Types::EXPERIMENT_SCORE_DATA_TYPES.join(', ')}"
       end
 
       validate_value!(value, data_type)

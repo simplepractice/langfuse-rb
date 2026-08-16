@@ -201,7 +201,7 @@ module Langfuse
     # @param value [Numeric, String, Boolean] score value
     # @param comment [String, nil] optional comment
     # @param metadata [Hash, nil] optional metadata
-    # @param data_type [Symbol] one of :numeric, :boolean, :categorical
+    # @param data_type [Symbol] one of :numeric, :boolean, :categorical, :text, :correction
     # @return [Hash] created score data from the API
     def score_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
       Langfuse.create_score(
