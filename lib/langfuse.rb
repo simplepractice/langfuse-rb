@@ -218,7 +218,7 @@ module Langfuse
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
-    # @param id [String, nil] Score ID
+    # @param id [String, nil] Score ID; use a stable value as an idempotency key
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
@@ -259,12 +259,11 @@ module Langfuse
     end
     # rubocop:enable Metrics/ParameterLists
 
-    # Create a score event and send it immediately, bypassing the in-memory
-    # queue and the trace-sampling gate. See {ScoreClient#create!}.
+    # Create a score immediately through the Scores API. See {ScoreClient#create!}.
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
-    # @param id [String, nil] Score ID
+    # @param id [String, nil] Score ID; use a stable value as an idempotency key
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
@@ -274,13 +273,13 @@ module Langfuse
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
-    # @return [void]
+    # @return [String] ID of the created score
     # @raise [ArgumentError] if validation fails
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] if the API request fails
     #
-    # @example
-    #   Langfuse.create_score!(name: "quality", value: 0.85, trace_id: "abc123")
+    # @example Create a score with an idempotency key
+    #   Langfuse.create_score!(id: "feedback-abc123", name: "quality", value: 0.85, trace_id: "abc123")
     # rubocop:disable Metrics/ParameterLists
     def create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                       metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)

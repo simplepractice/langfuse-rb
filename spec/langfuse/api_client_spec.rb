@@ -1280,6 +1280,61 @@ RSpec.describe Langfuse::ApiClient do
     end
   end
 
+  describe "#create_score" do
+    let(:payload) do
+      {
+        id: "score-123",
+        name: "quality",
+        value: 0.85,
+        dataType: "NUMERIC",
+        traceId: "trace-123"
+      }
+    end
+
+    it "creates the score through the Scores API and returns its ID" do
+      stub_request(:post, "#{base_url}/api/public/scores")
+        .with(body: payload.to_json)
+        .to_return(
+          status: 200,
+          body: { id: "score-123" }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      expect(api_client.create_score(payload: payload)).to eq("score-123")
+    end
+
+    it "raises ApiError when the response omits the score ID" do
+      stub_request(:post, "#{base_url}/api/public/scores")
+        .to_return(status: 200, body: {}.to_json, headers: { "Content-Type" => "application/json" })
+
+      expect do
+        api_client.create_score(payload: payload)
+      end.to raise_error(Langfuse::ApiError, "Score creation response did not include an id")
+    end
+
+    it "raises ApiError when the response contains an invalid score ID" do
+      stub_request(:post, "#{base_url}/api/public/scores")
+        .to_return(status: 200, body: { id: nil }.to_json, headers: { "Content-Type" => "application/json" })
+
+      expect do
+        api_client.create_score(payload: payload)
+      end.to raise_error(Langfuse::ApiError, "Score creation response did not include an id")
+    end
+
+    it "raises ApiError for invalid score data" do
+      stub_request(:post, "#{base_url}/api/public/scores")
+        .to_return(
+          status: 400,
+          body: { message: "Invalid request data" }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      expect do
+        api_client.create_score(payload: payload)
+      end.to raise_error(Langfuse::ApiError, "API request failed (400): Invalid request data")
+    end
+  end
+
   describe "#send_batch" do
     let(:events) do
       [

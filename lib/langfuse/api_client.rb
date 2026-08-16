@@ -304,6 +304,20 @@ module Langfuse
       raise ApiError, "Batch send failed: #{e.message}"
     end
 
+    # Create a score through the synchronous Scores API.
+    #
+    # @param payload [Hash] Validated score attributes in API format
+    # @return [String] ID of the created score
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [ApiError] if the API request fails or omits the created score ID
+    def create_score(payload:)
+      response = request(:post, "/api/public/scores", body: payload)
+      score_id = response["id"]
+      return score_id if score_id.is_a?(String) && !score_id.empty?
+
+      raise ApiError, "Score creation response did not include an id"
+    end
+
     # Create a dataset run item (link a trace to a dataset item within a run)
     #
     # @param dataset_item_id [String] Dataset item ID (required)
@@ -689,7 +703,7 @@ module Langfuse
     # - Max 2 retries (3 total attempts)
     # - Exponential backoff (0.05s * 2^retry_count)
     # - Retries GET, PATCH, and DELETE requests (idempotent operations)
-    # - Retries POST requests to batch endpoint (idempotent due to event UUIDs)
+    # - Retries ingestion batches and score creation (both include stable IDs)
     # - Note: POST to create_prompt is NOT idempotent; retries may create duplicate versions
     # - Retries on: 429 (rate limit), 503 (service unavailable), 504 (gateway timeout)
     # - Does NOT retry on: 4xx errors (except 429), 5xx errors (except 503, 504)
@@ -780,11 +794,11 @@ module Langfuse
 
     # Handle HTTP response for batch requests
     #
-    # Ingestion never returns a 4xx for rejected events — per the endpoint's
-    # own spec, "input errors" surface as a 200-series/207 response whose body
-    # lists them instead. That `errors` array is the only real per-event
-    # success/failure signal; HTTP status alone can't distinguish a fully
-    # accepted batch from a fully rejected one.
+    # Per-event input errors can arrive with HTTP 207 instead of a 4xx response.
+    # The `errors` array reports rejected events, so HTTP status alone cannot
+    # identify a batch with rejected events. An empty array confirms only that
+    # the response reported no rejection; it does not prove downstream
+    # processing or immediate read visibility.
     #
     # @param response [Faraday::Response] The HTTP response
     # @return [void]

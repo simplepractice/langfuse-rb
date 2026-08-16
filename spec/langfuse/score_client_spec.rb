@@ -546,22 +546,35 @@ RSpec.describe Langfuse::ScoreClient do
   end
 
   describe "#create!" do
-    it "sends the event immediately without queueing it" do
-      expect(api_client).to receive(:send_batch).with(array_including(
-                                                        hash_including(
-                                                          type: "score-create",
-                                                          body: hash_including(
-                                                            name: "quality",
-                                                            value: 0.85,
-                                                            dataType: "NUMERIC",
-                                                            traceId: "abc123"
-                                                          )
-                                                        )
-                                                      ))
+    it "creates the score directly, returns its ID, and leaves the queue empty" do
+      expect(api_client).to receive(:create_score).with(
+        payload: hash_including(
+          id: "score-123",
+          name: "quality",
+          value: 0.85,
+          dataType: "NUMERIC",
+          traceId: "abc123"
+        )
+      ).and_return("score-123")
 
-      score_client.create!(name: "quality", value: 0.85, trace_id: "abc123", data_type: :numeric)
+      result = score_client.create!(
+        id: "score-123",
+        name: "quality",
+        value: 0.85,
+        trace_id: "abc123",
+        data_type: :numeric
+      )
 
+      expect(result).to eq("score-123")
       expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "returns an automatically generated score ID" do
+      allow(api_client).to receive(:create_score) { |payload:| payload.fetch(:id) }
+
+      result = score_client.create!(name: "quality", value: 0.85, trace_id: "abc123")
+
+      expect(result).to match(/\A[0-9a-f-]{36}\z/)
     end
 
     it "bypasses sampling — delivers even when the configured sample_rate would drop it" do
@@ -576,16 +589,16 @@ RSpec.describe Langfuse::ScoreClient do
       strict_api_client = instance_double(Langfuse::ApiClient)
       strict_client = described_class.new(api_client: strict_api_client, config: strict_config)
 
-      expect(strict_api_client).to receive(:send_batch)
+      expect(strict_api_client).to receive(:create_score)
       strict_client.create!(name: "quality", value: 1.0, trace_id: "abcdef1234567890abcdef1234567890")
     end
 
     it "raises the ApiClient error instead of swallowing it" do
-      expect(api_client).to receive(:send_batch).and_raise(Langfuse::ApiError, "Batch send failed (500): boom")
+      expect(api_client).to receive(:create_score).and_raise(Langfuse::ApiError, "API request failed (500): boom")
 
       expect do
         score_client.create!(name: "quality", value: 0.85)
-      end.to raise_error(Langfuse::ApiError, "Batch send failed (500): boom")
+      end.to raise_error(Langfuse::ApiError, "API request failed (500): boom")
     end
 
     it "raises ArgumentError for invalid input, same as #create" do

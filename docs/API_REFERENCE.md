@@ -936,7 +936,7 @@ create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation
 | `comment`        | String                 | No       | Score comment                             |
 | `metadata`       | Hash                   | No       | Additional metadata                       |
 | `environment`    | String                 | No       | Environment tag for the score             |
-| `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, or `:categorical` |
+| `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, `:categorical`, `:text`, or `:correction` |
 | `dataset_run_id` | String                 | No       | Dataset run ID to associate with          |
 | `config_id`      | String                 | No       | Score config ID                           |
 
@@ -954,15 +954,15 @@ client.create_score(
 
 ### `Client#create_score!`
 
-Create a score for a trace or observation, sent immediately instead of queued.
+Create a score through the synchronous Scores API instead of the ingestion queue.
 
-Same parameters as `create_score`, but bypasses the in-memory batching queue
-and the trace-sampling gate, sending synchronously and raising on failure.
-Use this for a standalone score arriving out-of-band — e.g. user feedback in
-a request unrelated to the turn it's scoring — where the caller needs to know
-whether delivery succeeded in order to retry. `create_score` remains the
-right choice for scoring inline from a still-open span, where fire-and-forget
-matches how the rest of this SDK's tracing already works.
+The method returns the created score ID after Langfuse accepts the request.
+It bypasses the in-memory queue and trace-sampling gate. Use `create_score`
+for fire-and-forget batching.
+
+For retryable workflows, generate a stable `id` before the first request and
+reuse the complete score payload. A network failure can occur after Langfuse
+accepts a request, so the failure alone does not prove that the score was rejected.
 
 **Signature:**
 
@@ -972,16 +972,21 @@ create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observatio
               dataset_run_id: nil, config_id: nil)
 ```
 
+**Returns:** The created score ID as a String
+
 **Raises:** `ArgumentError` for invalid input; `UnauthorizedError` on a 401; `ApiError` for any other API failure
 
 **Example:**
 
 ```ruby
-begin
-  client.create_score!(name: "thumbs_up", value: true, trace_id: trace_id, data_type: :boolean)
-rescue Langfuse::ApiError => e
-  # retry, alert, etc. — the score was not delivered
-end
+score_id = "user-thumbs-#{trace_id}"
+created_id = client.create_score!(
+  id: score_id,
+  name: "user-thumbs",
+  value: true,
+  trace_id: trace_id,
+  data_type: :boolean
+)
 ```
 
 ### `Client#score_active_observation`
@@ -1037,7 +1042,7 @@ Convenience methods delegating to `Langfuse.client`:
 
 ```ruby
 Langfuse.create_score(name: "quality", value: 0.85, trace_id: "abc")
-Langfuse.create_score!(name: "quality", value: 0.85, trace_id: "abc") # sends immediately, raises on failure
+score_id = Langfuse.create_score!(name: "quality", value: 0.85, trace_id: "abc")
 Langfuse.score_active_observation(name: "quality", value: 0.9, data_type: :numeric)
 Langfuse.score_active_trace(name: "overall", value: 5, data_type: :numeric)
 Langfuse.flush_scores

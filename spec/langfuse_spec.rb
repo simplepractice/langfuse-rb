@@ -276,9 +276,9 @@ RSpec.describe Langfuse do
         data_type: :numeric,
         dataset_run_id: "run-123",
         config_id: "cfg-123"
-      )
+      ).and_return("score-123")
 
-      described_class.create_score!(
+      result = described_class.create_score!(
         name: "quality",
         value: 0.85,
         id: "score-123",
@@ -292,16 +292,18 @@ RSpec.describe Langfuse do
         dataset_run_id: "run-123",
         config_id: "cfg-123"
       )
+
+      expect(result).to eq("score-123")
     end
 
     it "propagates errors from client#create_score! instead of swallowing them" do
       client = instance_double(Langfuse::Client)
       allow(described_class).to receive(:client).and_return(client)
-      allow(client).to receive(:create_score!).and_raise(Langfuse::ApiError, "Batch send failed (500): boom")
+      allow(client).to receive(:create_score!).and_raise(Langfuse::ApiError, "API request failed (500): boom")
 
       expect do
         described_class.create_score!(name: "quality", value: 0.85, trace_id: "trace-123")
-      end.to raise_error(Langfuse::ApiError, "Batch send failed (500): boom")
+      end.to raise_error(Langfuse::ApiError, "API request failed (500): boom")
     end
   end
 
