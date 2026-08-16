@@ -3,23 +3,28 @@
 require "langfuse"
 
 module Pr98ReadinessValidation
-  POLL_ATTEMPTS = 12
-  POLL_INTERVAL = 1
+  # Ingestion latency is variable and has been observed well past a minute, so
+  # the window is generous. Readback is deferred until every trace is emitted
+  # so the wait overlaps instead of being paid once per trace.
+  POLL_ATTEMPTS = 40
+  POLL_INTERVAL = 3
   RATE_LIMIT_INTERVAL = 20
+  SCORE_NAME = "pr98-readiness"
 
   module_function
 
   def run
     credentials = live_credentials
-    trace_ids = []
+    emitted = []
 
     validate_hostile_configuration(credentials)
-    validate_accepted_configuration(credentials, trace_ids)
-    validate_tracing_degradation(credentials, trace_ids)
+    validate_accepted_configuration(credentials, emitted)
+    validate_tracing_degradation(credentials, emitted)
     validate_authentication(credentials)
+    validate_readback(credentials, emitted)
 
     puts "TRACE IDS"
-    trace_ids.each { |trace_id| puts trace_id }
+    emitted.each { |entry| puts entry.fetch(:trace_id) }
     puts "ALL CHECKS PASSED"
   ensure
     Langfuse.reset!
@@ -66,12 +71,12 @@ module Pr98ReadinessValidation
     }
   end
 
-  def validate_accepted_configuration(credentials, trace_ids)
+  def validate_accepted_configuration(credentials, emitted)
     accepted_variants.each do |name, configure_variant|
       configure(credentials, &configure_variant)
       assert("configured? accepts #{name}") { Langfuse.configured? }
       assert("client constructs for #{name}") { Langfuse.client.is_a?(Langfuse::Client) }
-      trace_ids << emit_and_read_trace("pr98-accepted-#{name}")
+      emitted << emit_trace("pr98-accepted-#{name}", scored: true)
     end
   end
 
@@ -82,7 +87,7 @@ module Pr98ReadinessValidation
     }
   end
 
-  def validate_tracing_degradation(credentials, trace_ids)
+  def validate_tracing_degradation(credentials, emitted)
     configure(credentials) { |config| config.batch_size = nil }
     assert("invalid tracing config degrades without raising") do
       Langfuse.observe("pr98-invalid-tracing") { |span| span.update(output: "no-op") }
@@ -91,12 +96,9 @@ module Pr98ReadinessValidation
 
     configure(credentials) { |config| config.timeout = nil }
     assert("client-only invalidity does not suppress tracing") do
-      trace_id = Langfuse.create_trace_id(seed: "pr98-client-only-#{Time.now.to_f}")
-      Langfuse.observe("pr98-client-only-invalid", trace_id: trace_id) { |span| span.update(output: "exported") }
-      Langfuse.force_flush(timeout: 10)
+      entry = emit_trace("pr98-client-only-invalid", scored: false)
       Langfuse.configuration.timeout = Langfuse::Config::DEFAULT_TIMEOUT
-      poll_for_trace(trace_id)
-      trace_ids << trace_id
+      emitted << entry
       true
     end
   end
@@ -126,26 +128,63 @@ module Pr98ReadinessValidation
     end
   end
 
-  def emit_and_read_trace(name)
+  # Every accepted configuration must survive the full client path, so scored
+  # traces exercise batch_size and flush_interval, which validate! treats as
+  # shared client settings rather than tracing-only ones.
+  def emit_trace(name, scored:)
     trace_id = Langfuse.create_trace_id(seed: "#{name}-#{Time.now.to_f}")
-    Langfuse.observe(name, trace_id: trace_id) { |span| span.update(output: "accepted") }
+    Langfuse.observe(name, trace_id: trace_id) do |span|
+      span.update(output: "accepted")
+      Langfuse.score_active_trace(name: SCORE_NAME, value: 1.0) if scored
+    end
     Langfuse.force_flush(timeout: 10)
-    poll_for_trace(trace_id)
-    trace_id
+    Langfuse.client.flush_scores if scored
+    { trace_id: trace_id, name: name, scored: scored }
   end
 
-  def poll_for_trace(trace_id)
-    POLL_ATTEMPTS.times do |attempt|
-      return Langfuse.client.get_trace(trace_id)
-    rescue Langfuse::NotFoundError
-      sleep POLL_INTERVAL unless attempt == POLL_ATTEMPTS - 1
-    rescue Langfuse::ApiError => e
-      raise unless e.message.include?("429")
+  def validate_readback(credentials, emitted)
+    configure(credentials)
+    emitted.each do |entry|
+      name = entry.fetch(:name)
+      trace = poll_for_trace(entry.fetch(:trace_id), expect_score: entry.fetch(:scored))
+      assert("trace is retrievable for #{name}") { trace["id"] == entry.fetch(:trace_id) }
+      next unless entry.fetch(:scored)
 
-      sleep RATE_LIMIT_INTERVAL unless attempt == POLL_ATTEMPTS - 1
+      assert("score is retrievable for #{name}") { score_present?(trace) }
+    end
+  end
+
+  def poll_for_trace(trace_id, expect_score:)
+    POLL_ATTEMPTS.times do |attempt|
+      trace = fetch_trace(trace_id)
+      return trace if ready?(trace, expect_score)
+
+      sleep(trace == :rate_limited ? RATE_LIMIT_INTERVAL : POLL_INTERVAL) unless attempt == POLL_ATTEMPTS - 1
     end
 
-    raise "trace #{trace_id} was not retrievable"
+    raise "trace #{trace_id} was not retrievable#{' with its score' if expect_score}"
+  end
+
+  # Returns the trace, nil when it has not been ingested yet, or :rate_limited
+  # so the caller can back off harder than the normal poll interval.
+  def fetch_trace(trace_id)
+    Langfuse.client.get_trace(trace_id)
+  rescue Langfuse::NotFoundError
+    nil
+  rescue Langfuse::ApiError => e
+    raise unless e.message.include?("429")
+
+    :rate_limited
+  end
+
+  def ready?(trace, expect_score)
+    return false unless trace.is_a?(Hash)
+
+    !expect_score || score_present?(trace)
+  end
+
+  def score_present?(trace)
+    Array(trace["scores"]).any? { |score| score["name"] == SCORE_NAME }
   end
 
   def assert(label)
