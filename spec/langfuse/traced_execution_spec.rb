@@ -60,16 +60,43 @@ RSpec.describe Langfuse::TracedExecution do
       expect(received_span).to be_a(Langfuse::BaseObservation)
     end
 
-    it "sets input and metadata on the trace" do
+    it "sets complete input, output, and metadata on the root observation" do
       span_captured = nil
       described_class.call(
         trace_name: "test-trace",
         input: { question: "What?" },
         metadata: { run: "v1" },
-        task: ->(span) { span_captured = span }
+        task: lambda { |span|
+          span_captured = span
+          { answer: "Done" }
+        }
       )
 
-      expect(span_captured).to be_a(Langfuse::BaseObservation)
+      attributes = span_captured.otel_span.attributes
+      expect(attributes["langfuse.observation.input"]).to eq('{"question":"What?"}')
+      expect(attributes["langfuse.observation.output"]).to eq('{"answer":"Done"}')
+      expect(attributes["langfuse.observation.metadata.run"]).to eq("v1")
+      expect(attributes["langfuse.trace.input"]).to be_nil
+      expect(attributes["langfuse.trace.name"]).to eq("test-trace")
+      expect(attributes["langfuse.trace.metadata.run"]).to eq("v1")
+    end
+
+    it "propagates trace context to child observations" do
+      child_attributes = nil
+      described_class.call(
+        trace_name: "test-trace",
+        input: { question: "What?" },
+        metadata: { run: "v1" },
+        task: lambda { |span|
+          span.start_observation("child") do |child|
+            child_attributes = child.otel_span.attributes.dup
+          end
+          "done"
+        }
+      )
+
+      expect(child_attributes["langfuse.trace.name"]).to eq("test-trace")
+      expect(child_attributes["langfuse.trace.metadata.run"]).to eq("v1")
     end
 
     it "defaults metadata to empty hash" do

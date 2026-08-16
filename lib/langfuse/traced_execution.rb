@@ -12,32 +12,38 @@ module Langfuse
     # Execute a task proc within a traced observe block.
     #
     # @param trace_name [String] name for the observe span
-    # @param input [Object] input set on the trace
-    # @param metadata [Hash] metadata set on the trace
+    # @param input [Object] input set on the root observation
+    # @param metadata [Hash] metadata set on the root observation and trace
     # @param task [Proc] the callable to execute — receives the span
     # @yield [span, trace_id] optional pre-task hook (e.g., dataset run linking)
     # @return [Array<(Object, String, String, StandardError | nil)>] output, trace_id, observation_id, error
     def self.call(trace_name:, input:, task:, metadata: {})
-      output = nil
       trace_id = nil
       observation_id = nil
-      task_error = nil
+      task_result = nil
 
       Langfuse.observe(trace_name) do |span|
         trace_id = span.trace_id
         observation_id = span.id
-        span.update_trace(input: input, metadata: metadata)
-        yield(span, trace_id) if block_given?
-        begin
-          output = task.call(span)
-          span.update(output: output)
-        rescue StandardError => e
-          span.update(output: "Error: #{e.message}", level: "ERROR")
-          task_error = e
+        span.update(input: input, metadata: metadata)
+        Langfuse.propagate_attributes(trace_name: trace_name, metadata: metadata) do
+          yield(span, trace_id) if block_given?
+          task_result = execute_task(span, task)
         end
       end
 
-      [output, trace_id, observation_id, task_error]
+      [task_result.first, trace_id, observation_id, task_result.last]
     end
+
+    # @api private
+    def self.execute_task(span, task)
+      output = task.call(span)
+      span.update(output: output)
+      [output, nil]
+    rescue StandardError => e
+      span.update(output: "Error: #{e.message}", level: "ERROR")
+      [nil, e]
+    end
+    private_class_method :execute_task
   end
 end

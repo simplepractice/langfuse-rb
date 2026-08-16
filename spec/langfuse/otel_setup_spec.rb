@@ -148,6 +148,27 @@ RSpec.describe Langfuse::OtelSetup do
     end
   end
 
+  describe ".build_exporter" do
+    it "configures direct v4 OTLP ingestion without changing transport settings" do
+      expected_headers = {
+        "Authorization" => "Basic #{Base64.strict_encode64('pk_test_123:sk_test_456')}",
+        "x-langfuse-ingestion-version" => "4",
+        "x-langfuse-sdk-name" => "ruby",
+        "x-langfuse-sdk-version" => Langfuse::VERSION,
+        "x-langfuse-public-key" => "pk_test_123"
+      }
+
+      allow(described_class).to receive(:build_exporter).and_call_original
+      expect(OpenTelemetry::Exporter::OTLP::Exporter).to receive(:new).with(
+        endpoint: "https://api.langfuse.test/api/public/otel/v1/traces",
+        headers: expected_headers,
+        compression: "gzip"
+      ).and_return(exporter)
+
+      expect(described_class.send(:build_exporter, config)).to equal(exporter)
+    end
+  end
+
   describe ".shutdown" do
     it "is safe before initialization" do
       expect { described_class.shutdown(timeout: 1) }.not_to raise_error
@@ -228,6 +249,18 @@ RSpec.describe Langfuse::OtelSetup do
       Langfuse.force_flush(timeout: 1)
 
       expect(exporter.finished_spans.map(&:name)).to eq(["langfuse-span"])
+    end
+
+    it "exports each completed observation once" do
+      Langfuse.observe("root") do |root|
+        root.start_observation("generation", as_type: :generation) { |generation| generation.update(output: "ok") }
+        root.start_observation("child") { |child| child.update(output: "ok") }
+      end
+      Langfuse.force_flush(timeout: 1)
+
+      exported_ids = exporter.finished_spans.map(&:hex_span_id)
+      expect(exporter.finished_spans.map(&:name)).to contain_exactly("root", "generation", "child")
+      expect(exported_ids.uniq.length).to eq(3)
     end
 
     it "exports known LLM scopes after explicit global installation" do

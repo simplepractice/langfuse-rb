@@ -173,7 +173,13 @@ module Langfuse
       def build_headers(public_key, secret_key)
         credentials = "#{public_key}:#{secret_key}"
         encoded = Base64.strict_encode64(credentials)
-        { "Authorization" => "Basic #{encoded}" }
+        {
+          "Authorization" => "Basic #{encoded}",
+          "x-langfuse-ingestion-version" => "4",
+          "x-langfuse-sdk-name" => "ruby",
+          "x-langfuse-sdk-version" => Langfuse::VERSION,
+          "x-langfuse-public-key" => public_key
+        }
       end
 
       def build_sampler(sample_rate)

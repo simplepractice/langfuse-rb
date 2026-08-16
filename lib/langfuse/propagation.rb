@@ -6,7 +6,7 @@ module Langfuse
   # Attribute propagation utilities for Langfuse OpenTelemetry integration.
   #
   # This module provides the `propagate_attributes` method for setting trace-level
-  # attributes (user_id, session_id, metadata) that automatically propagate to all child spans
+  # attributes that automatically propagate to all child spans
   # within the context.
   #
   # @example Basic usage
@@ -27,7 +27,10 @@ module Langfuse
       "session_id" => OtelAttributes::TRACE_SESSION_ID,
       "version" => OtelAttributes::VERSION,
       "tags" => OtelAttributes::TRACE_TAGS,
-      "metadata" => OtelAttributes::TRACE_METADATA
+      "metadata" => OtelAttributes::TRACE_METADATA,
+      "trace_name" => OtelAttributes::TRACE_NAME,
+      "release" => OtelAttributes::RELEASE,
+      "environment" => OtelAttributes::ENVIRONMENT
     }.freeze
 
     # OpenTelemetry context keys for propagated attributes
@@ -36,7 +39,10 @@ module Langfuse
       "session_id" => OpenTelemetry::Context.create_key("langfuse_session_id"),
       "metadata" => OpenTelemetry::Context.create_key("langfuse_metadata"),
       "version" => OpenTelemetry::Context.create_key("langfuse_version"),
-      "tags" => OpenTelemetry::Context.create_key("langfuse_tags")
+      "tags" => OpenTelemetry::Context.create_key("langfuse_tags"),
+      "trace_name" => OpenTelemetry::Context.create_key("langfuse_trace_name"),
+      "release" => OpenTelemetry::Context.create_key("langfuse_release"),
+      "environment" => OpenTelemetry::Context.create_key("langfuse_environment")
     }.freeze
 
     # List of propagated attribute keys (derived from CONTEXT_KEYS)
@@ -57,6 +63,9 @@ module Langfuse
     # @param metadata [Hash<String, String>, nil] Additional metadata (all values ≤200 characters)
     # @param version [String, nil] Version identifier (≤200 characters)
     # @param tags [Array<String>, nil] List of tags (each ≤200 characters)
+    # @param trace_name [String, nil] Trace name (≤200 characters)
+    # @param release [String, nil] Release identifier (≤200 characters)
+    # @param environment [String, nil] Environment identifier (≤200 characters)
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
     # @yield Block within which attributes are propagated
     # @return [Object] The result of the block
@@ -76,8 +85,9 @@ module Langfuse
     #     # All spans inherit these attributes
     #   end
     #
+    # rubocop:disable Metrics/ParameterLists
     def self.propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil, tags: nil,
-                                  as_baggage: false, &block)
+                                  trace_name: nil, release: nil, environment: nil, as_baggage: false, &block)
       raise ArgumentError, "Block required" unless block
 
       _propagate_attributes(
@@ -86,6 +96,9 @@ module Langfuse
         metadata: metadata,
         version: version,
         tags: tags,
+        trace_name: trace_name,
+        release: release,
+        environment: environment,
         as_baggage: as_baggage,
         &block
       )
@@ -95,7 +108,7 @@ module Langfuse
     #
     # @api private
     def self._propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil, tags: nil,
-                                   as_baggage: false, &)
+                                   trace_name: nil, release: nil, environment: nil, as_baggage: false, &)
       current_context = OpenTelemetry::Context.current
       current_span = OpenTelemetry::Trace.current_span
 
@@ -120,6 +133,7 @@ module Langfuse
       # Execute block in new context
       OpenTelemetry::Context.with_current(current_context, &)
     end
+    # rubocop:enable Metrics/ParameterLists
 
     # Validate an attribute value based on its type
     #

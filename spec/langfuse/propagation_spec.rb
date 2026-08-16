@@ -88,6 +88,32 @@ RSpec.describe Langfuse::Propagation do
       end
     end
 
+    context "with v4 trace context" do
+      it "sets trace name, release, and environment on current and child spans" do
+        Langfuse.observe("test-operation") do |span|
+          described_class.propagate_attributes(
+            trace_name: "test-trace",
+            release: "release-123",
+            environment: "test"
+          ) do
+            child = span.start_observation("child")
+
+            expect(span.otel_span.attributes).to include(
+              "langfuse.trace.name" => "test-trace",
+              "langfuse.release" => "release-123",
+              "langfuse.environment" => "test"
+            )
+            expect(child.otel_span.attributes).to include(
+              "langfuse.trace.name" => "test-trace",
+              "langfuse.release" => "release-123",
+              "langfuse.environment" => "test"
+            )
+            child.end
+          end
+        end
+      end
+    end
+
     context "with tags" do
       it "sets tags on current span" do
         Langfuse.observe("test-operation") do |span|
@@ -321,6 +347,22 @@ RSpec.describe Langfuse::Propagation do
 
           described_class.propagate_attributes(user_id: "user_123", as_baggage: true) do
             # Should not raise, just log warning
+          end
+        end
+
+        it "sets baggage for v4 trace context" do
+          described_class.propagate_attributes(
+            trace_name: "test-trace",
+            release: "release-123",
+            environment: "test",
+            as_baggage: true
+          ) do
+            baggage = OpenTelemetry::Baggage.values(context: OpenTelemetry::Context.current)
+            expect(baggage).to include(
+              "langfuse_trace_name" => "test-trace",
+              "langfuse_release" => "release-123",
+              "langfuse_environment" => "test"
+            )
           end
         end
       end

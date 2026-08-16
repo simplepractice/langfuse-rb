@@ -209,6 +209,20 @@ Do not use secrets or raw PII as seeds.
 
 ## OpenTelemetry Integration
 
+### Direct v4 Ingestion
+
+The SDK sends completed spans to `/api/public/otel/v1/traces`. The exporter uses Basic Authentication and gzip compression.
+
+The exporter also sends `x-langfuse-ingestion-version: 4`. This header selects the direct Langfuse v4 ingestion path. The SDK does not send a second legacy event.
+
+Direct v4 ingestion requires Langfuse Cloud or a self-hosted Langfuse v4 server. Pin `langfuse` to `0.10.1` to restore the previous ingestion header behavior during rollback.
+
+Each workflow must have one root observation. Put the overall input and output on that observation. The SDK experiment paths follow this rule.
+
+Use `Langfuse.propagate_attributes` for trace fields that must be available on child observations. The method can propagate `trace_name`, `user_id`, `session_id`, `metadata`, `tags`, `version`, `release`, and `environment`.
+
+The exporter sends each completed span once. Do not reuse an observation ID to send an update after export.
+
 There are three states. Keep them separate in your head or you will misconfigure this.
 
 ### 1. Default Isolated Langfuse Tracing

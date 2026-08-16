@@ -190,6 +190,9 @@ RSpec.describe Langfuse do
         metadata: nil,
         version: nil,
         tags: nil,
+        trace_name: nil,
+        release: nil,
+        environment: nil,
         as_baggage: false
       ).and_call_original
 
@@ -205,6 +208,9 @@ RSpec.describe Langfuse do
         metadata: { env: "test" },
         version: "v1.0",
         tags: ["tag1"],
+        trace_name: "test-trace",
+        release: "release-123",
+        environment: "test",
         as_baggage: true
       ).and_call_original
 
@@ -214,6 +220,9 @@ RSpec.describe Langfuse do
         metadata: { env: "test" },
         version: "v1.0",
         tags: ["tag1"],
+        trace_name: "test-trace",
+        release: "release-123",
+        environment: "test",
         as_baggage: true
       ) do
         # Block should execute
