@@ -60,7 +60,8 @@ module Langfuse
       batch = OtelSpanBatch.new(span_data: span_data, logger: @logger)
       return [] if batch.empty?
 
-      result = call_hook(batch)
+      # Build snapshots outside call_hook so a snapshot failure is never reported as a hook failure.
+      result = call_hook(batch.masking_params, batch)
       return if result.equal?(HOOK_FAILURE)
       return batch.spans if result.nil?
       return unless valid_result?(result, batch)
@@ -68,8 +69,8 @@ module Langfuse
       batch.apply(result.span_patches, patch_applier: @patch_applier)
     end
 
-    def call_hook(batch)
-      @hook.call(params: batch.masking_params)
+    def call_hook(params, batch)
+      @hook.call(params: params)
     rescue StandardError => e
       # Hook exception messages can contain the sensitive values being masked.
       @logger.error("Langfuse mask_otel_spans raised #{e.class}; #{dropping_batch(batch)}")

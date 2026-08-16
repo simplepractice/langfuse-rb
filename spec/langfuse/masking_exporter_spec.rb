@@ -198,6 +198,21 @@ RSpec.describe Langfuse::MaskingExporter do
       end
     end
 
+    it "does not blame the hook when building the snapshot fails" do
+      broken_resource = instance_double(OpenTelemetry::SDK::Resources::Resource)
+      allow(broken_resource).to receive(:attribute_enumerator).and_raise("resource exploded")
+      broken = third_party_span.dup
+      broken.resource = broken_resource
+      called = false
+      snapshot_exporter = described_class.new(
+        delegate: delegate, hook: ->(**) { called = true }, logger: logger
+      )
+
+      expect { snapshot_exporter.export([broken]) }.to raise_error("resource exploded")
+      expect(called).to be(false)
+      expect(logger).not_to have_received(:error).with(/mask_otel_spans raised/)
+    end
+
     it "drops the batch when the hook returns an invalid result" do
       invalid_exporter = described_class.new(delegate: delegate, hook: ->(**) { { span_patches: {} } }, logger: logger)
 
