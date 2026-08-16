@@ -60,8 +60,8 @@ module Langfuse
           parent_state.active_child_count += 1 if parent_state
           @state_by_span_id[span.context.span_id] = build_state(
             span,
-            trace_claimed,
-            app_root_eligible
+            trace_claimed: trace_claimed,
+            app_root_eligible: app_root_eligible
           )
         end
       end
@@ -91,7 +91,7 @@ module Langfuse
 
       private
 
-      def build_state(span, trace_claimed, app_root_eligible)
+      def build_state(span, trace_claimed:, app_root_eligible:)
         State.new(
           span: span,
           trace_claimed: trace_claimed,

@@ -332,26 +332,19 @@ module Langfuse
     # @return [String, nil] Validated environment or nil
     # @api private
     def self._validate_environment_value(value)
-      unless value.is_a?(String)
-        Langfuse.configuration.logger.warn(
-          "Langfuse: Propagated attribute 'environment' value is not a string. Dropping value."
-        )
-        return nil
-      end
-
-      if value.length > 40
-        Langfuse.configuration.logger.warn(
-          "Langfuse: Propagated attribute 'environment' value is over 40 characters " \
-          "(#{value.length} chars). Dropping value."
-        )
-        return nil
-      end
+      return _drop_environment("value is not a string") unless value.is_a?(String)
+      return _drop_environment("value is over 40 characters (#{value.length} chars)") if value.length > 40
 
       return value if ENVIRONMENT_VALUE_PATTERN.match?(value)
 
+      _drop_environment(
+        "must use lowercase letters, numbers, hyphens, or underscores and must not start with 'langfuse'"
+      )
+    end
+
+    def self._drop_environment(reason)
       Langfuse.configuration.logger.warn(
-        "Langfuse: Propagated attribute 'environment' must use lowercase letters, numbers, hyphens, or " \
-        "underscores and must not start with 'langfuse'. Dropping value."
+        "Langfuse: Propagated attribute 'environment' #{reason}. Dropping value."
       )
       nil
     end
