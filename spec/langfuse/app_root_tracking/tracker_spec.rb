@@ -22,15 +22,18 @@ RSpec.describe Langfuse::AppRootTracking::Tracker do
 
     tracker.remember(span, trace_claimed: true)
 
-    expect(tracker.parent_span_for(span_id)).to be(span)
-    expect(tracker.trace_claimed?(span_id)).to be(true)
+    ready_spans = tracker.finish(span, exportable: true)
+
+    expect(ready_spans.map(&:span)).to eq([span])
+    expect(ready_spans.map(&:app_root)).to eq([false])
   end
 
   it "releases a finished span without children" do
     span_id = OpenTelemetry::Trace.generate_span_id
-    tracker.remember(build_span(span_id: span_id), trace_claimed: false)
+    span = build_span(span_id: span_id)
+    tracker.remember(span, trace_claimed: false)
 
-    tracker.finish(span_id)
+    tracker.finish(span, exportable: true)
 
     expect(tracker).to be_empty
   end
@@ -43,12 +46,31 @@ RSpec.describe Langfuse::AppRootTracking::Tracker do
     tracker.remember(parent, trace_claimed: false)
     tracker.remember(child, trace_claimed: false)
 
-    tracker.finish(parent_id)
+    tracker.finish(parent, exportable: true)
 
-    expect(tracker.parent_span_for(parent_id)).to be(parent)
+    expect(tracker).not_to be_empty
 
-    tracker.finish(child_id)
+    tracker.finish(child, exportable: true)
 
     expect(tracker).to be_empty
+  end
+
+  it "defers a finished child until its parent export decision is final" do
+    parent_id = OpenTelemetry::Trace.generate_span_id
+    child_id = OpenTelemetry::Trace.generate_span_id
+    parent = build_span(span_id: parent_id)
+    child = build_span(span_id: child_id, parent_span_id: parent_id)
+    tracker.remember(parent, trace_claimed: false)
+    tracker.remember(child, trace_claimed: false)
+
+    expect(tracker.finish(child, exportable: true)).to be_empty
+
+    ready_spans = tracker.finish(parent, exportable: true)
+
+    expect(ready_spans.map(&:span)).to contain_exactly(parent, child)
+    expect(ready_spans.to_h { |ready_span| [ready_span.span, ready_span.app_root] }).to eq(
+      parent => true,
+      child => false
+    )
   end
 end

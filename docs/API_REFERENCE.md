@@ -138,7 +138,7 @@ OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 
 ### Span Filter Helpers
 
-These public helpers are useful when composing `should_export_span` callbacks. The callback receives spans handled by Langfuse's provider. The SDK can call the callback more than once while spans start or end.
+These public helpers are useful when composing `should_export_span` callbacks. The callback receives each finished span handled by Langfuse's provider.
 
 #### `Langfuse.default_export_span?`
 

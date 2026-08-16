@@ -284,7 +284,9 @@ What Langfuse will not do for you:
 
 `config.should_export_span` is a filter on spans handled by Langfuse's provider. That is it.
 
-The SDK can call the filter more than once while spans start or end. Start-time calls help classify application roots. End-time fields are not available during those calls.
+The SDK calls the filter once after each span finishes. The callback can use the span's final attributes.
+
+The processor can defer a finished span while an ancestor span remains active. This delay prevents a provisional application root from reaching Langfuse. Finish each ancestor before you expect `flush` to export the deferred span.
 
 ```ruby
 Langfuse.configure do |config|

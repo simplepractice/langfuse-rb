@@ -109,6 +109,28 @@ RSpec.describe Langfuse::SpanProcessor do
       expect(spans.fetch("child").attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
     end
 
+    it "honors a trace claim from an untracked parent" do
+      trace_id = OpenTelemetry::Trace.generate_trace_id
+      parent_context = OpenTelemetry::Trace::SpanContext.new(
+        trace_id: trace_id,
+        span_id: OpenTelemetry::Trace.generate_span_id,
+        trace_flags: OpenTelemetry::Trace::TraceFlags::SAMPLED
+      )
+      parent_span = OpenTelemetry::Trace.non_recording_span(parent_context)
+      context = OpenTelemetry::Trace.context_with_span(parent_span)
+      claimed_context = Langfuse::Propagation._set_langfuse_trace_id_in_baggage(
+        trace_id.unpack1("H*"), context: context
+      )
+      child = OpenTelemetry::Context.with_current(claimed_context) do
+        tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span("child")
+      end
+
+      child.finish
+      span = exported_spans_by_name.fetch("child")
+
+      expect(span.attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
+    end
+
     it "marks a root when gen_ai attributes are added after span start" do
       filtered_parent = tracer_provider.tracer("rack").start_span("request")
       parent_context = OpenTelemetry::Trace.context_with_span(filtered_parent)
@@ -149,6 +171,31 @@ RSpec.describe Langfuse::SpanProcessor do
       generation.set_attribute("gen_ai.system", "synthetic")
 
       child.finish
+      generation.finish
+      filtered_parent.finish
+      spans = exported_spans_by_name
+
+      expect(spans.fetch("generation").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+      expect(spans.fetch("child").attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
+    end
+
+    it "moves the root mark after the child finishes before its parent becomes exportable" do
+      filtered_parent = tracer_provider.tracer("rack").start_span("request")
+      filtered_context = OpenTelemetry::Trace.context_with_span(filtered_parent)
+      generation = OpenTelemetry::Context.with_current(filtered_context) do
+        tracer_provider.tracer("custom").start_span("generation")
+      end
+      generation_context = OpenTelemetry::Trace.context_with_span(generation, parent_context: filtered_context)
+      child = OpenTelemetry::Context.with_current(generation_context) do
+        tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span("child")
+      end
+
+      child.finish
+      tracer_provider.force_flush(timeout: 1)
+
+      expect(exporter.finished_spans).to be_empty
+
+      generation.set_attribute("gen_ai.system", "synthetic")
       generation.finish
       filtered_parent.finish
       spans = exported_spans_by_name
@@ -247,7 +294,29 @@ RSpec.describe Langfuse::SpanProcessor do
       expect(exporter.finished_spans.map(&:name)).to eq(["keep-me"])
     end
 
-    it "calls a custom filter at span start and span finish" do
+    it "promotes a child when a custom filter rejects its claimed local root" do
+      config.should_export_span = ->(span) { span.name == "child" }
+      custom_processor = described_class.new(config: config, exporter: exporter)
+      custom_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+      custom_provider.add_span_processor(custom_processor)
+      tracer = custom_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
+      root = tracer.start_span("root")
+      root_context = OpenTelemetry::Trace.context_with_span(root)
+      claimed_context = Langfuse::Propagation._set_langfuse_trace_id_in_baggage(
+        root.context.trace_id.unpack1("H*"), context: root_context
+      )
+      child = OpenTelemetry::Context.with_current(claimed_context) { tracer.start_span("child") }
+
+      child.finish
+      root.finish
+      custom_provider.force_flush(timeout: 1)
+      exported_span = exporter.finished_spans.fetch(0)
+
+      expect(exported_span.name).to eq("child")
+      expect(exported_span.attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+    end
+
+    it "calls a custom filter once with the finished span" do
       filter = instance_double(Proc, call: true)
       config.should_export_span = filter
       custom_processor = described_class.new(config: config, exporter: exporter)
@@ -257,7 +326,7 @@ RSpec.describe Langfuse::SpanProcessor do
       custom_provider.tracer("custom").start_span("span").finish
       custom_provider.force_flush(timeout: 1)
 
-      expect(filter).to have_received(:call).twice
+      expect(filter).to have_received(:call).once
     end
 
     it "logs and drops spans when should_export_span raises" do

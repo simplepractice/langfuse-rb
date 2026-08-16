@@ -33,7 +33,7 @@ module Langfuse
 
       apply_attributes(span, @default_trace_attributes)
       apply_attributes(span, propagated_attributes(parent_context))
-      mark_app_root_candidate_safely(span, parent_context)
+      remember_app_root_state(span, parent_context)
     end
 
     # Drop spans when the export filter rejects them or raises.
@@ -41,12 +41,8 @@ module Langfuse
     # @param span [OpenTelemetry::SDK::Trace::Span] The span that ended
     # @return [void]
     def on_finish(span)
-      should_export = should_export_span?(span)
-      return unless should_export
-
-      super(finalize_app_root(span))
-    ensure
-      clear_app_root_state(span)
+      ready_spans = @app_root_tracker.finish(span, exportable: should_export_span?(span))
+      ready_spans.each { |ready_span| super(copy_with_app_root(ready_span)) }
     end
 
     private
@@ -93,67 +89,28 @@ module Langfuse
       attributes.each { |key, value| span.set_attribute(key, value) }
     end
 
-    def mark_app_root_candidate(span, parent_context)
+    def remember_app_root_state(span, parent_context)
       propagated_trace_id = Propagation._get_langfuse_trace_id_from_baggage(parent_context)
       trace_claimed = propagated_trace_id == span.context.trace_id.unpack1("H*")
-      remember_app_root_state(span, trace_claimed)
-
-      return unless expected_export_during_root_check?(span)
-      return if parent_expected_export?(span.parent_span_id)
-      return if trace_claimed
-
-      span.set_attribute(OtelAttributes::IS_APP_ROOT, true)
-    end
-
-    def mark_app_root_candidate_safely(span, parent_context)
-      mark_app_root_candidate(span, parent_context)
+      @app_root_tracker.remember(span, trace_claimed: trace_claimed)
     rescue StandardError => e
       @logger.debug(
-        "Langfuse app-root check failed for span '#{span.name}': #{e.class}: #{e.message}"
+        "Langfuse app-root tracking failed for span '#{span.name}': #{e.class}: #{e.message}"
       )
     end
 
-    def remember_app_root_state(span, trace_claimed)
-      @app_root_tracker.remember(span, trace_claimed: trace_claimed)
-    end
-
-    def clear_app_root_state(span)
-      span_id = span.respond_to?(:span_id) ? span.span_id : span.context.span_id
-      @app_root_tracker.finish(span_id)
-    end
-
-    def finalize_app_root(span)
-      mark_root = !parent_expected_export?(span.parent_span_id) &&
-                  !@app_root_tracker.trace_claimed?(span.context.span_id)
-      copy_with_app_root(span, mark_root)
-    end
-
-    def parent_expected_export?(parent_span_id)
-      parent_span = @app_root_tracker.parent_span_for(parent_span_id)
-      parent_span ? expected_export_during_root_check?(parent_span) : false
-    end
-
-    def copy_with_app_root(span, mark_root)
+    def copy_with_app_root(ready_span)
+      span = ready_span.span
       attributes = span.attributes || {}
-      return span if (attributes[OtelAttributes::IS_APP_ROOT] == true) == mark_root
+      return span if (attributes[OtelAttributes::IS_APP_ROOT] == true) == ready_span.app_root
 
       copied_attributes = attributes.dup
-      if mark_root
+      if ready_span.app_root
         copied_attributes[OtelAttributes::IS_APP_ROOT] = true
       else
         copied_attributes.delete(OtelAttributes::IS_APP_ROOT)
       end
       ExportSpan.new(span: span, attributes: copied_attributes.freeze)
-    end
-
-    def expected_export_during_root_check?(span)
-      @should_export_span.call(span)
-    rescue StandardError => e
-      @logger.debug(
-        "Langfuse should_export_span raised during an app-root check for '#{span.name}': " \
-        "#{e.class}: #{e.message}"
-      )
-      false
     end
 
     def should_export_span?(span)
