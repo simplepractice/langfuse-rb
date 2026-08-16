@@ -108,6 +108,89 @@ RSpec.describe Langfuse::SpanProcessor do
       expect(spans.fetch("root").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
       expect(spans.fetch("child").attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
     end
+
+    it "marks a root when gen_ai attributes are added after span start" do
+      filtered_parent = tracer_provider.tracer("rack").start_span("request")
+      parent_context = OpenTelemetry::Trace.context_with_span(filtered_parent)
+      generation = OpenTelemetry::Context.with_current(parent_context) do
+        tracer_provider.tracer("custom").start_span("generation")
+      end
+      generation.set_attribute("gen_ai.system", "synthetic")
+
+      generation.finish
+      filtered_parent.finish
+      spans = exported_spans_by_name
+
+      expect(spans.fetch("generation").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+    end
+
+    it "encodes an export-time root mark as OTLP" do
+      span = tracer_provider.tracer("custom").start_span("generation")
+      span.set_attribute("gen_ai.system", "synthetic")
+      span.finish
+      span_data = exported_spans_by_name.fetch("generation")
+      otlp_exporter = OpenTelemetry::Exporter::OTLP::Exporter.new(
+        endpoint: "http://localhost/api/public/otel/v1/traces"
+      )
+
+      expect(otlp_exporter.send(:encode, [span_data])).to be_a(String)
+    end
+
+    it "moves the root mark to a parent that gains gen_ai attributes" do
+      filtered_parent = tracer_provider.tracer("rack").start_span("request")
+      filtered_context = OpenTelemetry::Trace.context_with_span(filtered_parent)
+      generation = OpenTelemetry::Context.with_current(filtered_context) do
+        tracer_provider.tracer("custom").start_span("generation")
+      end
+      generation_context = OpenTelemetry::Trace.context_with_span(generation, parent_context: filtered_context)
+      child = OpenTelemetry::Context.with_current(generation_context) do
+        tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span("child")
+      end
+      generation.set_attribute("gen_ai.system", "synthetic")
+
+      child.finish
+      generation.finish
+      filtered_parent.finish
+      spans = exported_spans_by_name
+
+      expect(spans.fetch("generation").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+      expect(spans.fetch("child").attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
+    end
+
+    it "retains the root state until children finish" do
+      tracer = tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
+      parent = tracer.start_span("parent")
+      parent_context = OpenTelemetry::Trace.context_with_span(parent)
+      child = OpenTelemetry::Context.with_current(parent_context) { tracer.start_span("child") }
+
+      parent.finish
+      child.finish
+      spans = exported_spans_by_name
+
+      expect(spans.fetch("parent").attributes[Langfuse::OtelAttributes::IS_APP_ROOT]).to be(true)
+      expect(spans.fetch("child").attributes).not_to have_key(Langfuse::OtelAttributes::IS_APP_ROOT)
+    end
+
+    it "treats disjoint entries with one trace ID as separate application roots" do
+      trace_id = OpenTelemetry::Trace.generate_trace_id
+      tracer = tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
+
+      2.times do |index|
+        parent_context = OpenTelemetry::Trace::SpanContext.new(
+          trace_id: trace_id,
+          span_id: OpenTelemetry::Trace.generate_span_id,
+          trace_flags: OpenTelemetry::Trace::TraceFlags::SAMPLED
+        )
+        parent_span = OpenTelemetry::Trace.non_recording_span(parent_context)
+        context = OpenTelemetry::Trace.context_with_span(parent_span)
+        OpenTelemetry::Context.with_current(context) { tracer.start_span("entry-#{index}").finish }
+      end
+
+      roots = exported_spans_by_name.values.select do |span|
+        span.attributes[Langfuse::OtelAttributes::IS_APP_ROOT]
+      end
+      expect(roots.map(&:name)).to contain_exactly("entry-0", "entry-1")
+    end
   end
 
   describe "#on_finish" do
@@ -183,8 +266,8 @@ RSpec.describe Langfuse::SpanProcessor do
 
       exported_span_names
 
-      expectations = processor.instance_variable_get(:@span_export_expectation_by_id)
-      expect(expectations).to be_empty
+      app_root_tracker = processor.instance_variable_get(:@app_root_tracker)
+      expect(app_root_tracker).to be_empty
     end
 
     it "keeps application-root tracking consistent across threads" do
@@ -204,10 +287,10 @@ RSpec.describe Langfuse::SpanProcessor do
 
       spans = exported_spans_by_name
       roots = spans.values.select { |span| span.name.start_with?("parent-") }
-      expectations = processor.instance_variable_get(:@span_export_expectation_by_id)
+      app_root_tracker = processor.instance_variable_get(:@app_root_tracker)
 
       expect(roots).to all(satisfy { |span| span.attributes[Langfuse::OtelAttributes::IS_APP_ROOT] })
-      expect(expectations).to be_empty
+      expect(app_root_tracker).to be_empty
     end
   end
 

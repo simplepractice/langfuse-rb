@@ -13,8 +13,7 @@ module Langfuse
       @logger = config.logger
       @default_trace_attributes = build_default_trace_attributes(config).freeze
       @should_export_span = config.should_export_span || Langfuse.method(:default_export_span?)
-      @app_root_mutex = Mutex.new
-      @span_export_expectation_by_id = {}
+      @app_root_tracker = AppRootTracking::Tracker.new
 
       super(
         exporter,
@@ -42,9 +41,10 @@ module Langfuse
     # @param span [OpenTelemetry::SDK::Trace::Span] The span that ended
     # @return [void]
     def on_finish(span)
-      return unless should_export_span?(span)
+      should_export = should_export_span?(span)
+      return unless should_export
 
-      super
+      super(finalize_app_root(span))
     ensure
       clear_app_root_state(span)
     end
@@ -55,6 +55,23 @@ module Langfuse
     # interval long enough that it rarely fires on its own.
     SYNC_SCHEDULE_DELAY_MS = 60_000
     private_constant :SYNC_SCHEDULE_DELAY_MS
+
+    ExportSpan = Struct.new(:span, :attributes, keyword_init: true) do
+      def context
+        span.context
+      end
+
+      def to_span_data
+        span.to_span_data.tap do |span_data|
+          span_data.attributes = attributes
+          span_data.total_recorded_attributes = [
+            span_data.total_recorded_attributes,
+            attributes.size
+          ].max
+        end
+      end
+    end
+    private_constant :ExportSpan
 
     def schedule_delay_for(config)
       config.tracing_async ? config.flush_interval * 1000 : SYNC_SCHEDULE_DELAY_MS
@@ -77,13 +94,13 @@ module Langfuse
     end
 
     def mark_app_root_candidate(span, parent_context)
-      expected_export = expected_export_at_start?(span)
-      parent_expected_export = remember_export_expectation(span, expected_export)
       propagated_trace_id = Propagation._get_langfuse_trace_id_from_baggage(parent_context)
+      trace_claimed = propagated_trace_id == span.context.trace_id.unpack1("H*")
+      remember_app_root_state(span, trace_claimed)
 
-      return unless expected_export
-      return if parent_expected_export
-      return if propagated_trace_id == span.context.trace_id.unpack1("H*")
+      return unless expected_export_during_root_check?(span)
+      return if parent_expected_export?(span.parent_span_id)
+      return if trace_claimed
 
       span.set_attribute(OtelAttributes::IS_APP_ROOT, true)
     end
@@ -96,24 +113,44 @@ module Langfuse
       )
     end
 
-    def remember_export_expectation(span, expected_export)
-      @app_root_mutex.synchronize do
-        parent_expected_export = @span_export_expectation_by_id[span.parent_span_id] == true
-        @span_export_expectation_by_id[span.context.span_id] = expected_export
-        parent_expected_export
-      end
+    def remember_app_root_state(span, trace_claimed)
+      @app_root_tracker.remember(span, trace_claimed: trace_claimed)
     end
 
     def clear_app_root_state(span)
       span_id = span.respond_to?(:span_id) ? span.span_id : span.context.span_id
-      @app_root_mutex.synchronize { @span_export_expectation_by_id.delete(span_id) }
+      @app_root_tracker.finish(span_id)
     end
 
-    def expected_export_at_start?(span)
+    def finalize_app_root(span)
+      mark_root = !parent_expected_export?(span.parent_span_id) &&
+                  !@app_root_tracker.trace_claimed?(span.context.span_id)
+      copy_with_app_root(span, mark_root)
+    end
+
+    def parent_expected_export?(parent_span_id)
+      parent_span = @app_root_tracker.parent_span_for(parent_span_id)
+      parent_span ? expected_export_during_root_check?(parent_span) : false
+    end
+
+    def copy_with_app_root(span, mark_root)
+      attributes = span.attributes
+      return span if (attributes[OtelAttributes::IS_APP_ROOT] == true) == mark_root
+
+      copied_attributes = attributes.dup
+      if mark_root
+        copied_attributes[OtelAttributes::IS_APP_ROOT] = true
+      else
+        copied_attributes.delete(OtelAttributes::IS_APP_ROOT)
+      end
+      ExportSpan.new(span: span, attributes: copied_attributes.freeze)
+    end
+
+    def expected_export_during_root_check?(span)
       @should_export_span.call(span)
     rescue StandardError => e
       @logger.debug(
-        "Langfuse should_export_span raised during app-root check for '#{span.name}': " \
+        "Langfuse should_export_span raised during an app-root check for '#{span.name}': " \
         "#{e.class}: #{e.message}"
       )
       false

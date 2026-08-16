@@ -82,7 +82,7 @@ module Langfuse
     attr_reader :sample_rate
 
     # @return [#call, nil] Callback that decides whether a span should export to Langfuse.
-    #   The span processor can call it when the span starts and when the span ends.
+    #   The span processor can call it more than once while spans start or end.
     attr_accessor :should_export_span
 
     # @return [#call, nil] Mask callable applied to input, output, and metadata before serialization.

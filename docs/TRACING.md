@@ -182,8 +182,12 @@ end
 What that means:
 
 - `trace_id:` joins the same trace
-- the job creates a new root observation inside that trace
+- the job creates a new application root inside that trace
 - this is usually enough for consumer workflows
+
+A trace ID does not contain a parent observation ID or an existing root claim. Separate jobs that use only the same `trace_id:` can therefore create multiple application roots. Propagate the full OpenTelemetry parent context when one observation tree must continue across services.
+
+Use separate traces and a shared `session_id` when jobs are related but each job is a self-contained unit of work.
 
 If you need true parent-child continuation across process or service boundaries, that is host-application OpenTelemetry context propagation work. Langfuse does not do that wiring for you automatically.
 
@@ -201,9 +205,11 @@ end
 
 Good use cases:
 
-- retries that should land on the same logical trace
-- linking traces to a durable application record
-- async workflows where a later worker needs to rejoin the trace
+- assigning one workflow trace to a durable application record
+- regenerating the same trace ID for scores or reads
+- matching an external trace ID at the first application entry point
+
+Do not reuse a trace ID as a replacement for parent context. Each disjoint observation tree can become an application root.
 
 Do not use secrets or raw PII as seeds.
 
@@ -278,7 +284,7 @@ What Langfuse will not do for you:
 
 `config.should_export_span` is a filter on spans handled by Langfuse's provider. That is it.
 
-The SDK can call the filter when a span starts and when the span ends. The start-time call classifies application roots. End-time fields are not available during the start-time call.
+The SDK can call the filter more than once while spans start or end. Start-time calls help classify application roots. End-time fields are not available during those calls.
 
 ```ruby
 Langfuse.configure do |config|
