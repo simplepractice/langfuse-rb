@@ -64,5 +64,22 @@ RSpec.describe Langfuse::Client do
 
       expect(a_request(:post, "https://cloud.langfuse.com/api/public/ingestion")).to have_been_made.once
     end
+
+    it "delivers scores when OTEL_SDK_DISABLED disables trace export" do
+      ENV["OTEL_SDK_DISABLED"] = "true"
+      config.public_key = "pk_test"
+      config.secret_key = "sk_test"
+      config.tracing_enabled = true
+      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+        .to_return(status: 200, body: { successes: [], errors: [] }.to_json)
+      client = described_class.new(config)
+
+      client.create_score(name: "quality", value: 1)
+      client.flush_scores
+
+      expect(a_request(:post, "https://cloud.langfuse.com/api/public/ingestion")).to have_been_made.once
+    ensure
+      ENV.delete("OTEL_SDK_DISABLED")
+    end
   end
 end

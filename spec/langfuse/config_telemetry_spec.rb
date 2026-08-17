@@ -7,6 +7,7 @@ RSpec.describe Langfuse::Config do
 
       expect(config.tracing_enabled).to be true
       expect(config.telemetry_enabled?).to be true
+      expect(config.trace_export_enabled?).to be true
     end
 
     it "reads LANGFUSE_TRACING_ENABLED without case sensitivity" do
@@ -16,6 +17,7 @@ RSpec.describe Langfuse::Config do
 
       expect(config.tracing_enabled).to be false
       expect(config.telemetry_enabled?).to be false
+      expect(config.trace_export_enabled?).to be false
     ensure
       ENV.delete("LANGFUSE_TRACING_ENABLED")
     end
@@ -30,12 +32,13 @@ RSpec.describe Langfuse::Config do
       ENV.delete("LANGFUSE_TRACING_ENABLED")
     end
 
-    it "honors OTEL_SDK_DISABLED without case sensitivity" do
+    it "disables only trace export when OTEL_SDK_DISABLED is true" do
       ENV["OTEL_SDK_DISABLED"] = "TRUE"
 
       config = described_class.new { |candidate| candidate.tracing_enabled = true }
 
-      expect(config.telemetry_enabled?).to be false
+      expect(config.telemetry_enabled?).to be true
+      expect(config.trace_export_enabled?).to be false
     ensure
       ENV.delete("OTEL_SDK_DISABLED")
     end
@@ -46,6 +49,7 @@ RSpec.describe Langfuse::Config do
       config = described_class.new
 
       expect(config.telemetry_enabled?).to be true
+      expect(config.trace_export_enabled?).to be true
     ensure
       ENV.delete("OTEL_SDK_DISABLED")
     end

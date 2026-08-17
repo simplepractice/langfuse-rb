@@ -168,7 +168,7 @@ module Langfuse
     #
     #   OpenTelemetry.tracer_provider = Langfuse.tracer_provider
     def tracer_provider
-      return noop_tracer_provider unless configuration.telemetry_enabled?
+      return noop_tracer_provider unless configuration.trace_export_enabled?
 
       OtelSetup.setup(configuration) unless OtelSetup.initialized?
       OtelSetup.tracer_provider
@@ -647,7 +647,7 @@ module Langfuse
     end
 
     def ensure_tracing_started
-      return false unless configuration.telemetry_enabled?
+      return false unless configuration.trace_export_enabled?
       return true if OtelSetup.initialized?
 
       OtelSetup.setup(configuration)

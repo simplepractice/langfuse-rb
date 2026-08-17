@@ -273,14 +273,18 @@ module Langfuse
       validate_logger!
     end
 
-    # Check the effective tracing and scoring state.
+    # Check whether Langfuse tracing and scoring are enabled.
     #
-    # `OTEL_SDK_DISABLED=true` always disables telemetry. Otherwise,
-    # `tracing_enabled` controls the result.
-    #
-    # @return [Boolean] true when tracing and scoring are enabled
+    # @return [Boolean] true when Langfuse telemetry is enabled
     def telemetry_enabled?
-      tracing_enabled && !@otel_sdk_disabled
+      tracing_enabled
+    end
+
+    # Check whether OpenTelemetry trace export is enabled.
+    #
+    # @return [Boolean] true when Langfuse tracing is enabled and the OpenTelemetry SDK is active
+    def trace_export_enabled?
+      telemetry_enabled? && !@otel_sdk_disabled
     end
 
     # Normalize stale_ttl value
