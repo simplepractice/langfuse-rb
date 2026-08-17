@@ -41,6 +41,7 @@ end
 
 require_relative "langfuse/config"
 require_relative "langfuse/fork_safety"
+require_relative "langfuse/exit_hook"
 require_relative "langfuse/cache_constants"
 require_relative "langfuse/prompt_cache"
 require_relative "langfuse/prompt_fetch_result"
@@ -88,6 +89,7 @@ module Langfuse
     #
     # @return [Config] the global configuration
     def configuration
+      ExitHook.enable
       @configuration ||= Config.new
     end
 
@@ -153,10 +155,11 @@ module Langfuse
     # @param timeout [Integer] Timeout in seconds
     # @return [void]
     #
-    # @example In a Rails initializer or shutdown hook
-    #   at_exit { Langfuse.shutdown }
+    # @example Explicit early shutdown
+    #   Langfuse.shutdown
     #
     def shutdown(timeout: 30)
+      ExitHook.disable
       client.shutdown if @client
       OtelSetup.shutdown(timeout: timeout)
     end
@@ -409,6 +412,7 @@ module Langfuse
     #
     # @return [void]
     def reset!
+      ExitHook.disable
       client.shutdown if @client
       OtelSetup.shutdown(timeout: 5) if OtelSetup.initialized?
       @configuration = nil

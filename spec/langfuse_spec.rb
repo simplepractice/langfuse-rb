@@ -27,6 +27,12 @@ RSpec.describe Langfuse do
       config2 = described_class.configuration
       expect(config1).to eq(config2)
     end
+
+    it "enables the process-exit callback" do
+      expect(Langfuse::ExitHook).to receive(:enable).and_call_original
+
+      described_class.configuration
+    end
   end
 
   describe ".configure" do
@@ -179,6 +185,12 @@ RSpec.describe Langfuse do
   end
 
   describe ".reset!" do
+    it "disables the process-exit callback" do
+      expect(Langfuse::ExitHook).to receive(:disable).and_call_original
+
+      described_class.reset!
+    end
+
     it "resets configuration and client" do
       described_class.configure { |c| c.public_key = "test" }
       described_class.reset!
@@ -225,6 +237,7 @@ RSpec.describe Langfuse do
     end
 
     it "calls OtelSetup.shutdown with timeout" do
+      expect(Langfuse::ExitHook).to receive(:disable).and_call_original
       expect(Langfuse::OtelSetup).to receive(:shutdown).with(timeout: 30)
       described_class.shutdown
     end
