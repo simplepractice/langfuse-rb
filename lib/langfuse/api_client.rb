@@ -303,7 +303,7 @@ module Langfuse
       handle_batch_response(e.response)
     rescue Faraday::Error => e
       logger.error("Langfuse batch send failed: #{e.message}")
-      raise ApiError, "Batch send failed: #{e.message}"
+      raise BatchDeliveryError.new("Batch send failed: #{e.message}", retryable: true)
     end
 
     # Create a score through the synchronous Scores API.
@@ -818,7 +818,10 @@ module Langfuse
         raise UnauthorizedError, "Authentication failed. Check your API keys."
       else
         error_message = extract_error_message(response)
-        raise ApiError, "Batch send failed (#{response.status}): #{error_message}"
+        raise BatchDeliveryError.new(
+          "Batch send failed (#{response.status}): #{error_message}",
+          retryable: retryable_batch_status?(response.status)
+        )
       end
     end
 
@@ -831,7 +834,19 @@ module Langfuse
 
       messages = errors.filter_map { |e| e["message"] || e["error"] }
       summary = messages.empty? ? "#{errors.size} event(s) rejected" : messages.join("; ")
-      raise ApiError, "Batch send failed: #{summary}"
+      raise BatchDeliveryError.new(
+        "Batch send failed: #{summary}",
+        retryable: retryable_batch_errors?(errors)
+      )
+    end
+
+    def retryable_batch_errors?(errors)
+      statuses = errors.filter_map { |error| Integer(error["status"], exception: false) }
+      statuses.length == errors.length && statuses.all? { |status| retryable_batch_status?(status) }
+    end
+
+    def retryable_batch_status?(status)
+      status == 429 || status >= 500
     end
 
     # Extract error message from response body

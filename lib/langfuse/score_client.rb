@@ -285,7 +285,10 @@ module Langfuse
     def flush_pending_batches
       loop do
         batch = next_batch
-        break if batch.empty? || !send_batch(batch)
+        break if batch.empty?
+
+        delivery = send_batch(batch)
+        break if delivery == :retry
 
         @queue.remove_prefix(batch.length)
       end
@@ -415,13 +418,31 @@ module Langfuse
     # Send a batch of events to the API
     #
     # @param events [Array<Hash>] Array of event hashes
-    # @return [Boolean] true when delivered, false when delivery fails
+    # @return [Symbol] :delivered, :discarded, or :retry
     def send_batch(events)
       api_client.send_batch(events)
-      true
+      :delivered
+    rescue BatchDeliveryError => e
+      return retry_batch(e) if e.retryable?
+
+      discard_batch(events, e)
+    rescue UnauthorizedError => e
+      discard_batch(events, e)
     rescue StandardError => e
       logger.error("Langfuse score batch send failed: #{e.message}")
-      false
+      :retry
+    end
+
+    def retry_batch(error)
+      logger.error("Langfuse score batch send failed and will retry: #{error.message}")
+      :retry
+    end
+
+    def discard_batch(events, error)
+      logger.error(
+        "Langfuse dropped #{events.length} score event(s) after a permanent batch failure: #{error.message}"
+      )
+      :discarded
     end
 
     # Start the background flush timer thread

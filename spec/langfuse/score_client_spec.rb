@@ -23,6 +23,25 @@ RSpec.describe Langfuse::ScoreClient do
       .to_return(status: 200, body: "", headers: {})
   end
 
+  def capture_child_score_state(score_client, parent_queue:, parent_mutexes:)
+    capture_forked_state do
+      score_client.create(name: "child-score", value: 1)
+      child_queue = score_client.instance_variable_get(:@queue)
+      child_mutexes = %i[@shutdown_mutex @flush_mutex].map { |name| score_client.instance_variable_get(name) }
+      child_thread = score_client.instance_variable_get(:@flush_thread)
+      score_client.flush
+      {
+        pid: Process.pid,
+        queue_replaced: !child_queue.equal?(parent_queue),
+        queue_class: child_queue.class.name,
+        queue_capacity: child_queue.capacity,
+        queue_empty_after_flush: child_queue.empty?,
+        mutexes_replaced: child_mutexes.zip(parent_mutexes).all? { |child, parent| !child.equal?(parent) },
+        timer_alive: child_thread&.alive?
+      }
+    end
+  end
+
   after do
     score_client.shutdown
   end
@@ -50,24 +69,17 @@ RSpec.describe Langfuse::ScoreClient do
       score_client.create(name: "parent-score", value: 1)
       parent_queue = score_client.instance_variable_get(:@queue)
       parent_thread = score_client.instance_variable_get(:@flush_thread)
-      child_pid, status, child_state = capture_forked_state do
-        score_client.create(name: "child-score", value: 1)
-        child_queue = score_client.instance_variable_get(:@queue)
-        child_thread = score_client.instance_variable_get(:@flush_thread)
-        score_client.flush
-        {
-          pid: Process.pid,
-          queue_replaced: !child_queue.equal?(parent_queue),
-          queue_empty_after_flush: child_queue.empty?,
-          timer_alive: child_thread&.alive?
-        }
-      end
+      parent_mutexes = %i[@shutdown_mutex @flush_mutex].map { |name| score_client.instance_variable_get(name) }
+      child_pid, status, child_state = capture_child_score_state(score_client, parent_queue:, parent_mutexes:)
 
       expect(status).to be_success
       expect(child_state).to eq(
         pid: child_pid,
         queue_replaced: true,
+        queue_class: "Langfuse::PendingScoreQueue",
+        queue_capacity: Langfuse::Config::DEFAULT_SCORE_QUEUE_CAPACITY,
         queue_empty_after_flush: true,
+        mutexes_replaced: true,
         timer_alive: true
       )
       expect(score_client.instance_variable_get(:@queue)).to equal(parent_queue)
@@ -847,6 +859,35 @@ RSpec.describe Langfuse::ScoreClient do
 
       expect(retried_names).to eq(%w[score-1 score-2])
       expect(pending_queue).to be_empty
+    end
+
+    it "drops a permanently rejected batch and continues with later scores" do
+      config.batch_size = 1
+      attempts = []
+      allow(api_client).to receive(:send_batch) do |batch|
+        name = batch.first.dig(:body, :name)
+        attempts << name
+        raise Langfuse::BatchDeliveryError.new("name is invalid", retryable: false) if name == "invalid"
+      end
+
+      score_client.create(name: "invalid", value: 1)
+      score_client.create(name: "valid", value: 2)
+      score_client.flush
+
+      expect(attempts).to eq(%w[invalid valid])
+      expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "keeps transient batch failures queued for a later retry" do
+      allow(api_client).to receive(:send_batch).and_raise(
+        Langfuse::BatchDeliveryError.new("unavailable", retryable: true)
+      )
+
+      score_client.create(name: "retry-me", value: 1)
+      score_client.flush
+
+      pending_names = score_client.instance_variable_get(:@queue).snapshot.map { |event| event.dig(:body, :name) }
+      expect(pending_names).to eq(["retry-me"])
     end
   end
 

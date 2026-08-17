@@ -1422,7 +1422,9 @@ RSpec.describe Langfuse::ApiClient do
 
         expect do
           api_client.send_batch(events)
-        end.to raise_error(Langfuse::ApiError, /name is required/)
+        end.to raise_error(Langfuse::BatchDeliveryError, /name is required/) { |error|
+          expect(error).not_to be_retryable
+        }
       end
 
       it "raises ApiError for a 200 status whose body still lists errors" do
@@ -1509,7 +1511,9 @@ RSpec.describe Langfuse::ApiClient do
 
         expect do
           api_client.send_batch(events)
-        end.to raise_error(Langfuse::ApiError, /Batch send failed/)
+        end.to raise_error(Langfuse::BatchDeliveryError, /Batch send failed/) { |error|
+          expect(error).to be_retryable
+        }
       end
 
       it "handles network errors" do
