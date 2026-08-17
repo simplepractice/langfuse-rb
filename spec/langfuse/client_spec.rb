@@ -1694,6 +1694,24 @@ RSpec.describe Langfuse::Client do
         data_type: :boolean
       )
     end
+
+    it "sends the configured environment through the ingestion API" do
+      valid_config.environment = "staging"
+      configured_client = described_class.new(valid_config)
+      request = stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+      request.with do |incoming_request|
+        body = JSON.parse(incoming_request.body)
+        body.dig("batch", 0, "body", "environment") == "staging"
+      end
+      request.to_return(status: 200, body: "", headers: {})
+
+      configured_client.create_score(name: "quality", value: 0.85, session_id: "session-123")
+      configured_client.flush_scores
+
+      expect(request).to have_been_requested.once
+    ensure
+      configured_client&.shutdown
+    end
   end
 
   describe "#create_score!" do
@@ -1744,6 +1762,24 @@ RSpec.describe Langfuse::Client do
       )
 
       expect(result).to eq("score-123")
+    end
+
+    it "sends the configured environment through the direct Scores API" do
+      valid_config.environment = "staging"
+      configured_client = described_class.new(valid_config)
+      stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+        .with(body: hash_including(environment: "staging"))
+        .to_return(
+          status: 200,
+          body: { id: "score-123" }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      result = configured_client.create_score!(id: "score-123", name: "quality", value: 0.85)
+
+      expect(result).to eq("score-123")
+    ensure
+      configured_client&.shutdown
     end
 
     it "propagates errors from score_client#create! instead of swallowing them" do
