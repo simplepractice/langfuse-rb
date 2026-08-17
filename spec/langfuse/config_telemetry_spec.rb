@@ -69,6 +69,8 @@ RSpec.describe Langfuse::Config do
       config = described_class.new
       config.tracing_enabled = "false"
 
+      expect(config.telemetry_enabled?).to be false
+      expect(config.trace_export_enabled?).to be false
       expect { config.validate! }.to raise_error(
         Langfuse::ConfigurationError,
         "tracing_enabled must be true or false"

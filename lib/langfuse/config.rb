@@ -277,7 +277,7 @@ module Langfuse
     #
     # @return [Boolean] true when Langfuse telemetry is enabled
     def telemetry_enabled?
-      tracing_enabled
+      tracing_enabled == true
     end
 
     # Check whether OpenTelemetry trace export is enabled.

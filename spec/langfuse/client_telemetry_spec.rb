@@ -65,6 +65,19 @@ RSpec.describe Langfuse::Client do
       expect(a_request(:post, "https://cloud.langfuse.com/api/public/ingestion")).to have_been_made.once
     end
 
+    it "fails closed when a live telemetry value is not Boolean" do
+      config.public_key = "pk_test"
+      config.secret_key = "sk_test"
+      config.tracing_enabled = true
+      client = described_class.new(config)
+
+      config.tracing_enabled = "false"
+
+      expect(client.create_score(name: "quality", value: 1)).to be_nil
+      client.flush_scores
+      expect(a_request(:any, /.*/)).not_to have_been_made
+    end
+
     it "delivers scores when OTEL_SDK_DISABLED disables trace export" do
       ENV["OTEL_SDK_DISABLED"] = "true"
       config.public_key = "pk_test"
