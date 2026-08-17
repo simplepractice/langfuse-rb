@@ -42,6 +42,50 @@ RSpec.describe Langfuse::Client do
       )
     end
 
+    context "when telemetry is disabled" do
+      let(:disabled_config) do
+        Langfuse::Config.new do |config|
+          config.public_key = nil
+          config.secret_key = nil
+          config.tracing_enabled = false
+        end
+      end
+
+      it "constructs without credentials and makes score calls no-ops" do
+        client = described_class.new(disabled_config)
+
+        expect(client.api_client).to be_a(Langfuse::DeferredApiClient)
+        expect(client.create_score(name: nil, value: nil)).to be_nil
+        expect(client.create_score!(name: nil, value: nil)).to be_nil
+        expect(a_request(:any, /.*/)).not_to have_been_made
+      end
+
+      it "keeps prompt configuration validation deferred until prompt use" do
+        client = described_class.new(disabled_config)
+
+        expect { client.get_prompt("greeting") }.to raise_error(
+          Langfuse::ConfigurationError,
+          "public_key is required"
+        )
+        expect(a_request(:any, /.*/)).not_to have_been_made
+      end
+
+      it "allows prompt access when the normal client configuration is valid" do
+        disabled_config.public_key = "pk_test"
+        disabled_config.secret_key = "sk_test"
+        stub_request(:get, "https://cloud.langfuse.com/api/public/v2/prompts/greeting")
+          .to_return(
+            status: 200,
+            body: { id: "prompt-1", name: "greeting", version: 1, type: "text", prompt: "Hello" }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+
+        prompt = described_class.new(disabled_config).get_prompt("greeting")
+
+        expect(prompt).to be_a(Langfuse::TextPromptClient)
+      end
+    end
+
     context "with caching enabled" do
       let(:config_with_cache) do
         Langfuse::Config.new do |config|

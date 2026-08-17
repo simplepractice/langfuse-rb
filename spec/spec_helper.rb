@@ -55,6 +55,8 @@ RSpec.configure do |config|
     ENV.delete("LANGFUSE_FLUSH_AT")
     ENV.delete("LANGFUSE_FLUSH_INTERVAL")
     ENV.delete("LANGFUSE_DEBUG")
+    ENV.delete("LANGFUSE_TRACING_ENABLED")
+    ENV.delete("OTEL_SDK_DISABLED")
 
     # Stub OTLP endpoint BEFORE reset (which may flush traces)
     # (tests can override this with more specific stubs if needed)

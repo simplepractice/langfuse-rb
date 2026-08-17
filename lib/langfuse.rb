@@ -81,6 +81,8 @@ require_relative "langfuse/observations"
 require_relative "langfuse/trace_id"
 require_relative "langfuse/score_value"
 require_relative "langfuse/score_client"
+require_relative "langfuse/noop_score_client"
+require_relative "langfuse/deferred_api_client"
 require_relative "langfuse/prompt_renderer"
 require_relative "langfuse/text_prompt_client"
 require_relative "langfuse/chat_prompt_client"
@@ -144,7 +146,11 @@ module Langfuse
     #
     # @return [Boolean] true when the local configuration is valid
     def configured?
-      configuration.valid?
+      config = configuration
+      return config.valid? if config.telemetry_enabled?
+
+      config.validate_telemetry_disabled!
+      true
     rescue ConfigurationError
       # Reading `configuration` builds it from the environment, which can fail
       # on its own before there is anything to validate.
@@ -153,7 +159,7 @@ module Langfuse
 
     # Return Langfuse's internal tracer provider for explicit global OpenTelemetry installation.
     #
-    # @return [OpenTelemetry::SDK::Trace::TracerProvider]
+    # @return [OpenTelemetry::SDK::Trace::TracerProvider, OpenTelemetry::Trace::TracerProvider]
     # @raise [ConfigurationError] if tracing configuration is invalid
     #
     # @example
@@ -164,6 +170,8 @@ module Langfuse
     #
     #   OpenTelemetry.tracer_provider = Langfuse.tracer_provider
     def tracer_provider
+      return noop_tracer_provider unless configuration.telemetry_enabled?
+
       OtelSetup.setup(configuration) unless OtelSetup.initialized?
       OtelSetup.tracer_provider
     rescue ConfigurationError => e
@@ -322,7 +330,7 @@ module Langfuse
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
-    # @return [String] ID of the created score
+    # @return [String, nil] ID of the created score, or nil when telemetry is disabled
     # @raise [ArgumentError] if validation fails
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] if the API request fails
@@ -441,12 +449,14 @@ module Langfuse
       @configuration = nil
       @client = nil
       @noop_tracer = nil
+      @noop_tracer_provider = nil
       @emitted_warnings = nil
     rescue StandardError
       # Ignore shutdown errors during reset (e.g., in tests)
       @configuration = nil
       @client = nil
       @noop_tracer = nil
+      @noop_tracer_provider = nil
       @emitted_warnings = nil
     end
 
@@ -639,6 +649,7 @@ module Langfuse
     end
 
     def ensure_tracing_started
+      return false unless configuration.telemetry_enabled?
       return true if OtelSetup.initialized?
 
       OtelSetup.setup(configuration)
@@ -683,7 +694,11 @@ module Langfuse
     end
 
     def noop_tracer
-      @noop_tracer ||= OpenTelemetry::Trace::TracerProvider.new.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION)
+      @noop_tracer ||= noop_tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION)
+    end
+
+    def noop_tracer_provider
+      @noop_tracer_provider ||= OpenTelemetry::Trace::TracerProvider.new
     end
   end
   # rubocop:enable Metrics/ClassLength

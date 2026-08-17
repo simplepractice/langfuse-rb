@@ -14,6 +14,8 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_stale_ttl).to eq(0) # Defaults to 0 (SWR disabled)
       expect(config.cache_refresh_threads).to eq(5)
       expect(config.score_queue_capacity).to eq(100_000)
+      expect(config.tracing_enabled).to be true
+      expect(config.telemetry_enabled?).to be true
       expect(config.should_export_span).to be_nil
       expect(config.sample_rate).to eq(1.0)
     end
@@ -63,6 +65,48 @@ RSpec.describe Langfuse::Config do
       expect(config.sample_rate).to eq(0.0)
     ensure
       ENV.delete("LANGFUSE_SAMPLE_RATE")
+    end
+
+    it "reads LANGFUSE_TRACING_ENABLED without case sensitivity" do
+      ENV["LANGFUSE_TRACING_ENABLED"] = "FALSE"
+
+      config = described_class.new
+
+      expect(config.tracing_enabled).to be false
+      expect(config.telemetry_enabled?).to be false
+    ensure
+      ENV.delete("LANGFUSE_TRACING_ENABLED")
+    end
+
+    it "lets explicit Ruby configuration override LANGFUSE_TRACING_ENABLED" do
+      ENV["LANGFUSE_TRACING_ENABLED"] = "false"
+
+      config = described_class.new { |candidate| candidate.tracing_enabled = true }
+
+      expect(config.telemetry_enabled?).to be true
+    ensure
+      ENV.delete("LANGFUSE_TRACING_ENABLED")
+    end
+
+    it "honors OTEL_SDK_DISABLED even when Langfuse tracing is enabled" do
+      ENV["OTEL_SDK_DISABLED"] = "true"
+
+      config = described_class.new { |candidate| candidate.tracing_enabled = true }
+
+      expect(config.telemetry_enabled?).to be false
+    ensure
+      ENV.delete("OTEL_SDK_DISABLED")
+    end
+
+    it "raises ConfigurationError for an invalid LANGFUSE_TRACING_ENABLED value" do
+      ENV["LANGFUSE_TRACING_ENABLED"] = "sometimes"
+
+      expect { described_class.new }.to raise_error(
+        Langfuse::ConfigurationError,
+        "LANGFUSE_TRACING_ENABLED must be true or false"
+      )
+    ensure
+      ENV.delete("LANGFUSE_TRACING_ENABLED")
     end
 
     it "falls back to CI release environment variables when LANGFUSE_RELEASE is not set" do
@@ -365,6 +409,17 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.to raise_error(
           Langfuse::ConfigurationError,
           "score_queue_capacity must be a positive Integer"
+        )
+      end
+    end
+
+    context "when tracing_enabled is invalid" do
+      it "raises ConfigurationError" do
+        config.tracing_enabled = "false"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "tracing_enabled must be true or false"
         )
       end
     end

@@ -294,6 +294,23 @@ Session-only and dataset-run-only scores are still sent because they are not tie
 
 For Ruby client instances, `sample_rate` is snapshotted when the client is built. Changing `config.sample_rate` later does not update that client's score sampler or the already-initialized trace sampler. Rebuild the client with `Langfuse.reset!` when changing sampling behavior.
 
+#### `tracing_enabled`
+
+- **Type:** Boolean
+- **Default:** `true`
+- **Environment:** `LANGFUSE_TRACING_ENABLED`
+- **Description:** Enables or disables Langfuse tracing and scoring
+
+```ruby
+Langfuse.configure do |config|
+  config.tracing_enabled = false
+end
+```
+
+Explicit Ruby configuration overrides `LANGFUSE_TRACING_ENABLED`. The environment variable accepts `true` or `false` without case sensitivity. The standard `OTEL_SDK_DISABLED=true` setting always disables Langfuse telemetry.
+
+When disabled, trace and score calls are no-ops. They do not require Langfuse credentials and do not create network requests. Prompt and data API calls still validate the normal client configuration when used. Synchronous `create_score!` returns `nil` while telemetry is disabled. Call `Langfuse.reset!` after changing this setting on an initialized SDK.
+
 #### `logger`
 
 - **Type:** Logger
@@ -804,6 +821,7 @@ Client-readiness rules:
 - `base_url` must be an absolute HTTP or HTTPS URL
 - `batch_size` must be a positive Integer
 - `score_queue_capacity` must be a positive Integer
+- `tracing_enabled` must be `true` or `false`
 - `flush_interval`, `timeout`, `cache_max_size`, `cache_lock_timeout`, and `cache_refresh_threads` must be positive numbers
 - `cache_ttl` must be a non-negative number
 - `cache_stale_ttl` must be a non-negative number or `:indefinite`
