@@ -29,8 +29,13 @@ module Langfuse
     # @return [Config] The client configuration
     attr_reader :config
 
+    # Return the underlying API client, building it on first non-telemetry use.
+    #
     # @return [ApiClient] The underlying API client
-    attr_reader :api_client
+    # @raise [ConfigurationError] if the full client configuration is invalid
+    def api_client
+      @api_client || @api_client_mutex.synchronize { @api_client ||= build_validated_api_client }
+    end
 
     # Pure pass-throughs to {ApiClient}. See {ApiClient} for parameter and
     # return-value documentation; the public surface here is identical.
@@ -73,29 +78,19 @@ module Langfuse
     # @return [Client]
     def initialize(config)
       @config = config
-      @config.validate!
-
-      # Create cache if enabled
-      cache = create_cache if cache_enabled?
-
-      # Create API client with cache
-      @api_client = ApiClient.new(
-        public_key: config.public_key,
-        secret_key: config.secret_key,
-        base_url: config.base_url,
-        timeout: config.timeout,
-        logger: config.logger,
-        cache: cache,
-        cache_observer: config.prompt_cache_observer
-      )
-
+      @api_client_mutex = Mutex.new
+      @score_client_mutex = Mutex.new
       @project_id = nil
       # One-shot lookup: avoids repeated blocking API calls in URL helpers
       # (trace_url, dataset_url, dataset_run_url) when the project endpoint is down.
       @project_id_fetched = false
-
-      # Initialize score client for batching score events
-      @score_client = ScoreClient.new(api_client: @api_client, config: config)
+      if telemetry_enabled?
+        config.validate!
+        @api_client = build_api_client
+        @score_client = build_score_client
+      else
+        config.validate_telemetry_disabled!
+      end
     end
 
     # Fetch a prompt and return the appropriate client
@@ -385,7 +380,7 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                      metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
-      @score_client.create(
+      active_score_client&.create(
         name: name,
         value: value,
         id: id,
@@ -416,7 +411,7 @@ module Langfuse
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
-    # @return [String] ID of the created score
+    # @return [String, nil] ID of the created score, or nil when telemetry is disabled
     # @raise [ArgumentError] if validation fails
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] if the API request fails
@@ -426,7 +421,7 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                       metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
-      @score_client.create!(
+      active_score_client&.create!(
         name: name,
         value: value,
         id: id,
@@ -460,7 +455,7 @@ module Langfuse
     #     client.score_active_observation(name: "accuracy", value: 0.92)
     #   end
     def score_active_observation(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      @score_client.score_active_observation(
+      active_score_client&.score_active_observation(
         name: name,
         value: value,
         comment: comment,
@@ -486,7 +481,7 @@ module Langfuse
     #     client.score_active_trace(name: "overall_quality", value: 5)
     #   end
     def score_active_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      @score_client.score_active_trace(
+      active_score_client&.score_active_trace(
         name: name,
         value: value,
         comment: comment,
@@ -504,7 +499,7 @@ module Langfuse
     # @example
     #   client.flush_scores
     def flush_scores
-      @score_client.flush
+      active_score_client&.flush
     end
 
     # Shutdown the client and flush any pending scores
@@ -513,8 +508,8 @@ module Langfuse
     #
     # @return [void]
     def shutdown
-      @score_client.shutdown
-      @api_client.shutdown
+      @score_client&.shutdown
+      @api_client_mutex.synchronize { @api_client }&.shutdown
     end
 
     # Create a new dataset
@@ -714,6 +709,38 @@ module Langfuse
     # rubocop:enable Metrics/ParameterLists
 
     private
+
+    def build_validated_api_client
+      config.validate!
+      build_api_client
+    end
+
+    def build_api_client
+      cache = create_cache if cache_enabled?
+      ApiClient.new(
+        public_key: config.public_key,
+        secret_key: config.secret_key,
+        base_url: config.base_url,
+        timeout: config.timeout,
+        logger: config.logger,
+        cache: cache,
+        cache_observer: config.prompt_cache_observer
+      )
+    end
+
+    def telemetry_enabled?
+      config.telemetry_enabled?
+    end
+
+    def active_score_client
+      return unless telemetry_enabled?
+
+      @score_client_mutex.synchronize { @score_client ||= build_score_client }
+    end
+
+    def build_score_client
+      ScoreClient.new(api_client: api_client, config: config)
+    end
 
     attr_reader :score_client
 

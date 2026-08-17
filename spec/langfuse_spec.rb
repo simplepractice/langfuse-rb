@@ -277,6 +277,80 @@ RSpec.describe Langfuse do
     end
   end
 
+  describe "disabled telemetry" do
+    before do
+      described_class.reset!
+      described_class.configure do |config|
+        config.public_key = nil
+        config.secret_key = nil
+        config.tracing_enabled = false
+      end
+    end
+
+    it "constructs a client without credentials" do
+      expect(described_class.configured?).to be true
+      expect { described_class.client }.not_to raise_error
+    end
+
+    it "uses non-recording spans and no-op scores without network requests" do
+      observation = described_class.observe("disabled-operation")
+
+      expect(observation.otel_span).not_to be_recording
+      expect(described_class.create_score(name: nil, value: nil)).to be_nil
+      expect(described_class.create_score!(name: nil, value: nil)).to be_nil
+      expect(Langfuse::OtelSetup).not_to be_initialized
+      expect(a_request(:any, /.*/)).not_to have_been_made
+    end
+
+    it "returns the no-op tracer provider" do
+      provider = described_class.tracer_provider
+
+      expect(provider).to be_a(OpenTelemetry::Trace::TracerProvider)
+      expect(provider).not_to be_a(OpenTelemetry::SDK::Trace::TracerProvider)
+    end
+
+    it "stops traces and queued score delivery on an initialized SDK" do
+      described_class.configure do |config|
+        config.public_key = "pk_test"
+        config.secret_key = "sk_test"
+        config.tracing_enabled = true
+      end
+      initialized_client = described_class.client
+      described_class.create_score(name: "queued-before-disable", value: 1)
+
+      described_class.configure { |config| config.tracing_enabled = false }
+      observation = described_class.observe("disabled-after-initialize")
+      described_class.flush_scores
+
+      expect(described_class.client).to equal(initialized_client)
+      expect(observation.otel_span).not_to be_recording
+      expect(a_request(:any, /.*/)).not_to have_been_made
+    end
+  end
+
+  describe "OpenTelemetry SDK disablement" do
+    it "keeps direct score ingestion active while trace export is disabled" do
+      ENV["OTEL_SDK_DISABLED"] = "true"
+      described_class.reset!
+      described_class.configure do |config|
+        config.public_key = "pk_test"
+        config.secret_key = "sk_test"
+      end
+      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+        .to_return(status: 200, body: { successes: [], errors: [] }.to_json)
+
+      observation = described_class.observe("otel-disabled")
+      described_class.create_score(name: "quality", value: 1)
+      described_class.flush_scores
+
+      expect(observation.otel_span).not_to be_recording
+      expect(a_request(:post, "https://cloud.langfuse.com/api/public/ingestion")).to have_been_made.once
+    ensure
+      ENV.delete("OTEL_SDK_DISABLED")
+      described_class.reset!
+    end
+  end
+
   describe ".propagate_attributes" do
     before do
       described_class.configure do |config|

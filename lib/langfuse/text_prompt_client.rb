@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "prompt_renderer"
+require_relative "prompt_variables"
 
 module Langfuse
   # Text prompt client for compiling text prompts with variable substitution
@@ -69,6 +70,17 @@ module Langfuse
     # @return [String] Prompt type ("text")
     def type
       "text"
+    end
+
+    # Return the unique variables referenced by the prompt template
+    #
+    # Section names are included because callers must provide their values.
+    # Variables inside sections include the full section path.
+    #
+    # @return [Array<String>] Referenced variable names in source order
+    # @raise [Mustache::Parser::SyntaxError] if the prompt contains invalid Mustache syntax
+    def variables
+      PromptVariables.extract(prompt)
     end
 
     # Compile the prompt with variable substitution

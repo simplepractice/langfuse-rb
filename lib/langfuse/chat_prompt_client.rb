@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "prompt_renderer"
+require_relative "prompt_variables"
 
 module Langfuse
   # Chat prompt client for compiling chat prompts with variable substitution
@@ -71,6 +72,22 @@ module Langfuse
     # @return [String] Prompt type ("chat")
     def type
       "chat"
+    end
+
+    # Return the unique variables referenced by all message templates
+    #
+    # Section names are included because callers must provide their values.
+    # Message placeholder entries are not Mustache templates and are excluded.
+    #
+    # @return [Array<String>] Referenced variable names in message and source order
+    # @raise [Mustache::Parser::SyntaxError] if a message contains invalid Mustache syntax
+    def variables
+      prompt.each_with_object([]) do |message, names|
+        normalized = symbolize_keys(message)
+        next if normalized[:type].to_s == PLACEHOLDER_TYPE
+
+        names.concat(PromptVariables.extract(normalized[:content] || ""))
+      end.uniq
     end
 
     # Compile the chat prompt with variable substitution and message placeholders

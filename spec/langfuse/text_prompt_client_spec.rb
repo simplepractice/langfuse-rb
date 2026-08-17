@@ -136,6 +136,43 @@ RSpec.describe Langfuse::TextPromptClient do
     end
   end
 
+  describe "#variables" do
+    it "returns unique parsed variables in source order" do
+      data = prompt_data.merge(
+        "prompt" => "{{name}} {{name}} {{profile.email}} {{{raw_html}}} {{& plain_html}} {{! ignored }}"
+      )
+
+      expect(described_class.new(data).variables).to eq(%w[name profile.email raw_html plain_html])
+    end
+
+    it "includes sections and scopes variables inside nested sections" do
+      data = prompt_data.merge(
+        "prompt" => "{{#account}}{{#owner}}{{profile.email}}{{/owner}}{{/account}}" \
+                    "{{^items}}{{message}}{{/items}}"
+      )
+
+      expect(described_class.new(data).variables).to eq(
+        %w[account account.owner account.owner.profile.email items message]
+      )
+    end
+
+    it "keeps inverted-section variables in the enclosing scope" do
+      data = prompt_data.merge(
+        "prompt" => "{{#account}}{{^owner}}{{fallback.name}}{{/owner}}{{/account}}"
+      )
+
+      expect(described_class.new(data).variables).to eq(
+        %w[account account.owner account.fallback.name]
+      )
+    end
+
+    it "raises for invalid Mustache syntax" do
+      data = prompt_data.merge("prompt" => "{{#account}}{{name}}")
+
+      expect { described_class.new(data).variables }.to raise_error(Mustache::Parser::SyntaxError)
+    end
+  end
+
   describe "#compile" do
     let(:client) { described_class.new(prompt_data) }
 

@@ -95,6 +95,8 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+      return unless config.telemetry_enabled?
+
       score = build_score_body(
         name: name,
         value: value,
@@ -141,7 +143,7 @@ module Langfuse
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
-    # @return [String] ID of the created score
+    # @return [String, nil] ID of the created score, or nil when telemetry is disabled
     # @raise [ArgumentError] if validation fails
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] if the API request fails
@@ -151,6 +153,8 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def create!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                 metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+      return unless config.telemetry_enabled?
+
       score = build_score_body(
         name: name,
         value: value,
@@ -237,6 +241,8 @@ module Langfuse
     #
     # @return [void]
     def flush
+      return unless config.telemetry_enabled?
+
       @flush_mutex.synchronize { flush_pending_batches }
     rescue StandardError => e
       logger.error("Langfuse score flush failed: #{e.message}")

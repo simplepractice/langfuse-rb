@@ -64,6 +64,9 @@ module Langfuse
     # @return [Boolean] Use OpenTelemetry batch scheduling for trace export
     attr_accessor :tracing_async
 
+    # @return [Boolean] Enable Langfuse tracing and scoring
+    attr_accessor :tracing_enabled
+
     # @return [Integer] Number of events to batch before sending
     attr_accessor :batch_size
 
@@ -146,6 +149,9 @@ module Langfuse
     # @return [Boolean] Default async processing setting
     DEFAULT_TRACING_ASYNC = true
 
+    # @return [Boolean] Default telemetry setting
+    DEFAULT_TRACING_ENABLED = true
+
     # @return [Integer] Default number of events to batch before sending
     DEFAULT_BATCH_SIZE = 50
 
@@ -218,6 +224,7 @@ module Langfuse
     # @raise [ConfigurationError] if configuration is invalid
     # @return [void]
     def validate!
+      validate_tracing_enabled!
       validate_connection_settings!
       validate_batching_settings!
       validate_sample_rate!
@@ -244,6 +251,7 @@ module Langfuse
     # @raise [ConfigurationError] if tracing configuration is invalid
     # @return [void]
     def validate_tracing!
+      validate_tracing_enabled!
       validate_connection_settings!
       validate_batching_settings!
       validate_sample_rate!
@@ -253,6 +261,30 @@ module Langfuse
       validate_metrics_reporter!
       validate_span_exporter!
       validate_logger!
+    end
+
+    # Validate settings needed while telemetry is disabled.
+    #
+    # @api private
+    # @raise [ConfigurationError] if disabled-client configuration is invalid
+    # @return [void]
+    def validate_telemetry_disabled!
+      validate_tracing_enabled!
+      validate_logger!
+    end
+
+    # Check whether Langfuse tracing and scoring are enabled.
+    #
+    # @return [Boolean] true when Langfuse telemetry is enabled
+    def telemetry_enabled?
+      tracing_enabled == true
+    end
+
+    # Check whether OpenTelemetry trace export is enabled.
+    #
+    # @return [Boolean] true when Langfuse tracing is enabled and the OpenTelemetry SDK is active
+    def trace_export_enabled?
+      telemetry_enabled? && !@otel_sdk_disabled
     end
 
     # Normalize stale_ttl value
@@ -315,6 +347,8 @@ module Langfuse
     end
 
     def initialize_tracing_defaults
+      @tracing_enabled = boolean_env("LANGFUSE_TRACING_ENABLED", default: DEFAULT_TRACING_ENABLED)
+      @otel_sdk_disabled = otel_sdk_disabled?
       @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
       @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
       self.sample_rate = env_value("LANGFUSE_SAMPLE_RATE") || DEFAULT_SAMPLE_RATE
@@ -329,6 +363,25 @@ module Langfuse
       validate_required_string!("public_key", public_key)
       validate_required_string!("secret_key", secret_key)
       validate_base_url!
+    end
+
+    def validate_tracing_enabled!
+      return if [true, false].include?(tracing_enabled)
+
+      raise ConfigurationError, "tracing_enabled must be true or false"
+    end
+
+    def boolean_env(key, default:)
+      value = env_value(key)
+      return default if value.nil?
+      return true if value.casecmp("true").zero?
+      return false if value.casecmp("false").zero?
+
+      raise ConfigurationError, "#{key} must be true or false"
+    end
+
+    def otel_sdk_disabled?
+      env_value("OTEL_SDK_DISABLED")&.casecmp?("true") || false
     end
 
     def validate_batching_settings!
