@@ -33,6 +33,14 @@ module Langfuse
       @mutex.synchronize { @events.dup }
     end
 
+    # Return up to limit events from the front without removing them.
+    #
+    # @param limit [Integer] Maximum number of events to return
+    # @return [Array<Hash>] Stable copy of the pending prefix
+    def first(limit)
+      @mutex.synchronize { @events.first(limit) }
+    end
+
     # Remove a delivered prefix while preserving newer events.
     #
     # @param count [Integer] Number of delivered events

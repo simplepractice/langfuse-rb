@@ -810,6 +810,19 @@ RSpec.describe Langfuse::ScoreClient do
       expect(score_client.instance_variable_get(:@queue)).to be_empty
     end
 
+    it "caps each request at the configured batch size" do
+      allow(api_client).to receive(:send_batch)
+      3.times { |index| score_client.create(name: "score-#{index}", value: index) }
+      config.batch_size = 2
+      sent_batches = []
+      allow(api_client).to receive(:send_batch) { |batch| sent_batches << batch }
+
+      score_client.flush
+
+      expect(sent_batches.map(&:length)).to eq([2, 1])
+      expect(sent_batches.flatten.map { |event| event.dig(:body, :name) }).to eq(%w[score-0 score-1 score-2])
+    end
+
     it "keeps a failed batch and later scores queued in their original order" do
       3.times { |index| score_client.create(name: "score-#{index}", value: index) }
       pending_queue = score_client.instance_variable_get(:@queue)

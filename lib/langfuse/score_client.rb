@@ -37,7 +37,7 @@ module Langfuse
     HEX_TRACE_ID_PATTERN = /\A[0-9a-f]{32}\z/
     MAX_BATCH_PAYLOAD_BYTES = 2_500_000
     EMPTY_BATCH_PAYLOAD_BYTES = JSON.generate(batch: []).bytesize
-    private_constant :EMPTY_BATCH_PAYLOAD_BYTES
+    private_constant :MAX_BATCH_PAYLOAD_BYTES, :EMPTY_BATCH_PAYLOAD_BYTES
 
     # Initialize a new ScoreClient
     #
@@ -283,36 +283,28 @@ module Langfuse
     end
 
     def flush_pending_batches
-      events = @queue.snapshot
-      return if events.empty?
-
-      split_batches(events).each do |batch|
-        break unless send_batch(batch)
+      loop do
+        batch = next_batch
+        break if batch.empty? || !send_batch(batch)
 
         @queue.remove_prefix(batch.length)
       end
     end
 
-    def split_batches(events)
-      batches = []
-      current_batch = []
-      current_bytes = EMPTY_BATCH_PAYLOAD_BYTES
+    def next_batch
+      batch = []
+      payload_bytes = EMPTY_BATCH_PAYLOAD_BYTES
 
-      events.each do |event|
+      @queue.first(config.batch_size).each do |event|
         event_json = JSON.generate(event)
-        additional_bytes = event_json.bytesize + (current_batch.empty? ? 0 : 1)
-        if current_batch.any? && current_bytes + additional_bytes > MAX_BATCH_PAYLOAD_BYTES
-          batches << current_batch
-          current_batch = []
-          current_bytes = EMPTY_BATCH_PAYLOAD_BYTES
-          additional_bytes = event_json.bytesize
-        end
-        current_batch << event
-        current_bytes += additional_bytes
+        additional_bytes = event_json.bytesize + (batch.empty? ? 0 : 1)
+        break if batch.any? && payload_bytes + additional_bytes > MAX_BATCH_PAYLOAD_BYTES
+
+        batch << event
+        payload_bytes += additional_bytes
       end
 
-      batches << current_batch unless current_batch.empty?
-      batches
+      batch
     end
 
     # Validate score inputs and build the canonical API body.

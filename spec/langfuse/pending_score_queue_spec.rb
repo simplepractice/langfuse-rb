@@ -29,4 +29,15 @@ RSpec.describe Langfuse::PendingScoreQueue do
     expect(queue.snapshot).to eq([{ id: 2 }])
     expect(queue).not_to be_empty
   end
+
+  it "returns a stable limited prefix" do
+    queue.push({ id: 1 })
+    queue.push({ id: 2 })
+
+    prefix = queue.first(1)
+    queue.remove_prefix(1)
+
+    expect(prefix).to eq([{ id: 1 }])
+    expect(queue.snapshot).to eq([{ id: 2 }])
+  end
 end
