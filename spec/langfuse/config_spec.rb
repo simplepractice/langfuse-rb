@@ -24,7 +24,6 @@ RSpec.describe Langfuse::Config do
       ENV["LANGFUSE_TRACING_ENVIRONMENT"] = "staging"
       ENV["LANGFUSE_RELEASE"] = "release-123"
       ENV["LANGFUSE_SAMPLE_RATE"] = "0.25"
-
       config = described_class.new
 
       expect(config.public_key).to eq("test_public")

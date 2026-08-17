@@ -192,21 +192,9 @@ module Langfuse
       @public_key = ENV.fetch("LANGFUSE_PUBLIC_KEY", nil)
       @secret_key = ENV.fetch("LANGFUSE_SECRET_KEY", nil)
       @base_url = ENV.fetch("LANGFUSE_BASE_URL", DEFAULT_BASE_URL)
-      @timeout = DEFAULT_TIMEOUT
-      @cache_ttl = DEFAULT_CACHE_TTL
-      @cache_max_size = DEFAULT_CACHE_MAX_SIZE
-      @cache_backend = DEFAULT_CACHE_BACKEND
-      @cache_lock_timeout = DEFAULT_CACHE_LOCK_TIMEOUT
-      @cache_stale_while_revalidate = DEFAULT_CACHE_STALE_WHILE_REVALIDATE
-      @cache_stale_ttl = 0 # Default to 0 (SWR disabled, entries expire immediately after TTL)
-      @cache_refresh_threads = DEFAULT_CACHE_REFRESH_THREADS
-      @prompt_cache_observer = nil
-      @tracing_async = DEFAULT_TRACING_ASYNC
-      @batch_size = DEFAULT_BATCH_SIZE
-      @flush_interval = DEFAULT_FLUSH_INTERVAL
-      @job_queue = DEFAULT_JOB_QUEUE
+      initialize_client_defaults
       initialize_tracing_defaults
-      self.logger = default_logger
+      initialize_logger
 
       yield(self) if block_given?
     end
@@ -288,6 +276,30 @@ module Langfuse
     end
 
     private
+
+    def initialize_client_defaults
+      @timeout = env_integer("LANGFUSE_TIMEOUT") || DEFAULT_TIMEOUT
+      @cache_ttl = DEFAULT_CACHE_TTL
+      @cache_max_size = DEFAULT_CACHE_MAX_SIZE
+      @cache_backend = DEFAULT_CACHE_BACKEND
+      @cache_lock_timeout = DEFAULT_CACHE_LOCK_TIMEOUT
+      @cache_stale_while_revalidate = DEFAULT_CACHE_STALE_WHILE_REVALIDATE
+      @cache_stale_ttl = 0 # Default to 0 (SWR disabled, entries expire immediately after TTL)
+      @cache_refresh_threads = DEFAULT_CACHE_REFRESH_THREADS
+      @prompt_cache_observer = nil
+      @tracing_async = DEFAULT_TRACING_ASYNC
+      @batch_size = env_integer("LANGFUSE_FLUSH_AT") || DEFAULT_BATCH_SIZE
+      @flush_interval = env_float("LANGFUSE_FLUSH_INTERVAL") || DEFAULT_FLUSH_INTERVAL
+      @job_queue = DEFAULT_JOB_QUEUE
+    end
+
+    def initialize_logger
+      self.logger = if env_true?("LANGFUSE_DEBUG")
+                      Logger.new($stdout, level: Logger::DEBUG)
+                    else
+                      default_logger
+                    end
+    end
 
     def default_logger
       return Rails.logger if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
@@ -467,6 +479,28 @@ module Langfuse
       return nil if value.nil? || value.empty?
 
       value
+    end
+
+    def env_integer(key)
+      value = env_value(key)
+      return nil unless value
+
+      Integer(value, 10)
+    rescue ArgumentError, TypeError
+      raise ConfigurationError, "#{key} must be an integer"
+    end
+
+    def env_float(key)
+      value = env_value(key)
+      return nil unless value
+
+      Float(value)
+    rescue ArgumentError, TypeError
+      raise ConfigurationError, "#{key} must be numeric"
+    end
+
+    def env_true?(key)
+      env_value(key)&.casecmp?("true") || false
     end
 
     def coerce_sample_rate(value)
