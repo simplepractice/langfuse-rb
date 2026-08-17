@@ -62,7 +62,7 @@ module Langfuse
     # @param observation_id [String, nil] Observation ID to associate with the score
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param environment [String, nil] Optional environment
+    # @param environment [String, nil] Optional per-score environment override
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
@@ -130,7 +130,7 @@ module Langfuse
     # @param observation_id [String, nil] Observation ID to associate with the score
     # @param comment [String, nil] Optional comment
     # @param metadata [Hash, nil] Optional metadata hash
-    # @param environment [String, nil] Optional environment
+    # @param environment [String, nil] Optional per-score environment override
     # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
     # @param dataset_run_id [String, nil] Optional dataset run ID to associate with the score
     # @param config_id [String, nil] Optional score config ID
@@ -299,7 +299,7 @@ module Langfuse
         observationId: observation_id,
         comment: comment,
         metadata: metadata,
-        environment: environment,
+        environment: environment || config.environment,
         datasetRunId: dataset_run_id,
         configId: config_id
       }.compact

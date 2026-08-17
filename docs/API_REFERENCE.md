@@ -1046,6 +1046,10 @@ create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation
              dataset_run_id: nil, config_id: nil)
 ```
 
+When `environment` is omitted, the score uses the client-level environment from
+`Config#environment`. A score-level value overrides the configured environment.
+If neither value is set, Langfuse uses its `default` environment.
+
 **Parameters:**
 
 | Parameter        | Type                   | Required | Description                               |
@@ -1058,7 +1062,7 @@ create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation
 | `observation_id` | String                 | No       | Observation ID to score                   |
 | `comment`        | String                 | No       | Score comment                             |
 | `metadata`       | Hash                   | No       | Additional metadata                       |
-| `environment`    | String                 | No       | Environment tag for the score             |
+| `environment`    | String                 | No       | Per-score override for the configured environment |
 | `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, `:categorical`, `:text`, or `:correction` |
 | `dataset_run_id` | String                 | No       | Dataset run ID to associate with          |
 | `config_id`      | String                 | No       | Score config ID                           |

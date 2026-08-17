@@ -150,6 +150,30 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.flush
       end
 
+      it "uses the configured environment when the score omits an override" do
+        config.environment = "staging"
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(environment: "staging")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85)
+        score_client.flush
+      end
+
+      it "prefers the score environment over the configured environment" do
+        config.environment = "staging"
+        expect(api_client).to receive(:send_batch).with(array_including(
+                                                          hash_including(
+                                                            body: hash_including(environment: "production")
+                                                          )
+                                                        ))
+
+        score_client.create(name: "quality", value: 0.85, environment: "production")
+        score_client.flush
+      end
+
       it "includes dataset_run_id when provided" do
         expect(api_client).to receive(:send_batch).with(array_including(
                                                           hash_including(
@@ -172,9 +196,10 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.flush
       end
 
-      it "omits dataset_run_id and config_id when nil" do
+      it "omits optional attributes when they and the configured environment are nil" do
         expect(api_client).to receive(:send_batch) do |events|
           body = events.first[:body]
+          expect(body).not_to have_key(:environment)
           expect(body).not_to have_key(:datasetRunId)
           expect(body).not_to have_key(:configId)
         end
@@ -567,6 +592,24 @@ RSpec.describe Langfuse::ScoreClient do
 
       expect(result).to eq("score-123")
       expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "uses the configured environment when the score omits an override" do
+      config.environment = "staging"
+      expect(api_client).to receive(:create_score).with(
+        payload: hash_including(environment: "staging")
+      ).and_return("score-123")
+
+      score_client.create!(id: "score-123", name: "quality", value: 0.85)
+    end
+
+    it "prefers the score environment over the configured environment" do
+      config.environment = "staging"
+      expect(api_client).to receive(:create_score).with(
+        payload: hash_including(environment: "production")
+      ).and_return("score-123")
+
+      score_client.create!(id: "score-123", name: "quality", value: 0.85, environment: "production")
     end
 
     it "returns an automatically generated score ID" do
