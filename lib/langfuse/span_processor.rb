@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "opentelemetry/sdk"
+require_relative "resilient_metrics_reporter"
 
 module Langfuse
   # Batch span processor that owns Langfuse's enrichment and export filtering.
@@ -19,7 +20,8 @@ module Langfuse
         exporter,
         max_queue_size: config.batch_size * 2,
         schedule_delay: schedule_delay_for(config),
-        max_export_batch_size: config.batch_size
+        max_export_batch_size: config.batch_size,
+        metrics_reporter: ResilientMetricsReporter.wrap(config.metrics_reporter, logger: config.logger)
       )
     end
 

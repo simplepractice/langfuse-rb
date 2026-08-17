@@ -312,6 +312,69 @@ config.tracing_async = true
 
 **Current Behavior:** Uses OpenTelemetry `BatchSpanProcessor` in both modes. Async mode uses `flush_interval` for scheduled export; sync mode uses a 60-second schedule delay and is usually paired with explicit `force_flush` for deterministic delivery timing.
 
+#### `metrics_reporter`
+
+- **Type:** Object responding to `add_to_counter`, `record_value`, and `observe_value`, or `nil`
+- **Default:** `nil` (uses OpenTelemetry's no-op reporter)
+- **Description:** Receives operational metrics emitted by OpenTelemetry's `BatchSpanProcessor`
+
+The reporter uses the complete
+[OpenTelemetry metrics reporter interface](https://github.com/open-telemetry/opentelemetry-ruby/blob/main/sdk/lib/opentelemetry/sdk/trace/export/metrics_reporter.rb):
+
+```ruby
+add_to_counter(metric, increment: 1, labels: {})
+record_value(metric, value:, labels: {})
+observe_value(metric, value:, labels: {})
+```
+
+Metric names and labels belong to the installed OpenTelemetry SDK. Langfuse forwards
+them without modification and does not guarantee that they remain stable across
+OpenTelemetry releases. Reporting is best effort. A reporter exception produces one
+warning and does not interrupt span completion or export.
+
+The reporter can run on application threads and the OpenTelemetry export thread. It
+must be thread-safe, fast, and nonblocking. Do not perform HTTP requests or create
+spans from reporter methods. The application owns the reporter lifecycle.
+
+This adapter sends the metrics to Datadog through an existing `Datadog::Statsd`
+instance without adding a Datadog dependency to Langfuse:
+
+```ruby
+class DogStatsdMetricsReporter
+  def initialize(statsd)
+    @statsd = statsd
+  end
+
+  def add_to_counter(metric, increment: 1, labels: {})
+    @statsd.increment(metric, by: increment, tags: tags(labels))
+  end
+
+  def record_value(metric, value:, labels: {})
+    @statsd.distribution(metric, value, tags: tags(labels))
+  end
+
+  def observe_value(metric, value:, labels: {})
+    @statsd.gauge(metric, value, tags: tags(labels))
+  end
+
+  private
+
+  def tags(labels)
+    labels.compact.map { |key, value| "#{key}:#{value}" }
+  end
+end
+
+statsd = Datadog::Statsd.new("127.0.0.1", 8125)
+
+Langfuse.configure do |config|
+  config.metrics_reporter = DogStatsdMetricsReporter.new(statsd)
+end
+```
+
+Use one shared DogStatsD client. At application shutdown, call `Langfuse.shutdown`
+before `statsd.close` so the final batch processor metrics can leave the DogStatsD
+client's buffer.
+
 #### `job_queue` ⚠️ Experimental
 
 - **Type:** Symbol
@@ -495,6 +558,7 @@ After the first successful tracing initialization, these settings require `Langf
 - `release`
 - `sample_rate`
 - `should_export_span`
+- `metrics_reporter`
 - `tracing_async`
 - `batch_size`
 - `flush_interval`
@@ -694,6 +758,7 @@ Tracing reuses the credential, batching, sampling, and logger rules. It also val
 - `should_export_span` must respond to `#call` (if set)
 - `mask` must respond to `#call` (if set)
 - `mask_otel_spans` must respond to `#call` (if set)
+- `metrics_reporter` must respond to `#add_to_counter`, `#record_value`, and `#observe_value` (if set)
 
 ### Rails cache validation and boot order
 
