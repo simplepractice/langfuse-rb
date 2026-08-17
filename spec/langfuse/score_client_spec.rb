@@ -907,6 +907,32 @@ RSpec.describe Langfuse::ScoreClient do
       expect(score_client.instance_variable_get(:@queue)).to be_empty
     end
 
+    it "stops after an authentication failure and keeps all scores queued" do
+      attempts = []
+      authentication_fails = true
+      allow(api_client).to receive(:send_batch) do |batch|
+        attempts << batch.first.dig(:body, :name)
+        if authentication_fails
+          authentication_fails = false
+          raise Langfuse::UnauthorizedError, "invalid credentials"
+        end
+      end
+
+      score_client.create(name: "score-0", value: 0)
+      score_client.create(name: "score-1", value: 1)
+      config.batch_size = 1
+      score_client.flush
+
+      pending_queue = score_client.instance_variable_get(:@queue)
+      expect(attempts).to eq(["score-0"])
+      expect(pending_queue.snapshot.map { |event| event.dig(:body, :name) }).to eq(%w[score-0 score-1])
+
+      score_client.flush
+
+      expect(attempts).to eq(%w[score-0 score-0 score-1])
+      expect(pending_queue).to be_empty
+    end
+
     it "keeps transient batch failures queued for a later retry" do
       allow(api_client).to receive(:send_batch).and_raise(
         Langfuse::BatchDeliveryError.new("unavailable", retryable: true)

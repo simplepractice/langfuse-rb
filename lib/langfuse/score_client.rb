@@ -434,7 +434,7 @@ module Langfuse
 
       discard_batch(events, e)
     rescue UnauthorizedError => e
-      discard_batch(events, e)
+      retry_batch(e)
     rescue StandardError => e
       logger.error("Langfuse score batch send failed: #{e.message}")
       :retry
