@@ -87,6 +87,7 @@ module Langfuse
     # @param configuration [Config] the global configuration object
     # @return [Config] the assigned configuration
     def configuration=(configuration)
+      reset!
       ExitHook.enable
       @configuration = configuration
     end

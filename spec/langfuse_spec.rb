@@ -42,6 +42,26 @@ RSpec.describe Langfuse do
 
       expect(described_class.configuration).to equal(configuration)
     end
+
+    it "starts a new client lifecycle when configuration is replaced" do
+      previous_client = described_class.client
+      described_class.shutdown
+      replacement = Langfuse::Config.new do |config|
+        config.public_key = "replacement_pk"
+        config.secret_key = "replacement_sk"
+      end
+      request = stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+                .to_return(status: 200, body: "", headers: {})
+
+      described_class.configuration = replacement
+      replacement_client = described_class.client
+      replacement_client.create_score(name: "quality", value: 1)
+      replacement_client.flush_scores
+
+      expect(replacement_client).not_to equal(previous_client)
+      expect(replacement_client.config).to equal(replacement)
+      expect(request).to have_been_requested.once
+    end
   end
 
   describe ".configure" do
