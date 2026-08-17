@@ -70,6 +70,9 @@ module Langfuse
     # @return [Integer] Interval in seconds to flush buffered events
     attr_accessor :flush_interval
 
+    # @return [Integer] Maximum number of asynchronous scores held in memory
+    attr_accessor :score_queue_capacity
+
     # @return [Symbol] Reserved no-op queue name for future async job integration
     attr_accessor :job_queue
 
@@ -148,6 +151,9 @@ module Langfuse
 
     # @return [Integer] Default flush interval in seconds
     DEFAULT_FLUSH_INTERVAL = 10
+
+    # @return [Integer] Default maximum number of queued asynchronous scores
+    DEFAULT_SCORE_QUEUE_CAPACITY = 100_000
 
     # @return [Symbol] Default ActiveJob queue name
     DEFAULT_JOB_QUEUE = :default
@@ -290,6 +296,7 @@ module Langfuse
       @tracing_async = DEFAULT_TRACING_ASYNC
       @batch_size = env_integer("LANGFUSE_FLUSH_AT") || DEFAULT_BATCH_SIZE
       @flush_interval = env_float("LANGFUSE_FLUSH_INTERVAL") || DEFAULT_FLUSH_INTERVAL
+      @score_queue_capacity = DEFAULT_SCORE_QUEUE_CAPACITY
       @job_queue = DEFAULT_JOB_QUEUE
     end
 
@@ -337,6 +344,10 @@ module Langfuse
       validate_non_negative_number!("cache_ttl", cache_ttl)
       validate_positive_number!("cache_max_size", cache_max_size)
       validate_positive_number!("cache_lock_timeout", cache_lock_timeout)
+      unless score_queue_capacity.is_a?(Integer) && score_queue_capacity.positive?
+        raise ConfigurationError, "score_queue_capacity must be a positive Integer"
+      end
+
       validate_swr_config!
       validate_cache_backend!
     end

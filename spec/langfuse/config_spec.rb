@@ -13,6 +13,7 @@ RSpec.describe Langfuse::Config do
       expect(config.cache_stale_while_revalidate).to be false
       expect(config.cache_stale_ttl).to eq(0) # Defaults to 0 (SWR disabled)
       expect(config.cache_refresh_threads).to eq(5)
+      expect(config.score_queue_capacity).to eq(100_000)
       expect(config.should_export_span).to be_nil
       expect(config.sample_rate).to eq(1.0)
     end
@@ -179,6 +180,7 @@ RSpec.describe Langfuse::Config do
         cache_stale_ttl
         cache_refresh_threads
         flush_interval
+        score_queue_capacity
       ]
 
       numeric_settings.product(invalid_values).each do |setting, value|
@@ -354,6 +356,15 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.to raise_error(
           Langfuse::ConfigurationError,
           "flush_interval must be positive"
+        )
+      end
+
+      it "raises ConfigurationError when score_queue_capacity is not a positive Integer" do
+        config.score_queue_capacity = 0
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "score_queue_capacity must be a positive Integer"
         )
       end
     end
@@ -714,6 +725,11 @@ RSpec.describe Langfuse::Config do
     it "allows setting timeout" do
       config.timeout = 10
       expect(config.timeout).to eq(10)
+    end
+
+    it "allows setting score_queue_capacity" do
+      config.score_queue_capacity = 2_000
+      expect(config.score_queue_capacity).to eq(2_000)
     end
 
     it "allows setting cache_ttl" do

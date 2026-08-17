@@ -2,7 +2,9 @@
 
 require "securerandom"
 require "opentelemetry/trace"
+require "json"
 require_relative "fork_safety"
+require_relative "pending_score_queue"
 
 module Langfuse
   # Client for creating and batching Langfuse scores
@@ -33,6 +35,9 @@ module Langfuse
     attr_reader :logger
 
     HEX_TRACE_ID_PATTERN = /\A[0-9a-f]{32}\z/
+    MAX_BATCH_PAYLOAD_BYTES = 2_500_000
+    EMPTY_BATCH_PAYLOAD_BYTES = JSON.generate(batch: []).bytesize
+    private_constant :EMPTY_BATCH_PAYLOAD_BYTES
 
     # Initialize a new ScoreClient
     #
@@ -42,8 +47,9 @@ module Langfuse
       @api_client = api_client
       @config = config
       @logger = config.logger
-      @queue = Queue.new
-      @mutex = Mutex.new
+      @queue = PendingScoreQueue.new(capacity: config.score_queue_capacity)
+      @shutdown_mutex = Mutex.new
+      @flush_mutex = Mutex.new
       @flush_thread = nil
       @shutdown = false
       # Match the immutable tracing setup contract: once this client exists, later config
@@ -106,8 +112,7 @@ module Langfuse
 
       return unless enqueue_trace_linked_score?(trace_id)
 
-      @queue << build_score_event(score)
-      flush if @queue.size >= config.batch_size
+      enqueue_score_event(build_score_event(score))
     rescue StandardError => e
       logger.error("Langfuse score creation failed: #{e.message}")
       raise
@@ -232,19 +237,7 @@ module Langfuse
     #
     # @return [void]
     def flush
-      return if @queue.empty?
-
-      events = []
-      @queue.size.times do
-        events << @queue.pop(true)
-      rescue StandardError
-        nil
-      end
-      events.compact!
-
-      return if events.empty?
-
-      send_batch(events)
+      @flush_mutex.synchronize { flush_pending_batches }
     rescue StandardError => e
       logger.error("Langfuse score flush failed: #{e.message}")
       # Don't raise - silent error handling for batch operations
@@ -256,7 +249,7 @@ module Langfuse
     #
     # @return [void]
     def shutdown
-      @mutex.synchronize do
+      @shutdown_mutex.synchronize do
         return if @shutdown
 
         @shutdown = true
@@ -270,11 +263,56 @@ module Langfuse
     # Discard parent-owned queued work and restore the child process timer.
     def reset_after_fork
       inherited_shutdown = @shutdown
-      @queue = Queue.new
-      @mutex = Mutex.new
+      @queue = PendingScoreQueue.new(capacity: config.score_queue_capacity)
+      @shutdown_mutex = Mutex.new
+      @flush_mutex = Mutex.new
       @flush_thread = nil
       @shutdown = inherited_shutdown
       start_flush_timer unless @shutdown
+    end
+
+    def enqueue_score_event(event)
+      unless @queue.push(event)
+        logger.error(
+          "Langfuse score queue is full (capacity=#{@queue.capacity}); dropping new asynchronous score"
+        )
+        return
+      end
+
+      flush if @queue.size >= config.batch_size
+    end
+
+    def flush_pending_batches
+      events = @queue.snapshot
+      return if events.empty?
+
+      split_batches(events).each do |batch|
+        break unless send_batch(batch)
+
+        @queue.remove_prefix(batch.length)
+      end
+    end
+
+    def split_batches(events)
+      batches = []
+      current_batch = []
+      current_bytes = EMPTY_BATCH_PAYLOAD_BYTES
+
+      events.each do |event|
+        event_json = JSON.generate(event)
+        additional_bytes = event_json.bytesize + (current_batch.empty? ? 0 : 1)
+        if current_batch.any? && current_bytes + additional_bytes > MAX_BATCH_PAYLOAD_BYTES
+          batches << current_batch
+          current_batch = []
+          current_bytes = EMPTY_BATCH_PAYLOAD_BYTES
+          additional_bytes = event_json.bytesize
+        end
+        current_batch << event
+        current_bytes += additional_bytes
+      end
+
+      batches << current_batch unless current_batch.empty?
+      batches
     end
 
     # Validate score inputs and build the canonical API body.
@@ -385,12 +423,13 @@ module Langfuse
     # Send a batch of events to the API
     #
     # @param events [Array<Hash>] Array of event hashes
-    # @return [void]
+    # @return [Boolean] true when delivered, false when delivery fails
     def send_batch(events)
       api_client.send_batch(events)
+      true
     rescue StandardError => e
       logger.error("Langfuse score batch send failed: #{e.message}")
-      # Don't raise - silent error handling
+      false
     end
 
     # Start the background flush timer thread

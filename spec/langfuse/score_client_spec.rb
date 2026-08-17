@@ -793,6 +793,68 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.flush
       end.not_to raise_error
     end
+
+    it "splits requests before a multi-score payload exceeds the byte limit" do
+      allow(api_client).to receive(:send_batch)
+      3.times { |index| score_client.create(name: "score-#{index}", value: index) }
+      pending_events = score_client.instance_variable_get(:@queue).snapshot
+      single_event_bytes = JSON.generate(batch: [pending_events.first]).bytesize
+      stub_const("Langfuse::ScoreClient::MAX_BATCH_PAYLOAD_BYTES", single_event_bytes)
+      sent_batches = []
+      allow(api_client).to receive(:send_batch) { |batch| sent_batches << batch }
+
+      score_client.flush
+
+      expect(sent_batches.length).to eq(3)
+      expect(sent_batches.flatten.map { |event| event.dig(:body, :name) }).to eq(%w[score-0 score-1 score-2])
+      expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "keeps a failed batch and later scores queued in their original order" do
+      3.times { |index| score_client.create(name: "score-#{index}", value: index) }
+      pending_queue = score_client.instance_variable_get(:@queue)
+      single_event_bytes = JSON.generate(batch: [pending_queue.snapshot.first]).bytesize
+      stub_const("Langfuse::ScoreClient::MAX_BATCH_PAYLOAD_BYTES", single_event_bytes)
+      attempts = []
+      allow(api_client).to receive(:send_batch) do |batch|
+        attempts << batch.map { |event| event.dig(:body, :name) }
+        raise Langfuse::ApiError, "unavailable" if attempts.length == 2
+      end
+
+      score_client.flush
+
+      expect(attempts).to eq([%w[score-0], %w[score-1]])
+      expect(pending_queue.snapshot.map { |event| event.dig(:body, :name) }).to eq(%w[score-1 score-2])
+
+      retried_names = []
+      allow(api_client).to receive(:send_batch) do |batch|
+        retried_names.concat(batch.map { |event| event.dig(:body, :name) })
+      end
+      score_client.flush
+
+      expect(retried_names).to eq(%w[score-1 score-2])
+      expect(pending_queue).to be_empty
+    end
+  end
+
+  describe "queue capacity" do
+    before do
+      config.score_queue_capacity = 1
+      allow(api_client).to receive(:send_batch)
+    end
+
+    it "drops only the new score without blocking when the queue is full" do
+      score_client.create(name: "accepted", value: 1)
+      expect(config.logger).to receive(:error).with(
+        "Langfuse score queue is full (capacity=1); dropping new asynchronous score"
+      )
+
+      enqueue_thread = Thread.new { score_client.create(name: "dropped", value: 2) }
+
+      expect(enqueue_thread.join(1)).to equal(enqueue_thread)
+      pending_names = score_client.instance_variable_get(:@queue).snapshot.map { |event| event.dig(:body, :name) }
+      expect(pending_names).to eq(["accepted"])
+    end
   end
 
   describe "#shutdown" do
