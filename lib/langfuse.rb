@@ -82,15 +82,20 @@ require_relative "langfuse/client"
 module Langfuse
   # rubocop:disable Metrics/ClassLength
   class << self
+    # Set the global configuration object and start its process-exit lifecycle.
+    #
     # @param configuration [Config] the global configuration object
-    attr_writer :configuration
+    # @return [Config] the assigned configuration
+    def configuration=(configuration)
+      ExitHook.enable
+      @configuration = configuration
+    end
 
     # Returns the global configuration object
     #
     # @return [Config] the global configuration
     def configuration
-      ExitHook.enable
-      @configuration ||= Config.new
+      @configuration ||= Config.new.tap { ExitHook.enable }
     end
 
     # Configure Langfuse globally

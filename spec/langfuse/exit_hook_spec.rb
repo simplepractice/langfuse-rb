@@ -41,22 +41,17 @@ RSpec.describe Langfuse::ExitHook do
   end
 
   describe "fork safety" do
-    it "replaces inherited hook mutexes in a forked child" do
+    it "replaces the inherited hook mutex in a forked child" do
       skip "fork is not available" unless Process.respond_to?(:fork)
 
-      parent_install_mutex = described_class.send(:install_mutex)
-      parent_state_mutex = described_class.send(:state_mutex)
+      parent_mutex = described_class.send(:mutex)
       _child_pid, status, child_state = capture_forked_state do
-        {
-          install_mutex_replaced: !described_class.send(:install_mutex).equal?(parent_install_mutex),
-          state_mutex_replaced: !described_class.send(:state_mutex).equal?(parent_state_mutex)
-        }
+        { mutex_replaced: !described_class.send(:mutex).equal?(parent_mutex) }
       end
 
       expect(status).to be_success
-      expect(child_state).to eq(install_mutex_replaced: true, state_mutex_replaced: true)
-      expect(described_class.send(:install_mutex)).to equal(parent_install_mutex)
-      expect(described_class.send(:state_mutex)).to equal(parent_state_mutex)
+      expect(child_state).to eq(mutex_replaced: true)
+      expect(described_class.send(:mutex)).to equal(parent_mutex)
     end
   end
 end

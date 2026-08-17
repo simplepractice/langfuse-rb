@@ -28,10 +28,19 @@ RSpec.describe Langfuse do
       expect(config1).to eq(config2)
     end
 
-    it "enables the process-exit callback" do
+    it "enables the process-exit callback when it builds a configuration" do
+      described_class.reset!
       expect(Langfuse::ExitHook).to receive(:enable).and_call_original
 
       described_class.configuration
+    end
+
+    it "does not re-enable the callback when it reads a cached configuration" do
+      configuration = described_class.configuration
+      Langfuse::ExitHook.disable
+      expect(Langfuse::ExitHook).not_to receive(:enable)
+
+      expect(described_class.configuration).to equal(configuration)
     end
   end
 

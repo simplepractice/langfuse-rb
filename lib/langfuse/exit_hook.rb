@@ -12,12 +12,12 @@ module Langfuse
       #
       # @return [void]
       def install!
-        install_mutex.synchronize do
+        mutex.synchronize do
           return if @installed
 
           Kernel.at_exit { run }
           @installed = true
-          @active = true
+          @active = false
         end
       end
 
@@ -25,14 +25,14 @@ module Langfuse
       #
       # @return [void]
       def enable
-        state_mutex.synchronize { @active = true }
+        mutex.synchronize { @active = true }
       end
 
       # Disable the callback after an explicit shutdown or reset.
       #
       # @return [void]
       def disable
-        state_mutex.synchronize { @active = false }
+        mutex.synchronize { @active = false }
       end
 
       # Run the callback once without allowing shutdown errors to escape.
@@ -49,7 +49,7 @@ module Langfuse
       private
 
       def consume_active_hook
-        state_mutex.synchronize do
+        mutex.synchronize do
           active = @active
           @active = false
           active
@@ -57,16 +57,11 @@ module Langfuse
       end
 
       def reset_after_fork
-        @install_mutex = Mutex.new
-        @state_mutex = Mutex.new
+        @mutex = Mutex.new
       end
 
-      def install_mutex
-        @install_mutex ||= Mutex.new
-      end
-
-      def state_mutex
-        @state_mutex ||= Mutex.new
+      def mutex
+        @mutex ||= Mutex.new
       end
 
       def warn_failure(error)
