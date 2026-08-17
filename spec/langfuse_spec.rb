@@ -27,6 +27,41 @@ RSpec.describe Langfuse do
       config2 = described_class.configuration
       expect(config1).to eq(config2)
     end
+
+    it "enables the process-exit callback when it builds a configuration" do
+      described_class.reset!
+      expect(Langfuse::ExitHook).to receive(:enable).and_call_original
+
+      described_class.configuration
+    end
+
+    it "does not re-enable the callback when it reads a cached configuration" do
+      configuration = described_class.configuration
+      Langfuse::ExitHook.disable
+      expect(Langfuse::ExitHook).not_to receive(:enable)
+
+      expect(described_class.configuration).to equal(configuration)
+    end
+
+    it "starts a new client lifecycle when configuration is replaced" do
+      previous_client = described_class.client
+      described_class.shutdown
+      replacement = Langfuse::Config.new do |config|
+        config.public_key = "replacement_pk"
+        config.secret_key = "replacement_sk"
+      end
+      request = stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+                .to_return(status: 200, body: "", headers: {})
+
+      described_class.configuration = replacement
+      replacement_client = described_class.client
+      replacement_client.create_score(name: "quality", value: 1)
+      replacement_client.flush_scores
+
+      expect(replacement_client).not_to equal(previous_client)
+      expect(replacement_client.config).to equal(replacement)
+      expect(request).to have_been_requested.once
+    end
   end
 
   describe ".configure" do
@@ -179,6 +214,12 @@ RSpec.describe Langfuse do
   end
 
   describe ".reset!" do
+    it "disables the process-exit callback" do
+      expect(Langfuse::ExitHook).to receive(:disable).and_call_original
+
+      described_class.reset!
+    end
+
     it "resets configuration and client" do
       described_class.configure { |c| c.public_key = "test" }
       described_class.reset!
@@ -225,6 +266,7 @@ RSpec.describe Langfuse do
     end
 
     it "calls OtelSetup.shutdown with timeout" do
+      expect(Langfuse::ExitHook).to receive(:disable).and_call_original
       expect(Langfuse::OtelSetup).to receive(:shutdown).with(timeout: 30)
       described_class.shutdown
     end

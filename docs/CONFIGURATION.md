@@ -712,6 +712,14 @@ The SDK restores its background state after `fork` on Ruby 3.2 and later. This a
 
 The parent keeps its original queue and worker objects. Shutdown remains independent in each process.
 
+## Process Exit
+
+The SDK automatically flushes pending spans and scores during normal process exit. One-off scripts and short-lived tasks do not need to register an `at_exit` callback.
+
+Call `Langfuse.shutdown` when the application must flush before process exit. An explicit shutdown disables the pending exit callback. `Langfuse.reset!` also disables the callback until the next SDK configuration lifecycle begins.
+
+The exit callback runs once and does not allow shutdown errors to escape the process-exit path. Abrupt termination, such as `SIGKILL`, cannot run process-exit callbacks.
+
 ## Configuration by Environment
 
 ### Development

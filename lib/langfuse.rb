@@ -41,6 +41,7 @@ end
 
 require_relative "langfuse/config"
 require_relative "langfuse/fork_safety"
+require_relative "langfuse/exit_hook"
 require_relative "langfuse/cache_constants"
 require_relative "langfuse/prompt_cache"
 require_relative "langfuse/prompt_fetch_result"
@@ -81,14 +82,21 @@ require_relative "langfuse/client"
 module Langfuse
   # rubocop:disable Metrics/ClassLength
   class << self
+    # Set the global configuration object and start its process-exit lifecycle.
+    #
     # @param configuration [Config] the global configuration object
-    attr_writer :configuration
+    # @return [Config] the assigned configuration
+    def configuration=(configuration)
+      reset!
+      ExitHook.enable
+      @configuration = configuration
+    end
 
     # Returns the global configuration object
     #
     # @return [Config] the global configuration
     def configuration
-      @configuration ||= Config.new
+      @configuration ||= Config.new.tap { ExitHook.enable }
     end
 
     # Configure Langfuse globally
@@ -153,10 +161,11 @@ module Langfuse
     # @param timeout [Integer] Timeout in seconds
     # @return [void]
     #
-    # @example In a Rails initializer or shutdown hook
-    #   at_exit { Langfuse.shutdown }
+    # @example Explicit early shutdown
+    #   Langfuse.shutdown
     #
     def shutdown(timeout: 30)
+      ExitHook.disable
       client.shutdown if @client
       OtelSetup.shutdown(timeout: timeout)
     end
@@ -409,6 +418,7 @@ module Langfuse
     #
     # @return [void]
     def reset!
+      ExitHook.disable
       client.shutdown if @client
       OtelSetup.shutdown(timeout: 5) if OtelSetup.initialized?
       @configuration = nil
