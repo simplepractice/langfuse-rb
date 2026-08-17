@@ -125,29 +125,6 @@ module Langfuse
       false
     end
 
-    # Check whether Langfuse accepts the configured credentials.
-    #
-    # Invalid local configuration and any API failure both return false,
-    # including a request that never reached Langfuse, so false does not prove
-    # the credentials are wrong. Use {.auth_check!} to tell the failures apart.
-    #
-    # @return [Boolean] true when authentication succeeds, otherwise false
-    def auth_check
-      client.auth_check
-    rescue ConfigurationError
-      false
-    end
-
-    # Check authentication and raise when the check fails.
-    #
-    # @return [true] true when authentication succeeds
-    # @raise [ConfigurationError] if the local configuration is invalid
-    # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] if the API request fails or returns no project
-    def auth_check!
-      client.auth_check!
-    end
-
     # Return Langfuse's internal tracer provider for explicit global OpenTelemetry installation.
     #
     # @return [OpenTelemetry::SDK::Trace::TracerProvider]
@@ -276,10 +253,6 @@ module Langfuse
     # @return [void]
     # @raise [ArgumentError] if validation fails
     #
-    # @note Drops the score and returns nil when Langfuse is not configured, so
-    #   application code can score without guarding the call. Use {.create_score!}
-    #   when a missing configuration should raise.
-    #
     # @example Numeric score
     #   Langfuse.create_score(name: "quality", value: 0.85, trace_id: "abc123")
     #
@@ -291,22 +264,20 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                      metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
-      skip_score_when_unconfigured(name: name, value: value, data_type: data_type) do
-        client.create_score(
-          name: name,
-          value: value,
-          id: id,
-          trace_id: trace_id,
-          session_id: session_id,
-          observation_id: observation_id,
-          comment: comment,
-          metadata: metadata,
-          environment: environment,
-          data_type: data_type,
-          dataset_run_id: dataset_run_id,
-          config_id: config_id
-        )
-      end
+      client.create_score(
+        name: name,
+        value: value,
+        id: id,
+        trace_id: trace_id,
+        session_id: session_id,
+        observation_id: observation_id,
+        comment: comment,
+        metadata: metadata,
+        environment: environment,
+        data_type: data_type,
+        dataset_run_id: dataset_run_id,
+        config_id: config_id
+      )
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -363,22 +334,18 @@ module Langfuse
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
-    # @note Drops the score and returns nil when Langfuse is not configured.
-    #
     # @example
     #   Langfuse.observe("operation") do |obs|
     #     Langfuse.score_active_observation(name: "accuracy", value: 0.92)
     #   end
     def score_active_observation(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      skip_score_when_unconfigured(name: name, value: value, data_type: data_type) do
-        client.score_active_observation(
-          name: name,
-          value: value,
-          comment: comment,
-          metadata: metadata,
-          data_type: data_type
-        )
-      end
+      client.score_active_observation(
+        name: name,
+        value: value,
+        comment: comment,
+        metadata: metadata,
+        data_type: data_type
+      )
     end
 
     # Create a score for the currently active trace (from OTel span)
@@ -393,22 +360,18 @@ module Langfuse
     # @return [void]
     # @raise [ArgumentError] if no active span or validation fails
     #
-    # @note Drops the score and returns nil when Langfuse is not configured.
-    #
     # @example
     #   Langfuse.observe("operation") do |obs|
     #     Langfuse.score_active_trace(name: "overall_quality", value: 5)
     #   end
     def score_active_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      skip_score_when_unconfigured(name: name, value: value, data_type: data_type) do
-        client.score_active_trace(
-          name: name,
-          value: value,
-          comment: comment,
-          metadata: metadata,
-          data_type: data_type
-        )
-      end
+      client.score_active_trace(
+        name: name,
+        value: value,
+        comment: comment,
+        metadata: metadata,
+        data_type: data_type
+      )
     end
 
     # Force flush all queued score events
@@ -657,27 +620,9 @@ module Langfuse
       false
     end
 
-    # Spans already degrade to a no-op when tracing cannot start, so scores
-    # degrade the same way rather than raising into application code. The bang
-    # variants stay strict for callers that need the failure.
-    #
-    # Bad arguments are a programmer error rather than a missing environment, so
-    # they still raise here. Otherwise a score call would only be checked where
-    # Langfuse happens to be configured, and typos would reach production
-    # unnoticed.
-    def skip_score_when_unconfigured(name:, value:, data_type:)
-      yield
-    rescue ConfigurationError => e
-      ScoreClient.normalize_attributes!(name: name, value: value, data_type: data_type)
-      warn_once(:scoring, "Langfuse scoring is disabled: #{e.message}")
-      nil
-    end
-
-    # A dropped span or score is otherwise silent, so warn the first time it
-    # happens without flooding logs on every subsequent call.
+    # A dropped span is otherwise silent, so warn the first time it happens
+    # without flooding logs on every subsequent call.
     def warn_once(key, message)
-      return if emitted_warnings[key]
-
       warning_mutex.synchronize do
         return if emitted_warnings[key]
 
@@ -695,7 +640,10 @@ module Langfuse
     # would re-raise and escape the rescue that called us, so use the memoized
     # object only if it already exists.
     def warning_logger
-      @configuration&.logger || (@fallback_logger ||= Logger.new($stdout, level: Logger::WARN))
+      configured_logger = @configuration&.logger
+      return configured_logger if configured_logger.respond_to?(:warn)
+
+      @warning_logger ||= Logger.new($stdout, level: Logger::WARN)
     end
 
     def tracing_disabled_message(detail)

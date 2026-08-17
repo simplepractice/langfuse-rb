@@ -108,9 +108,7 @@ RSpec.describe Langfuse do
       cache_refresh_threads: :five,
       cache_backend: :unknown,
       prompt_cache_observer: "callable",
-      mask: 123,
-      mask_otel_spans: [],
-      should_export_span: {}
+      logger: Object.new
     }.each do |attribute, value|
       it "returns false when #{attribute} is #{value.inspect}" do
         described_class.configuration.public_send("#{attribute}=", value)
@@ -128,108 +126,26 @@ RSpec.describe Langfuse do
       ENV.delete("LANGFUSE_SAMPLE_RATE")
     end
 
+    it "returns false when base_url is malformed" do
+      described_class.configuration.base_url = "://bad"
+
+      expect(described_class.configured?).to be false
+    end
+
     it "does not access the network" do
       expect(described_class.configured?).to be true
       expect(a_request(:any, /.*/)).not_to have_been_made
     end
-  end
 
-  describe ".auth_check" do
-    let(:projects_url) { "https://cloud.langfuse.com/api/public/projects" }
-
-    it "returns true when authentication succeeds" do
-      stub_request(:get, projects_url)
-        .to_return(
-          status: 200,
-          body: { "data" => [{ "id" => "project-id" }] }.to_json,
-          headers: { "Content-Type" => "application/json" }
-        )
-
-      expect(described_class.auth_check).to be true
-      expect(described_class.auth_check!).to be true
-    end
-
-    it "returns false when authentication fails" do
-      stub_request(:get, projects_url)
-        .to_return(status: 401, body: { message: "Invalid credentials" }.to_json)
-
-      expect(described_class.auth_check).to be false
-      expect { described_class.auth_check! }.to raise_error(Langfuse::UnauthorizedError)
-    end
-
-    it "returns false when the request never reaches Langfuse" do
-      stub_request(:get, projects_url).to_timeout
-
-      expect(described_class.auth_check).to be false
-      expect { described_class.auth_check! }.to raise_error(Langfuse::ApiError)
-    end
-
-    it "returns false when credentials are absent" do
-      described_class.reset!
-
-      expect(described_class.auth_check).to be false
-      expect { described_class.auth_check! }.to raise_error(Langfuse::ConfigurationError)
-      expect(a_request(:any, /.*/)).not_to have_been_made
-    end
-  end
-
-  describe "scoring while unconfigured" do
-    before { described_class.reset! }
-
-    it "drops scores instead of raising so unguarded code keeps working" do
-      expect { described_class.create_score(name: "quality", value: 1.0, trace_id: "abc") }.not_to raise_error
-      expect(described_class.create_score(name: "quality", value: 1.0, trace_id: "abc")).to be_nil
-      expect(a_request(:any, /.*/)).not_to have_been_made
-    end
-
-    it "drops active-span scores raised from inside an observation" do
-      expect do
-        described_class.observe("op") do |obs|
-          described_class.score_active_observation(name: "accuracy", value: 0.9)
-          described_class.score_active_trace(name: "overall", value: 1.0)
-          obs.score_trace(name: "trace-level", value: 1.0)
-        end
-      end.not_to raise_error
-    end
-
-    it "warns once no matter how many scores are dropped" do
-      logger = RSpec.configuration.test_logger
-      allow(logger).to receive(:warn)
-
-      3.times { described_class.create_score(name: "quality", value: 1.0, trace_id: "abc") }
-
-      expect(logger).to have_received(:warn).with(/Langfuse scoring is disabled/).once
-    end
-
-    it "still raises from create_score! so callers can detect the failure" do
-      expect do
-        described_class.create_score!(name: "quality", value: 1.0, trace_id: "abc")
-      end.to raise_error(Langfuse::ConfigurationError)
-    end
-
-    # Argument errors must not depend on whether the environment happens to have
-    # credentials, or a typo would only surface in production.
-    it "still raises ArgumentError for invalid arguments while dropping the score" do
-      expect do
-        described_class.create_score(name: "quality", value: "text", data_type: :numeric, trace_id: "abc")
-      end.to raise_error(ArgumentError)
-
-      expect { described_class.create_score(name: "", value: 1.0, trace_id: "abc") }
-        .to raise_error(ArgumentError, /name is required/)
-
-      expect { described_class.score_active_observation(name: "q", value: "text", data_type: :numeric) }
-        .to raise_error(ArgumentError)
-    end
-
-    it "raises the same ArgumentError once configured" do
+    it "does not treat tracing-only callbacks as client readiness" do
       described_class.configure do |config|
-        config.public_key = "pk_test"
-        config.secret_key = "sk_test"
+        config.should_export_span = "not callable"
+        config.mask = "not callable"
+        config.mask_otel_spans = "not callable"
       end
 
-      expect do
-        described_class.create_score(name: "quality", value: "text", data_type: :numeric, trace_id: "abc")
-      end.to raise_error(ArgumentError)
+      expect(described_class.configured?).to be true
+      expect { described_class.client }.not_to raise_error
     end
   end
 
@@ -661,10 +577,10 @@ RSpec.describe Langfuse do
 
       expect(logger).to receive(:warn).once.with(/Langfuse tracing is disabled/)
 
-      first = described_class.observe("first")
+      first_result = described_class.observe("first") { :business_result }
       second = described_class.observe("second")
 
-      expect(first.otel_span.recording?).to be(false)
+      expect(first_result).to eq(:business_result)
       expect(second.otel_span.recording?).to be(false)
     end
 
@@ -678,6 +594,34 @@ RSpec.describe Langfuse do
       expect(observation.otel_span.recording?).to be(false)
     ensure
       ENV.delete("LANGFUSE_SAMPLE_RATE")
+    end
+
+    it "traces when client-only configuration is invalid" do
+      described_class.configuration.cache_backend = :unknown
+
+      expect(described_class.configured?).to be false
+
+      observation = described_class.observe("client-independent-tracing")
+
+      expect(observation.otel_span.recording?).to be(true)
+    ensure
+      observation&.end
+    end
+
+    it "uses a no-op tracer when the custom logger contract is invalid" do
+      described_class.configuration.logger = Object.new
+
+      observation = nil
+      expect { observation = described_class.observe("invalid-logger") }.not_to raise_error
+      expect(observation.otel_span.recording?).to be(false)
+    end
+
+    it "uses a no-op tracer when base_url is malformed" do
+      described_class.configuration.base_url = "://bad"
+
+      observation = nil
+      expect { observation = described_class.observe("malformed-base-url") }.not_to raise_error
+      expect(observation.otel_span.recording?).to be(false)
     end
 
     it "creates and returns observation without block" do

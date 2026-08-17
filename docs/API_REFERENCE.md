@@ -122,18 +122,7 @@ Langfuse.configured? # => true or false
 
 This method does not access the network. A `true` result does not prove that credentials are valid or that trace export works.
 
-### `Langfuse.auth_check` and `Langfuse.auth_check!`
-
-Check the configured credentials through `GET /api/public/projects`.
-
-```ruby
-Langfuse.auth_check         # => true or false
-Langfuse.auth_check!        # => true or raises
-Langfuse.client.auth_check  # => true or false
-Langfuse.client.auth_check! # => true or raises
-```
-
-`auth_check` returns `false` for invalid local configuration and for every API failure, including requests that never reached Langfuse because of a network error or timeout. A `false` result therefore does not prove the credentials are wrong. Call the bang methods when you need to tell those cases apart: they raise `ConfigurationError`, `UnauthorizedError`, or `ApiError`.
+Tracing does not require this guard. `Langfuse.observe` warns once and uses a no-op tracer when tracing configuration is invalid, so application code can use the same observation wrapper in every environment.
 
 ### `Langfuse.tracer_provider`
 

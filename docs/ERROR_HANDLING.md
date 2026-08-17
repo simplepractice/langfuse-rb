@@ -48,7 +48,8 @@ end
 ```
 
 **Validation checklist:**
-- `public_key`, `secret_key`, and `base_url` are non-empty Strings
+- `public_key` and `secret_key` are non-empty Strings
+- `base_url` is an absolute HTTP or HTTPS URL
 - `batch_size` is a positive Integer
 - `flush_interval` and other numeric settings are in their documented ranges
 - `cache_backend` is `:memory`, `:rails`, or `:auto`
@@ -441,10 +442,14 @@ puts "Cache enabled: #{stats[:enabled]}"
 ### Test Credentials
 
 ```ruby
-puts Langfuse.configured? # Local only. Does not access the network.
-puts Langfuse.auth_check  # Network check. False for any failure, not just bad keys.
-
-Langfuse.auth_check!      # Raises ConfigurationError or ApiError on failure.
+begin
+  prompts = Langfuse.client.list_prompts(limit: 1)
+  puts "✓ Credentials valid, found #{prompts.size} prompt(s)"
+rescue Langfuse::UnauthorizedError
+  puts "✗ Invalid credentials"
+rescue Langfuse::ApiError => e
+  puts "✗ API error: #{e.message}"
+end
 ```
 
 ### Validate Environment Variables

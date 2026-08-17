@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "logger"
+require "uri"
 
 module Langfuse
   # Configuration object for Langfuse client
@@ -144,6 +145,9 @@ module Langfuse
     # @return [Float] Default trace sampling rate (sample all traces)
     DEFAULT_SAMPLE_RATE = 1.0
 
+    # @return [Array<Symbol>] Methods required from a custom logger
+    LOGGER_METHODS = %i[debug info warn error].freeze
+
     # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
 
@@ -199,15 +203,15 @@ module Langfuse
 
     # Validate the configuration
     #
-    # Covers everything {#validate_tracing!} checks plus the client-only settings.
-    #
     # @raise [ConfigurationError] if configuration is invalid
     # @return [void]
     def validate!
-      validate_tracing!
+      validate_connection_settings!
+      validate_batching_settings!
+      validate_sample_rate!
       validate_client_settings!
       validate_callable!(prompt_cache_observer, "prompt_cache_observer")
-      validate_callable!(mask, "mask")
+      validate_logger!
     end
 
     # Check whether the configuration can construct a client.
@@ -232,7 +236,9 @@ module Langfuse
       validate_batching_settings!
       validate_sample_rate!
       validate_callable!(should_export_span, "should_export_span")
+      validate_callable!(mask, "mask")
       validate_callable!(mask_otel_spans, "mask_otel_spans")
+      validate_logger!
     end
 
     # Normalize stale_ttl value
@@ -281,7 +287,7 @@ module Langfuse
     def validate_connection_settings!
       validate_required_string!("public_key", public_key)
       validate_required_string!("secret_key", secret_key)
-      validate_required_string!("base_url", base_url, empty_message: "base_url cannot be empty")
+      validate_base_url!
     end
 
     def validate_batching_settings!
@@ -311,16 +317,30 @@ module Langfuse
       raise ConfigurationError, empty_message if value.empty?
     end
 
+    def validate_base_url!
+      validate_required_string!("base_url", base_url, empty_message: "base_url cannot be empty")
+      uri = URI.parse(base_url)
+      return if %w[http https].include?(uri.scheme) && !uri.host.to_s.empty?
+
+      raise ConfigurationError, "base_url must be an absolute HTTP or HTTPS URL"
+    rescue URI::InvalidURIError
+      raise ConfigurationError, "base_url must be an absolute HTTP or HTTPS URL"
+    end
+
     def validate_positive_number!(name, value)
-      return if value.is_a?(Numeric) && value.positive?
+      return if finite_ordered_number?(value) && value.positive?
 
       raise ConfigurationError, "#{name} must be positive"
     end
 
     def validate_non_negative_number!(name, value)
-      return if value.is_a?(Numeric) && !value.negative?
+      return if finite_ordered_number?(value) && !value.negative?
 
       raise ConfigurationError, "#{name} must be non-negative"
+    end
+
+    def finite_ordered_number?(value)
+      value.is_a?(Numeric) && value.respond_to?(:positive?) && value.finite?
     end
 
     def validate_cache_backend!
@@ -343,6 +363,14 @@ module Langfuse
       raise ConfigurationError, "#{name} must respond to #call"
     end
 
+    def validate_logger!
+      missing_methods = LOGGER_METHODS.reject { |method_name| logger.respond_to?(method_name) }
+      return if missing_methods.empty?
+
+      required_methods = LOGGER_METHODS.map { |method_name| "##{method_name}" }.join(", ")
+      raise ConfigurationError, "logger must respond to #{required_methods}"
+    end
+
     def validate_swr_config!
       validate_swr_stale_ttl!
       validate_refresh_threads!
@@ -363,7 +391,7 @@ module Langfuse
       end
 
       return if cache_stale_ttl == :indefinite
-      return if cache_stale_ttl.is_a?(Numeric) && !cache_stale_ttl.negative?
+      return if finite_ordered_number?(cache_stale_ttl) && !cache_stale_ttl.negative?
 
       raise ConfigurationError,
             "cache_stale_ttl must be non-negative or :indefinite"
@@ -407,7 +435,7 @@ module Langfuse
       return numeric_value if numeric_value.between?(0.0, 1.0)
 
       raise ConfigurationError, "sample_rate must be between 0.0 and 1.0"
-    rescue ArgumentError, TypeError
+    rescue ArgumentError, RangeError, TypeError
       raise ConfigurationError, "sample_rate must be numeric"
     end
   end

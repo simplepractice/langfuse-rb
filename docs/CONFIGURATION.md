@@ -459,7 +459,7 @@ There are three states worth documenting.
 - `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
 - `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
 - `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is ready
-- if `public_key`, `secret_key`, or `base_url` are missing, module-level tracing falls back to a no-op tracer and logs one warning
+- if tracing configuration is invalid, module-level tracing falls back to a no-op tracer and logs one warning
 
 ### Explicit Global Install with `Langfuse.tracer_provider`
 
@@ -671,13 +671,14 @@ Langfuse.client
 # => Raises Langfuse::ConfigurationError: "public_key is required"
 ```
 
-Validation fails before the client or tracing processor starts. Invalid values raise `Langfuse::ConfigurationError`.
+Client validation fails before the client starts. Tracing validates its own settings before the tracing processor starts. Invalid values raise `Langfuse::ConfigurationError`.
 
-Use `Langfuse.configured?` for a local, non-raising readiness check. This method does not validate credentials or network access. Use `Langfuse.auth_check` when the application must verify credentials against Langfuse.
+Use `Langfuse.configured?` for a local, non-raising client-readiness check. This method does not validate credentials, network access, or trace delivery. `Langfuse.observe` does not require this guard. It uses a no-op tracer when tracing configuration is invalid.
 
-Validation rules:
+Client-readiness rules:
 
-- `public_key`, `secret_key`, and `base_url` must be non-empty Strings
+- `public_key` and `secret_key` must be non-empty Strings
+- `base_url` must be an absolute HTTP or HTTPS URL
 - `batch_size` must be a positive Integer
 - `flush_interval`, `timeout`, `cache_max_size`, `cache_lock_timeout`, and `cache_refresh_threads` must be positive numbers
 - `cache_ttl` must be a non-negative number
@@ -686,6 +687,10 @@ Validation rules:
 - `cache_backend` must be `:memory`, `:rails`, or `:auto`
 - If `:rails` is selected while caching is enabled, Rails and `Rails.cache` must be available
 - `prompt_cache_observer` must respond to `#call` (if set)
+- `logger` must respond to `#debug`, `#info`, `#warn`, and `#error`
+
+Tracing reuses the credential, batching, sampling, and logger rules. It also validates these tracing-only settings:
+
 - `should_export_span` must respond to `#call` (if set)
 - `mask` must respond to `#call` (if set)
 - `mask_otel_spans` must respond to `#call` (if set)

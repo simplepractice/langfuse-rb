@@ -33,26 +33,6 @@ module Langfuse
 
     HEX_TRACE_ID_PATTERN = /\A[0-9a-f]{32}\z/
 
-    # Validate and normalize the attributes every score shares.
-    #
-    # Stateless so callers can reject bad arguments before a client exists.
-    # Scores dropped because Langfuse is unconfigured still run this, keeping
-    # argument errors visible in environments without credentials.
-    #
-    # @api private
-    # @param name [String] Score name
-    # @param value [Numeric, Integer, String] Raw score value
-    # @param data_type [Symbol] Data type (:numeric, :boolean, :categorical, :text, :correction)
-    # @return [Array(Object, String)] Normalized value and API data type string
-    # @raise [ArgumentError] if the name, value, or data type is invalid
-    def self.normalize_attributes!(name:, value:, data_type:)
-      validate_name(name)
-      normalized_value = ScoreValue.normalize(value, data_type)
-      data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
-
-      [normalized_value, data_type_str]
-    end
-
     # Initialize a new ScoreClient
     #
     # @param api_client [ApiClient] The API client for sending batches
@@ -304,9 +284,9 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def build_score_body(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
                          environment:, data_type:, dataset_run_id: nil, config_id: nil)
-      normalized_value, data_type_str = self.class.normalize_attributes!(
-        name: name, value: value, data_type: data_type
-      )
+      validate_name(name)
+      normalized_value = ScoreValue.normalize(value, data_type)
+      data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
       validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
 
       {
@@ -342,12 +322,11 @@ module Langfuse
     #
     # @param name [String] Score name
     # @raise [ArgumentError] if name is invalid
-    def self.validate_name(name)
+    def validate_name(name)
       raise ArgumentError, "name is required" if name.nil?
       raise ArgumentError, "name must be a String" unless name.is_a?(String)
       raise ArgumentError, "name is required" if name.empty?
     end
-    private_class_method :validate_name
 
     # Extract trace_id and observation_id from active OTel span
     #

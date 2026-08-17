@@ -163,6 +163,41 @@ RSpec.describe Langfuse::Config do
 
       expect(config.valid?).to be false
     end
+
+    it "returns false when a custom logger does not satisfy the logger contract" do
+      config.logger = Object.new
+
+      expect(config.valid?).to be false
+    end
+
+    it "returns false instead of raising for non-finite or unordered numeric settings" do
+      invalid_values = [Complex(1, 1), Float::NAN, Float::INFINITY]
+      numeric_settings = %i[
+        timeout
+        cache_ttl
+        cache_max_size
+        cache_lock_timeout
+        cache_stale_ttl
+        cache_refresh_threads
+        flush_interval
+      ]
+
+      numeric_settings.product(invalid_values).each do |setting, value|
+        candidate = config.dup
+        candidate.public_send("#{setting}=", value)
+
+        expect(candidate.valid?).to be(false), "expected #{setting}=#{value.inspect} to be invalid"
+      end
+    end
+
+    it "does not include tracing-only callbacks in client readiness" do
+      config.should_export_span = "not callable"
+      config.mask = "not callable"
+      config.mask_otel_spans = "not callable"
+
+      expect(config.valid?).to be true
+      expect { Langfuse::Client.new(config) }.not_to raise_error
+    end
   end
 
   describe "#validate!" do
@@ -291,6 +326,19 @@ RSpec.describe Langfuse::Config do
       end
     end
 
+    context "when base_url is malformed" do
+      ["not-a-url", "://bad", "ftp://langfuse.example.com", "https://"].each do |base_url|
+        it "rejects #{base_url.inspect}" do
+          config.base_url = base_url
+
+          expect { config.validate! }.to raise_error(
+            Langfuse::ConfigurationError,
+            "base_url must be an absolute HTTP or HTTPS URL"
+          )
+        end
+      end
+    end
+
     context "when batching settings are invalid" do
       it "raises ConfigurationError when batch_size is a String" do
         config.batch_size = "50"
@@ -308,23 +356,6 @@ RSpec.describe Langfuse::Config do
           Langfuse::ConfigurationError,
           "flush_interval must be positive"
         )
-      end
-    end
-
-    context "when should_export_span is invalid" do
-      it "raises ConfigurationError when it does not respond to #call" do
-        config.should_export_span = "not callable"
-
-        expect { config.validate! }.to raise_error(
-          Langfuse::ConfigurationError,
-          "should_export_span must respond to #call"
-        )
-      end
-
-      it "accepts callables" do
-        config.should_export_span = ->(_span) { true }
-
-        expect { config.validate! }.not_to raise_error
       end
     end
 
@@ -445,26 +476,6 @@ RSpec.describe Langfuse::Config do
       end
     end
 
-    context "when masking callables are invalid" do
-      it "rejects a non-callable creation-time mask" do
-        config.mask = "not callable"
-
-        expect { config.validate! }.to raise_error(
-          Langfuse::ConfigurationError,
-          "mask must respond to #call"
-        )
-      end
-
-      it "rejects a non-callable export-stage mask" do
-        config.mask_otel_spans = "not callable"
-
-        expect { config.validate! }.to raise_error(
-          Langfuse::ConfigurationError,
-          "mask_otel_spans must respond to #call"
-        )
-      end
-    end
-
     context "when sample_rate is invalid" do
       it "raises ConfigurationError when below 0.0" do
         expect { config.sample_rate = -0.1 }.to raise_error(
@@ -482,6 +493,13 @@ RSpec.describe Langfuse::Config do
 
       it "raises ConfigurationError when non-numeric" do
         expect { config.sample_rate = "abc" }.to raise_error(
+          Langfuse::ConfigurationError,
+          "sample_rate must be numeric"
+        )
+      end
+
+      it "raises ConfigurationError when the value is a complex number" do
+        expect { config.sample_rate = Complex(1, 1) }.to raise_error(
           Langfuse::ConfigurationError,
           "sample_rate must be numeric"
         )
@@ -647,6 +665,33 @@ RSpec.describe Langfuse::Config do
         "mask_otel_spans must respond to #call"
       )
     end
+
+    it "validates creation-time masking" do
+      config.mask = "not callable"
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask must respond to #call"
+      )
+    end
+
+    it "validates the export filter" do
+      config.should_export_span = "not callable"
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "should_export_span must respond to #call"
+      )
+    end
+
+    it "validates the logger contract" do
+      config.logger = Object.new
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "logger must respond to #debug, #info, #warn, #error"
+      )
+    end
   end
 
   describe "attribute setters" do
@@ -754,24 +799,24 @@ RSpec.describe Langfuse::Config do
 
     it "passes validation when mask is nil" do
       config.mask = nil
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "passes validation when mask responds to #call" do
       config.mask = ->(data:) { data }
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "passes validation with a method object" do
       obj = Object.new
       def obj.call(data:) = data
       config.mask = obj
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "fails validation when mask does not respond to #call" do
       config.mask = "not_callable"
-      expect { config.validate! }.to raise_error(
+      expect { config.validate_tracing! }.to raise_error(
         Langfuse::ConfigurationError,
         "mask must respond to #call"
       )
@@ -779,7 +824,7 @@ RSpec.describe Langfuse::Config do
 
     it "fails validation when mask is a non-callable object" do
       config.mask = 42
-      expect { config.validate! }.to raise_error(
+      expect { config.validate_tracing! }.to raise_error(
         Langfuse::ConfigurationError,
         "mask must respond to #call"
       )
@@ -800,17 +845,17 @@ RSpec.describe Langfuse::Config do
 
     it "passes validation when mask_otel_spans is nil" do
       config.mask_otel_spans = nil
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "passes validation when mask_otel_spans responds to #call" do
       config.mask_otel_spans = ->(params:) { params and nil }
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "fails validation when mask_otel_spans does not respond to #call" do
       config.mask_otel_spans = "not_callable"
-      expect { config.validate! }.to raise_error(
+      expect { config.validate_tracing! }.to raise_error(
         Langfuse::ConfigurationError,
         "mask_otel_spans must respond to #call"
       )

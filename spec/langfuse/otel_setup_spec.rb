@@ -3,7 +3,7 @@
 require "spec_helper"
 
 RSpec.describe Langfuse::OtelSetup do
-  let(:logger) { instance_double(Logger, info: nil, debug: nil, warn: nil) }
+  let(:logger) { instance_double(Logger, info: nil, debug: nil, warn: nil, error: nil) }
   let(:exporter) { OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new }
   let(:config) do
     Langfuse::Config.new do |c|
