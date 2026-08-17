@@ -41,7 +41,8 @@ module Langfuse
 
       def section_paths(token, scope)
         section_path = scoped_path(token, scope)
-        [section_path.join("."), *collect(token[4], section_path)]
+        body_scope = token[1] == :section ? section_path : scope
+        [section_path.join("."), *collect(token[4], body_scope)]
       end
 
       def scoped_path(token, scope)

@@ -152,7 +152,17 @@ RSpec.describe Langfuse::TextPromptClient do
       )
 
       expect(described_class.new(data).variables).to eq(
-        %w[account account.owner account.owner.profile.email items items.message]
+        %w[account account.owner account.owner.profile.email items message]
+      )
+    end
+
+    it "keeps inverted-section variables in the enclosing scope" do
+      data = prompt_data.merge(
+        "prompt" => "{{#account}}{{^owner}}{{fallback.name}}{{/owner}}{{/account}}"
+      )
+
+      expect(described_class.new(data).variables).to eq(
+        %w[account account.owner account.fallback.name]
       )
     end
 
