@@ -308,6 +308,24 @@ RSpec.describe Langfuse do
       expect(provider).to be_a(OpenTelemetry::Trace::TracerProvider)
       expect(provider).not_to be_a(OpenTelemetry::SDK::Trace::TracerProvider)
     end
+
+    it "stops traces and queued score delivery on an initialized SDK" do
+      described_class.configure do |config|
+        config.public_key = "pk_test"
+        config.secret_key = "sk_test"
+        config.tracing_enabled = true
+      end
+      initialized_client = described_class.client
+      described_class.create_score(name: "queued-before-disable", value: 1)
+
+      described_class.configure { |config| config.tracing_enabled = false }
+      observation = described_class.observe("disabled-after-initialize")
+      described_class.flush_scores
+
+      expect(described_class.client).to equal(initialized_client)
+      expect(observation.otel_span).not_to be_recording
+      expect(a_request(:any, /.*/)).not_to have_been_made
+    end
   end
 
   describe ".propagate_attributes" do

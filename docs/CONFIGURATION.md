@@ -309,7 +309,7 @@ end
 
 Explicit Ruby configuration overrides `LANGFUSE_TRACING_ENABLED`. The environment variable accepts `true` or `false` without case sensitivity. The standard `OTEL_SDK_DISABLED=true` setting always disables Langfuse telemetry.
 
-When disabled, trace and score calls are no-ops. They do not require Langfuse credentials and do not create network requests. Prompt and data API calls still validate the normal client configuration when used. Synchronous `create_score!` returns `nil` while telemetry is disabled. Call `Langfuse.reset!` after changing this setting on an initialized SDK.
+When disabled, trace and score calls are no-ops. They do not require Langfuse credentials and do not create network requests. Prompt and data API calls still validate the normal client configuration when used. Synchronous `create_score!` returns `nil` while telemetry is disabled. Changes to `tracing_enabled` apply to the initialized SDK. Environment variables are read when configuration is created.
 
 #### `logger`
 

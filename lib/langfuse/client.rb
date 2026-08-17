@@ -73,7 +73,7 @@ module Langfuse
     # @return [Client]
     def initialize(config)
       @config = config
-      @telemetry_enabled = config.telemetry_enabled?
+      @score_client_mutex = Mutex.new
       @project_id = nil
       # One-shot lookup: avoids repeated blocking API calls in URL helpers
       # (trace_url, dataset_url, dataset_run_url) when the project endpoint is down.
@@ -368,9 +368,7 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                      metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
-      return unless telemetry_enabled?
-
-      @score_client.create(
+      active_score_client&.create(
         name: name,
         value: value,
         id: id,
@@ -411,9 +409,7 @@ module Langfuse
     # rubocop:disable Metrics/ParameterLists
     def create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
                       metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
-      return unless telemetry_enabled?
-
-      @score_client.create!(
+      active_score_client&.create!(
         name: name,
         value: value,
         id: id,
@@ -447,9 +443,7 @@ module Langfuse
     #     client.score_active_observation(name: "accuracy", value: 0.92)
     #   end
     def score_active_observation(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      return unless telemetry_enabled?
-
-      @score_client.score_active_observation(
+      active_score_client&.score_active_observation(
         name: name,
         value: value,
         comment: comment,
@@ -475,9 +469,7 @@ module Langfuse
     #     client.score_active_trace(name: "overall_quality", value: 5)
     #   end
     def score_active_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
-      return unless telemetry_enabled?
-
-      @score_client.score_active_trace(
+      active_score_client&.score_active_trace(
         name: name,
         value: value,
         comment: comment,
@@ -495,9 +487,7 @@ module Langfuse
     # @example
     #   client.flush_scores
     def flush_scores
-      return unless telemetry_enabled?
-
-      @score_client.flush
+      active_score_client&.flush
     end
 
     # Shutdown the client and flush any pending scores
@@ -506,7 +496,7 @@ module Langfuse
     #
     # @return [void]
     def shutdown
-      @score_client.shutdown
+      @score_client&.shutdown
       @api_client.shutdown
     end
 
@@ -712,11 +702,10 @@ module Langfuse
       if telemetry_enabled?
         config.validate!
         @api_client = build_api_client
-        @score_client = ScoreClient.new(api_client: @api_client, config: config)
+        @score_client = build_score_client
       else
         config.validate_telemetry_disabled!
         @api_client = DeferredApiClient.new { build_validated_api_client }
-        @score_client = NoopScoreClient.new
       end
     end
 
@@ -739,7 +728,17 @@ module Langfuse
     end
 
     def telemetry_enabled?
-      @telemetry_enabled
+      config.telemetry_enabled?
+    end
+
+    def active_score_client
+      return unless telemetry_enabled?
+
+      @score_client_mutex.synchronize { @score_client ||= build_score_client }
+    end
+
+    def build_score_client
+      ScoreClient.new(api_client: @api_client, config: config)
     end
 
     attr_reader :score_client

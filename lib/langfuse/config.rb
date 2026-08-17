@@ -344,7 +344,7 @@ module Langfuse
 
     def initialize_tracing_defaults
       @tracing_enabled = boolean_env("LANGFUSE_TRACING_ENABLED", default: DEFAULT_TRACING_ENABLED)
-      @otel_sdk_disabled = ENV.fetch("OTEL_SDK_DISABLED", nil) == "true"
+      @otel_sdk_disabled = otel_sdk_disabled?
       @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
       @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
       self.sample_rate = env_value("LANGFUSE_SAMPLE_RATE") || DEFAULT_SAMPLE_RATE
@@ -374,6 +374,10 @@ module Langfuse
       return false if value.casecmp("false").zero?
 
       raise ConfigurationError, "#{key} must be true or false"
+    end
+
+    def otel_sdk_disabled?
+      env_value("OTEL_SDK_DISABLED")&.casecmp?("true") || false
     end
 
     def validate_batching_settings!
