@@ -174,13 +174,12 @@ module Langfuse
     # @param key [String] Cache key
     # @yield Block to execute to fetch fresh data
     # @return [void]
-    # rubocop:disable Naming/PredicateMethod
     def schedule_refresh(key, ttl: nil, stale_ttl: nil, on_success: nil, on_failure: nil, &block)
       # Prevent duplicate refreshes
       lock_key = build_lock_key(key)
       return false unless acquire_lock(lock_key)
 
-      @thread_pool.post do
+      scheduled = @thread_pool.post do
         value = block.call
         set_cache_entry(key, value, ttl: ttl, stale_ttl: stale_ttl)
         on_success&.call(value)
@@ -191,9 +190,9 @@ module Langfuse
         release_lock(lock_key)
       end
 
-      true
+      release_lock(lock_key) unless scheduled
+      scheduled
     end
-    # rubocop:enable Naming/PredicateMethod
 
     # Fetch data and cache it with SWR metadata
     #

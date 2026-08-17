@@ -478,5 +478,37 @@ RSpec.describe Langfuse::PromptCache do
 
       expect { cache.shutdown }.not_to raise_error
     end
+
+    it "rejects a refresh without retaining its lock after shutdown" do
+      cache = described_class.new(ttl: 60, stale_ttl: 120)
+      cache.shutdown
+
+      expect(cache.refresh_async("stopped") { "unused" }).to be false
+      expect(cache.instance_variable_get(:@locks)).to be_empty
+    end
+
+    it "refreshes stale data in a forked child" do
+      skip "fork is not available" unless Process.respond_to?(:fork)
+
+      fork_cache = described_class.new(ttl: 60, stale_ttl: 120, refresh_threads: 1)
+      fork_cache.set("fork-key", "parent")
+      _child_pid, status, child_state = capture_forked_state do
+        child_pool = fork_cache.instance_variable_get(:@thread_pool)
+        fork_cache.refresh_async("fork-key") { "child" }
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+        sleep(0.01) while fork_cache.get("fork-key") != "child" &&
+                          Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+        {
+          pool_running: child_pool.running?,
+          value: fork_cache.get("fork-key")
+        }
+      end
+
+      expect(status).to be_success
+      expect(child_state).to eq(pool_running: true, value: "child")
+      expect(fork_cache.get("fork-key")).to eq("parent")
+    ensure
+      fork_cache&.shutdown
+    end
   end
 end

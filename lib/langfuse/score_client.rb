@@ -2,6 +2,7 @@
 
 require "securerandom"
 require "opentelemetry/trace"
+require_relative "fork_safety"
 
 module Langfuse
   # Client for creating and batching Langfuse scores
@@ -50,6 +51,7 @@ module Langfuse
       @score_sampler = Sampling.build_sampler(config.sample_rate)
 
       start_flush_timer
+      ForkSafety.register(self)
     end
 
     # Create a score event and queue it for batching
@@ -264,6 +266,16 @@ module Langfuse
     end
 
     private
+
+    # Discard parent-owned queued work and restore the child process timer.
+    def reset_after_fork
+      inherited_shutdown = @shutdown
+      @queue = Queue.new
+      @mutex = Mutex.new
+      @flush_thread = nil
+      @shutdown = inherited_shutdown
+      start_flush_timer unless @shutdown
+    end
 
     # Validate score inputs and build the canonical API body.
     #

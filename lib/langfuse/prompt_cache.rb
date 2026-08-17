@@ -3,6 +3,7 @@
 require "monitor"
 require "base64"
 require_relative "stale_while_revalidate"
+require_relative "fork_safety"
 
 module Langfuse
   # Simple in-memory cache for prompt data with TTL
@@ -92,6 +93,7 @@ module Langfuse
       @monitor = Monitor.new
       @locks = {} # Track locks for in-memory locking
       initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
+      ForkSafety.register(self)
     end
 
     # Get a value from the cache
@@ -283,6 +285,12 @@ module Langfuse
     end
 
     private
+
+    # Replace inherited synchronization and worker state in the child process.
+    def reset_after_fork
+      @monitor = Monitor.new
+      @locks = {}
+    end
 
     # Implementation of StaleWhileRevalidate abstract methods
 

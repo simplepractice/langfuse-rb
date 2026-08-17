@@ -42,6 +42,39 @@ RSpec.describe Langfuse::ScoreClient do
       sleep(0.1)
       expect(score_client.instance_variable_get(:@flush_thread)).to be_alive
     end
+
+    it "replaces inherited queue and timer state in a forked child" do
+      skip "fork is not available" unless Process.respond_to?(:fork)
+
+      allow(api_client).to receive(:send_batch)
+      score_client.create(name: "parent-score", value: 1)
+      parent_queue = score_client.instance_variable_get(:@queue)
+      parent_thread = score_client.instance_variable_get(:@flush_thread)
+      child_pid, status, child_state = capture_forked_state do
+        score_client.create(name: "child-score", value: 1)
+        child_queue = score_client.instance_variable_get(:@queue)
+        child_thread = score_client.instance_variable_get(:@flush_thread)
+        score_client.flush
+        {
+          pid: Process.pid,
+          queue_replaced: !child_queue.equal?(parent_queue),
+          queue_empty_after_flush: child_queue.empty?,
+          timer_alive: child_thread&.alive?
+        }
+      end
+
+      expect(status).to be_success
+      expect(child_state).to eq(
+        pid: child_pid,
+        queue_replaced: true,
+        queue_empty_after_flush: true,
+        timer_alive: true
+      )
+      expect(score_client.instance_variable_get(:@queue)).to equal(parent_queue)
+      expect(score_client.instance_variable_get(:@queue).size).to eq(1)
+      expect(score_client.instance_variable_get(:@flush_thread)).to equal(parent_thread)
+      expect(parent_thread).to be_alive
+    end
   end
 
   describe "#create" do

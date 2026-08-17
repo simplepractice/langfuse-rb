@@ -1151,4 +1151,32 @@ RSpec.describe Langfuse::RailsCacheAdapter do
       end
     end
   end
+
+  describe "fork safety" do
+    it "replaces inherited worker and synchronization state in a forked child" do
+      skip "fork is not available" unless Process.respond_to?(:fork)
+
+      adapter = described_class.new(ttl: 60, stale_ttl: 120, refresh_threads: 1)
+      parent_mutex = adapter.instance_variable_get(:@generation_memo_mutex)
+      adapter.instance_variable_get(:@generation_memo)["prompt"] = { value: 1 }
+
+      _child_pid, status, child_state = capture_forked_state do
+        child_mutex = adapter.instance_variable_get(:@generation_memo_mutex)
+        {
+          mutex_replaced: !child_mutex.equal?(parent_mutex),
+          generation_memo: adapter.instance_variable_get(:@generation_memo)
+        }
+      end
+
+      expect(status).to be_success
+      expect(child_state).to eq(
+        mutex_replaced: true,
+        generation_memo: {}
+      )
+      expect(adapter.instance_variable_get(:@generation_memo_mutex)).to equal(parent_mutex)
+      expect(adapter.instance_variable_get(:@generation_memo)).to eq("prompt" => { value: 1 })
+    ensure
+      adapter&.shutdown
+    end
+  end
 end

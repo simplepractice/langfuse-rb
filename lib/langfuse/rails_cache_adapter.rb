@@ -2,6 +2,7 @@
 
 require_relative "prompt_cache"
 require_relative "stale_while_revalidate"
+require_relative "fork_safety"
 
 module Langfuse
   # Rails.cache adapter for distributed caching with Redis
@@ -69,6 +70,7 @@ module Langfuse
       @generation_memo = {}
       @generation_memo_mutex = Mutex.new
       initialize_swr(refresh_threads: refresh_threads) if swr_enabled?
+      ForkSafety.register(self)
     end
 
     # Get a value from the cache
@@ -256,6 +258,12 @@ module Langfuse
     end
 
     private
+
+    # Replace inherited synchronization and worker state in the child process.
+    def reset_after_fork
+      @generation_memo = {}
+      @generation_memo_mutex = Mutex.new
+    end
 
     # Implementation of StaleWhileRevalidate abstract methods
 

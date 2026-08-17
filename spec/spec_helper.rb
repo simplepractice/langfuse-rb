@@ -17,8 +17,11 @@ require "opentelemetry/sdk"
 require "webmock/rspec"
 require "logger"
 require "fileutils"
+require_relative "support/fork_test_helpers"
 
 RSpec.configure do |config|
+  config.include ForkTestHelpers
+
   # Enable flags like --only-failures and --next-failure
   config.example_status_persistence_file_path = ".rspec_status"
 
