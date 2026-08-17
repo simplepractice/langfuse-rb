@@ -334,7 +334,7 @@ module Langfuse
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
       validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
 
-      {
+      snapshot_score_body(
         id: id || SecureRandom.uuid,
         name: name,
         value: normalized_value,
@@ -347,9 +347,16 @@ module Langfuse
         environment: environment || config.environment,
         datasetRunId: dataset_run_id,
         configId: config_id
-      }.compact
+      )
     end
     # rubocop:enable Metrics/ParameterLists
+
+    # Snapshot the wire body so caller mutation cannot poison the pending queue.
+    def snapshot_score_body(attributes)
+      JSON.parse(JSON.generate(attributes.compact), symbolize_names: true)
+    rescue JSON::JSONError => e
+      raise ArgumentError, "Score data must be JSON-serializable: #{e.message}"
+    end
 
     def build_score_event(score)
       { id: SecureRandom.uuid, type: "score-create", timestamp: Time.now.utc.iso8601(3), body: score }

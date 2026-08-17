@@ -797,6 +797,35 @@ RSpec.describe Langfuse::ScoreClient do
       score_client.flush
     end
 
+    it "rejects unserializable scores before they enter the queue" do
+      expect do
+        score_client.create(name: "invalid", value: Float::NAN)
+      end.to raise_error(ArgumentError, /Score data must be JSON-serializable/)
+      expect(api_client).to receive(:send_batch).with([
+                                                        hash_including(body: hash_including(name: "valid"))
+                                                      ])
+
+      score_client.create(name: "valid", value: 1)
+      score_client.flush
+
+      expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "snapshots caller-owned metadata before enqueue" do
+      metadata = { nested: { value: "before" } }
+      expect(api_client).to receive(:send_batch).with([
+                                                        hash_including(
+                                                          body: hash_including(
+                                                            metadata: { nested: { value: "before" } }
+                                                          )
+                                                        )
+                                                      ])
+
+      score_client.create(name: "quality", value: 1, metadata: metadata)
+      metadata[:nested][:value] = "after"
+      score_client.flush
+    end
+
     it "handles API errors silently" do
       allow(api_client).to receive(:send_batch).and_raise(Langfuse::ApiError, "API error")
 
