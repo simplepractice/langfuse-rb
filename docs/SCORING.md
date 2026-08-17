@@ -377,6 +377,7 @@ Scores are batched for efficiency:
 **Default settings:**
 - `batch_size`: 50 scores per batch
 - `flush_interval`: 10 seconds
+- `score_queue_capacity`: 100,000 pending asynchronous scores
 
 ```ruby
 # These scores are queued, not sent immediately
@@ -398,8 +399,11 @@ end
 Langfuse.configure do |config|
   config.batch_size = 100      # Larger batches
   config.flush_interval = 5    # More frequent flushes
+  config.score_queue_capacity = 20_000
 end
 ```
+
+The asynchronous queue is bounded. If the queue is full, the SDK logs an error, drops the new score, and returns without waiting for capacity. The SDK splits flush requests before a multi-score JSON payload exceeds 2.5 MB. A failed batch stays at the front of the queue for a later flush. Use `create_score!` when the caller needs synchronous delivery and an API error result.
 
 **Manual flush:**
 

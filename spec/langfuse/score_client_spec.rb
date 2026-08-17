@@ -23,6 +23,25 @@ RSpec.describe Langfuse::ScoreClient do
       .to_return(status: 200, body: "", headers: {})
   end
 
+  def capture_child_score_state(score_client, parent_queue:, parent_mutexes:)
+    capture_forked_state do
+      score_client.create(name: "child-score", value: 1)
+      child_queue = score_client.instance_variable_get(:@queue)
+      child_mutexes = %i[@shutdown_mutex @flush_mutex].map { |name| score_client.instance_variable_get(name) }
+      child_thread = score_client.instance_variable_get(:@flush_thread)
+      score_client.flush
+      {
+        pid: Process.pid,
+        queue_replaced: !child_queue.equal?(parent_queue),
+        queue_class: child_queue.class.name,
+        queue_capacity: child_queue.capacity,
+        queue_empty_after_flush: child_queue.empty?,
+        mutexes_replaced: child_mutexes.zip(parent_mutexes).all? { |child, parent| !child.equal?(parent) },
+        timer_alive: child_thread&.alive?
+      }
+    end
+  end
+
   after do
     score_client.shutdown
   end
@@ -50,24 +69,17 @@ RSpec.describe Langfuse::ScoreClient do
       score_client.create(name: "parent-score", value: 1)
       parent_queue = score_client.instance_variable_get(:@queue)
       parent_thread = score_client.instance_variable_get(:@flush_thread)
-      child_pid, status, child_state = capture_forked_state do
-        score_client.create(name: "child-score", value: 1)
-        child_queue = score_client.instance_variable_get(:@queue)
-        child_thread = score_client.instance_variable_get(:@flush_thread)
-        score_client.flush
-        {
-          pid: Process.pid,
-          queue_replaced: !child_queue.equal?(parent_queue),
-          queue_empty_after_flush: child_queue.empty?,
-          timer_alive: child_thread&.alive?
-        }
-      end
+      parent_mutexes = %i[@shutdown_mutex @flush_mutex].map { |name| score_client.instance_variable_get(name) }
+      child_pid, status, child_state = capture_child_score_state(score_client, parent_queue:, parent_mutexes:)
 
       expect(status).to be_success
       expect(child_state).to eq(
         pid: child_pid,
         queue_replaced: true,
+        queue_class: "Langfuse::PendingScoreQueue",
+        queue_capacity: Langfuse::Config::DEFAULT_SCORE_QUEUE_CAPACITY,
         queue_empty_after_flush: true,
+        mutexes_replaced: true,
         timer_alive: true
       )
       expect(score_client.instance_variable_get(:@queue)).to equal(parent_queue)
@@ -785,6 +797,35 @@ RSpec.describe Langfuse::ScoreClient do
       score_client.flush
     end
 
+    it "rejects unserializable scores before they enter the queue" do
+      expect do
+        score_client.create(name: "invalid", value: Float::NAN)
+      end.to raise_error(ArgumentError, /Score data must be JSON-serializable/)
+      expect(api_client).to receive(:send_batch).with([
+                                                        hash_including(body: hash_including(name: "valid"))
+                                                      ])
+
+      score_client.create(name: "valid", value: 1)
+      score_client.flush
+
+      expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "snapshots caller-owned metadata before enqueue" do
+      metadata = { nested: { value: "before" } }
+      expect(api_client).to receive(:send_batch).with([
+                                                        hash_including(
+                                                          body: hash_including(
+                                                            metadata: { nested: { value: "before" } }
+                                                          )
+                                                        )
+                                                      ])
+
+      score_client.create(name: "quality", value: 1, metadata: metadata)
+      metadata[:nested][:value] = "after"
+      score_client.flush
+    end
+
     it "handles API errors silently" do
       allow(api_client).to receive(:send_batch).and_raise(Langfuse::ApiError, "API error")
 
@@ -792,6 +833,136 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.create(name: "score1", value: 1)
         score_client.flush
       end.not_to raise_error
+    end
+
+    it "splits requests before a multi-score payload exceeds the byte limit" do
+      allow(api_client).to receive(:send_batch)
+      3.times { |index| score_client.create(name: "score-#{index}", value: index) }
+      pending_events = score_client.instance_variable_get(:@queue).snapshot
+      single_event_bytes = JSON.generate(batch: [pending_events.first]).bytesize
+      stub_const("Langfuse::ScoreClient::MAX_BATCH_PAYLOAD_BYTES", single_event_bytes)
+      sent_batches = []
+      allow(api_client).to receive(:send_batch) { |batch| sent_batches << batch }
+
+      score_client.flush
+
+      expect(sent_batches.length).to eq(3)
+      expect(sent_batches.flatten.map { |event| event.dig(:body, :name) }).to eq(%w[score-0 score-1 score-2])
+      expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "caps each request at the configured batch size" do
+      allow(api_client).to receive(:send_batch)
+      3.times { |index| score_client.create(name: "score-#{index}", value: index) }
+      config.batch_size = 2
+      sent_batches = []
+      allow(api_client).to receive(:send_batch) { |batch| sent_batches << batch }
+
+      score_client.flush
+
+      expect(sent_batches.map(&:length)).to eq([2, 1])
+      expect(sent_batches.flatten.map { |event| event.dig(:body, :name) }).to eq(%w[score-0 score-1 score-2])
+    end
+
+    it "keeps a failed batch and later scores queued in their original order" do
+      3.times { |index| score_client.create(name: "score-#{index}", value: index) }
+      pending_queue = score_client.instance_variable_get(:@queue)
+      single_event_bytes = JSON.generate(batch: [pending_queue.snapshot.first]).bytesize
+      stub_const("Langfuse::ScoreClient::MAX_BATCH_PAYLOAD_BYTES", single_event_bytes)
+      attempts = []
+      allow(api_client).to receive(:send_batch) do |batch|
+        attempts << batch.map { |event| event.dig(:body, :name) }
+        raise Langfuse::ApiError, "unavailable" if attempts.length == 2
+      end
+
+      score_client.flush
+
+      expect(attempts).to eq([%w[score-0], %w[score-1]])
+      expect(pending_queue.snapshot.map { |event| event.dig(:body, :name) }).to eq(%w[score-1 score-2])
+
+      retried_names = []
+      allow(api_client).to receive(:send_batch) do |batch|
+        retried_names.concat(batch.map { |event| event.dig(:body, :name) })
+      end
+      score_client.flush
+
+      expect(retried_names).to eq(%w[score-1 score-2])
+      expect(pending_queue).to be_empty
+    end
+
+    it "drops a permanently rejected batch and continues with later scores" do
+      config.batch_size = 1
+      attempts = []
+      allow(api_client).to receive(:send_batch) do |batch|
+        name = batch.first.dig(:body, :name)
+        attempts << name
+        raise Langfuse::BatchDeliveryError.new("name is invalid", retryable: false) if name == "invalid"
+      end
+
+      score_client.create(name: "invalid", value: 1)
+      score_client.create(name: "valid", value: 2)
+      score_client.flush
+
+      expect(attempts).to eq(%w[invalid valid])
+      expect(score_client.instance_variable_get(:@queue)).to be_empty
+    end
+
+    it "stops after an authentication failure and keeps all scores queued" do
+      attempts = []
+      authentication_fails = true
+      allow(api_client).to receive(:send_batch) do |batch|
+        attempts << batch.first.dig(:body, :name)
+        if authentication_fails
+          authentication_fails = false
+          raise Langfuse::UnauthorizedError, "invalid credentials"
+        end
+      end
+
+      score_client.create(name: "score-0", value: 0)
+      score_client.create(name: "score-1", value: 1)
+      config.batch_size = 1
+      score_client.flush
+
+      pending_queue = score_client.instance_variable_get(:@queue)
+      expect(attempts).to eq(["score-0"])
+      expect(pending_queue.snapshot.map { |event| event.dig(:body, :name) }).to eq(%w[score-0 score-1])
+
+      score_client.flush
+
+      expect(attempts).to eq(%w[score-0 score-0 score-1])
+      expect(pending_queue).to be_empty
+    end
+
+    it "keeps transient batch failures queued for a later retry" do
+      allow(api_client).to receive(:send_batch).and_raise(
+        Langfuse::BatchDeliveryError.new("unavailable", retryable: true)
+      )
+
+      score_client.create(name: "retry-me", value: 1)
+      score_client.flush
+
+      pending_names = score_client.instance_variable_get(:@queue).snapshot.map { |event| event.dig(:body, :name) }
+      expect(pending_names).to eq(["retry-me"])
+    end
+  end
+
+  describe "queue capacity" do
+    before do
+      config.score_queue_capacity = 1
+      allow(api_client).to receive(:send_batch)
+    end
+
+    it "drops only the new score without blocking when the queue is full" do
+      score_client.create(name: "accepted", value: 1)
+      expect(config.logger).to receive(:error).with(
+        "Langfuse score queue is full (capacity=1); dropping new asynchronous score"
+      )
+
+      enqueue_thread = Thread.new { score_client.create(name: "dropped", value: 2) }
+
+      expect(enqueue_thread.join(1)).to equal(enqueue_thread)
+      pending_names = score_client.instance_variable_get(:@queue).snapshot.map { |event| event.dig(:body, :name) }
+      expect(pending_names).to eq(["accepted"])
     end
   end
 

@@ -29,6 +29,23 @@ module Langfuse
   # Raised when a Langfuse API request fails
   class ApiError < Error; end
 
+  # Describes whether a failed ingestion batch is safe to retry.
+  #
+  # @api private
+  class BatchDeliveryError < ApiError
+    # @param message [String] Delivery failure description
+    # @param retryable [Boolean] Whether the complete batch can be retried
+    def initialize(message, retryable:)
+      @retryable = retryable
+      super(message)
+    end
+
+    # @return [Boolean] whether the complete batch can be retried
+    def retryable?
+      @retryable
+    end
+  end
+
   # Raised when a requested resource is not found (HTTP 404)
   class NotFoundError < ApiError; end
 

@@ -266,6 +266,18 @@ Used by scoring API and OpenTelemetry tracing export. See [SCORING.md](SCORING.m
 config.flush_interval = 5  # Flush more frequently
 ```
 
+#### `score_queue_capacity`
+
+- **Type:** Integer
+- **Default:** `100000`
+- **Description:** Maximum number of asynchronous scores held in memory before new scores are dropped
+
+```ruby
+config.score_queue_capacity = 20_000
+```
+
+A full queue does not wait for capacity. The SDK logs an error and drops only the new asynchronous score. Synchronous `create_score!` calls do not use this queue. Flush requests remain below 2.5 MB when a batch contains more than one score. Failed batches stay queued in their original order for a later flush.
+
 #### `sample_rate`
 
 - **Type:** Float (`0.0..1.0`)
@@ -791,6 +803,7 @@ Client-readiness rules:
 - `public_key` and `secret_key` must be non-empty Strings
 - `base_url` must be an absolute HTTP or HTTPS URL
 - `batch_size` must be a positive Integer
+- `score_queue_capacity` must be a positive Integer
 - `flush_interval`, `timeout`, `cache_max_size`, `cache_lock_timeout`, and `cache_refresh_threads` must be positive numbers
 - `cache_ttl` must be a non-negative number
 - `cache_stale_ttl` must be a non-negative number or `:indefinite`
