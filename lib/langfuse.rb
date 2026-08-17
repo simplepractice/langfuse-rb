@@ -179,8 +179,8 @@ module Langfuse
 
     # Shutdown Langfuse and flush any pending traces and scores
     #
-    # Call this when shutting down your application to ensure
-    # all traces and scores are sent to Langfuse.
+    # Normal process exit calls this automatically. Use it directly when the
+    # application needs an earlier, explicit shutdown boundary.
     #
     # @param timeout [Integer] Timeout in seconds
     # @return [void]

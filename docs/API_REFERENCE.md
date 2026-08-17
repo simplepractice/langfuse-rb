@@ -9,7 +9,7 @@ Complete method reference for the Langfuse Ruby SDK.
 - [Prompt Management](#prompt-management)
 - [Trace ID Generation](#trace-id-generation)
 - [Tracing & Observability](#tracing--observability)
-- [Traces](#traces)
+- [Data Access](#data-access)
 - [Scoring](#scoring)
 - [Datasets](#datasets)
 - [Experiments](#experiments)
@@ -50,11 +50,13 @@ Block receives a `Langfuse::Config` object with these properties:
 | `prompt_cache_observer`        | Callable | No      | `nil`                          | Prompt cache event hook           |
 | `batch_size`                   | Integer | No       | `50`                           | Score + trace export batch size   |
 | `flush_interval`               | Integer | No       | `10`                           | Score + trace export interval (s) |
+| `score_queue_capacity`         | Integer | No       | `100000`                       | Maximum pending asynchronous scores |
 | `sample_rate`                  | Float   | No       | `1.0`                          | Trace + trace-linked score sampling rate (`0.0..1.0`) |
 | `logger`                       | Logger  | No       | Auto-detected                  | Logger instance                   |
-| `tracing_async`                | Boolean | No       | `true`                         | ⚠️ Experimental (OTel batch scheduling) |
+| `tracing_async`                | Boolean | No       | `true`                         | Experimental OTel batch scheduling |
+| `tracing_enabled`              | Boolean | No       | `true`                         | Langfuse tracing and scoring kill switch |
 | `job_queue`                    | Symbol  | No       | `:default`                     | Reserved/no-op for future job integration |
-| `environment`                  | String  | No       | `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]`) | Default trace environment          |
+| `environment`                  | String  | No       | `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]`) | Default trace, observation, and score environment |
 | `release`                      | String  | No       | `nil` (or `ENV["LANGFUSE_RELEASE"]` / common CI commit SHA env) | Default release identifier         |
 | `should_export_span`           | `#call` | No       | `nil`                          | Span export filter callback        |
 | `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
@@ -125,6 +127,23 @@ Langfuse.configured? # => true or false
 This method does not access the network. A `true` result does not prove that credentials are valid or that trace export works.
 
 Tracing does not require this guard. `Langfuse.observe` warns once and uses a no-op tracer when tracing configuration is invalid, so application code can use the same observation wrapper in every environment.
+
+### `Config#valid?`
+
+Check whether a configuration object can construct a client:
+
+```ruby
+config = Langfuse::Config.new do |candidate|
+  candidate.public_key = "pk-lf-..."
+  candidate.secret_key = "sk-lf-..."
+end
+
+config.valid? # => true or false
+```
+
+The check is local and does not raise an error.
+It does not validate credentials, network access, or backend ingestion.
+Use `Langfuse.configured?` for the global configuration.
 
 ### `Langfuse.tracer_provider`
 
@@ -249,7 +268,7 @@ get_prompt(name, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: 
 
 **Raises:**
 
-- `NotFoundError` if prompt doesn't exist (unless `fallback` provided)
+- `NotFoundError` if the prompt does not exist and no `fallback` is present
 - `UnauthorizedError` if credentials invalid
 - `ApiError` on network/server errors
 
@@ -498,10 +517,11 @@ Returned by `get_prompt` for text prompts.
 | `commit_message` | String, nil | Commit message for the prompt version |
 | `resolution_graph` | Hash, nil | Dependency resolution graph for composed prompts when returned by Langfuse |
 | `is_fallback` | Boolean  | Whether the client uses caller-provided fallback content |
+| `variables` | Array<String> | Referenced Mustache variables in source order |
 
 **Methods:**
 
-#### `compile`
+#### `TextPromptClient#compile`
 
 ```ruby
 compile(**variables) # => String
@@ -516,6 +536,16 @@ prompt = client.get_prompt("greeting")
 message = prompt.compile(name: "Alice", time: "morning")
 ```
 
+#### `TextPromptClient#variables`
+
+```ruby
+variables # => Array<String>
+```
+
+Returns unique Mustache variable and section names in source order.
+Dotted paths do not change.
+Invalid Mustache syntax raises `Mustache::Parser::SyntaxError`.
+
 ### `ChatPromptClient`
 
 Returned by `get_prompt` for chat prompts.
@@ -524,7 +554,7 @@ Returned by `get_prompt` for chat prompts.
 
 **Methods:**
 
-#### `compile`
+#### `ChatPromptClient#compile`
 
 ```ruby
 compile(**variables) # => Array<Hash>
@@ -555,6 +585,15 @@ messages = prompt.compile(
 #   { role: :user, content: "..." }
 # ]
 ```
+
+#### `ChatPromptClient#variables`
+
+```ruby
+variables # => Array<String>
+```
+
+Returns unique Mustache variables from message content in message order.
+The result does not include Langfuse message placeholders.
 
 ## Trace ID Generation
 
@@ -838,7 +877,10 @@ obs.update(
 )
 ```
 
-## Traces
+## Data Access
+
+Use [DATA_ACCESS.md](DATA_ACCESS.md) to select a read API.
+The guide also explains cursor pagination and SDK and CLI verification.
 
 ### `Client#list_traces`
 
@@ -913,7 +955,7 @@ get_trace(id) # => Hash
 
 **Raises:**
 
-- `NotFoundError` if the trace doesn't exist
+- `NotFoundError` if the trace does not exist
 - `UnauthorizedError` if authentication fails
 - `ApiError` for other API errors
 
@@ -1159,9 +1201,11 @@ flush_scores
 **Example:**
 
 ```ruby
-# Before shutdown
+# Before an immediate verification read
 Langfuse.client.flush_scores
 ```
+
+Normal process exit flushes pending scores automatically.
 
 ### Module-Level Scoring
 
@@ -1283,7 +1327,7 @@ get_dataset(name) # => DatasetClient
 
 **Returns:** `DatasetClient`
 
-**Raises:** `NotFoundError` if the dataset doesn't exist
+**Raises:** `NotFoundError` if the dataset does not exist
 
 ### `Client#list_datasets`
 
@@ -1351,7 +1395,7 @@ Fetch a dataset item by ID.
 get_dataset_item(id) # => DatasetItemClient
 ```
 
-**Raises:** `NotFoundError` if the item doesn't exist
+**Raises:** `NotFoundError` if the item does not exist
 
 ### `Client#list_dataset_items`
 
@@ -1679,7 +1723,7 @@ Extends `ApiError`. Resource not found (404).
 
 **Raised when:**
 
-- Prompt doesn't exist
+- Prompt does not exist
 - Invalid version/label
 
 ### `Langfuse::CacheWarmingError`
@@ -1769,9 +1813,11 @@ Langfuse.shutdown(timeout: 30)
 **Example:**
 
 ```ruby
-# Before process exit
+# At an earlier application-owned shutdown boundary
 Langfuse.shutdown
 ```
+
+The SDK invokes shutdown automatically during normal process exit.
 
 ### `Langfuse.force_flush`
 

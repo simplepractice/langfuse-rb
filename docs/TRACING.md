@@ -1,14 +1,41 @@
 # LLM Tracing Guide
 
-This guide is about the tracing behavior the SDK actually implements today. If you just need install and first-run setup, start with [GETTING_STARTED.md](GETTING_STARTED.md).
+This guide explains the current SDK tracing behavior.
+For installation and initial configuration, start with [GETTING_STARTED.md](GETTING_STARTED.md).
 
 ## Mental Model
 
-- A root observation becomes the root of a trace. You do not create traces separately.
+- A root observation becomes the root of a trace.
+- Do not create a trace separately.
 - Child observations create nested spans inside that trace.
-- `:generation` is the right type for model calls because it carries model-specific fields like `model`, `usage_details`, and `cost_details`.
+- Use `:generation` for model calls.
+- A generation can contain `model`, `usage_details`, and `cost_details`.
 - `:event` is a point-in-time observation with no duration.
-- `Langfuse.configure` stores configuration only. Module-level tracing uses Langfuse's internal tracer provider when tracing is ready.
+- `Langfuse.configure` stores configuration only.
+- Module-level tracing uses the internal Langfuse tracer provider when tracing is ready.
+
+## Design the Trace Before Instrumenting It
+
+Use a stable trace data contract for diagnostics, dashboards, evaluations, and experiments:
+
+- Use one trace for each self-contained unit of work.
+- Use a shared `session_id` for a sequence of related traces.
+- Use stable, action-oriented names such as `retrieve-context` and `generate-answer`.
+- Do not put IDs, retry numbers, or model names in observation names.
+- Put the workflow input and final output on the root observation.
+- Use the most specific child type.
+- Use `:generation` for model calls and `:retriever` for retrievals.
+- Use `:tool` for tools and `:agent` for agent executions.
+- Nest tool and generation work under the workflow or agent that owns it.
+- Record model and token usage on generations.
+- Link the managed prompt when you use one.
+- Put request IDs, feature flags, and diagnostic context in metadata.
+- Use tags for stable business dimensions.
+- Set `environment`.
+- Mask sensitive data before export.
+
+Treat names as durable API identifiers.
+If you change a name, saved views, metric queries, and evaluators can stop matching the observation.
 
 ## Start with a Root Observation
 
@@ -27,22 +54,23 @@ result = Langfuse.observe("draft-summary", input: { document_id: document.id }) 
 end
 ```
 
-This pattern does three things:
+The root observation:
 
-- creates the trace entrypoint
-- gives you a place to persist workflow-level output
-- gives child work somewhere correct to hang
+- Creates the trace entry point.
+- Stores workflow-level output.
+- Provides a parent for child work.
 
 ## Nest Generations Inside the Workflow
 
-Use a child generation for the actual model call instead of stuffing everything into one giant root span.
+Use a child generation for the model call.
+Do not put all model data in the root span.
 
 ```ruby
 Langfuse.observe("support-answer", input: { question: question }) do |root|
   prompt = Langfuse.client.get_prompt("support-answer", label: "production")
   messages = prompt.compile(customer_name: user.name, question: question)
 
-  answer = root.start_observation("openai-chat", as_type: :generation) do |gen|
+  answer = root.start_observation("openai-chat", { prompt: prompt }, as_type: :generation) do |gen|
     gen.model = "gpt-4.1-mini"
     gen.input = messages
     gen.model_parameters = { temperature: 0.2 }
@@ -73,7 +101,8 @@ Langfuse.observe("support-answer", input: { question: question }) do |root|
 end
 ```
 
-That shape is better than a flat one-span trace because it keeps workflow state on the root and model-specific state on the generation where Langfuse expects it.
+This shape keeps workflow state on the root observation.
+It keeps model-specific state on the generation observation.
 
 ## Record Events That Actually Persist Payloads
 
@@ -133,11 +162,13 @@ Important boundaries:
 - it also applies to spans created after the propagation block starts
 - it does not retroactively rewrite spans that already ended
 
-If you need cross-service propagation via OpenTelemetry baggage, use `as_baggage: true` and make sure the host app has the baggage gem and its own header propagation pipeline configured.
+For cross-service propagation through OpenTelemetry baggage, use `as_baggage: true`.
+The application must also configure the baggage gem and its header propagation pipeline.
 
 ## Background Jobs and Async Work
 
-ActiveJob or Sidekiq does not magically continue Langfuse trace context across processes. You need to pass something explicit.
+ActiveJob and Sidekiq do not continue Langfuse trace context across processes.
+Pass the required context explicitly.
 
 ### Good Default: Pass the `trace_id`
 
@@ -231,18 +262,20 @@ Use `Langfuse.propagate_attributes` for trace fields that must be available on c
 
 The exporter sends each completed span once. Do not reuse an observation ID to send an update after export.
 
-There are three states. Keep them separate in your head or you will misconfigure this.
+The SDK has three OpenTelemetry ownership states.
+Configure each state explicitly.
 
 ### 1. Default Isolated Langfuse Tracing
 
-This is the default behavior:
+The SDK has this default behavior:
 
-- `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
-- `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
-- `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is configured
-- if tracing config is incomplete, module-level tracing falls back to a no-op tracer and logs one warning
+- `Langfuse.configure` does not change `OpenTelemetry.tracer_provider`.
+- `Langfuse.configure` does not change `OpenTelemetry.propagation`.
+- `Langfuse.observe(...)` uses the internal Langfuse tracer provider after tracing configuration.
+- If tracing configuration is incomplete, module-level tracing uses a no-op tracer.
+- The SDK logs one warning for the incomplete tracing configuration.
 
-This is why ambient spans from some unrelated global OpenTelemetry provider are not exported to Langfuse by default.
+Thus, the SDK does not export ambient spans from an unrelated global OpenTelemetry provider by default.
 
 ### 2. Explicit Global Install with `Langfuse.tracer_provider`
 
@@ -257,32 +290,56 @@ end
 OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 ```
 
-That is an ownership decision, not a free convenience:
+This configuration makes Langfuse the owner of the global provider:
 
-- spans created through the global provider now run through Langfuse's provider
-- `should_export_span` now applies to those spans because Langfuse is actually processing them
-- if you call `Langfuse.shutdown` or `Langfuse.reset!`, you own reinstalling the provider afterward
+- Spans from the global provider now use the Langfuse provider.
+- `should_export_span` applies to the spans that Langfuse processes.
+- After `Langfuse.shutdown` or `Langfuse.reset!`, the application must install the provider again.
 
-If your app also needs W3C propagation or baggage propagation, configure `OpenTelemetry.propagation` yourself. Langfuse does not install that for you.
+If the application needs W3C or baggage propagation, configure `OpenTelemetry.propagation` in the application.
+Langfuse does not install propagation.
 
 ### 3. Additional OpenTelemetry Backends Are Application-Owned
 
 Langfuse does not automatically configure multi-destination OpenTelemetry export.
 
-If you want Langfuse plus another OTel backend, wire that in explicitly in your application:
+To use Langfuse with another OpenTelemetry backend, configure both backends in the application:
 
-- add more processors/exporters to the provider you own
-- or build and manage your own provider pipeline
+- Add more processors or exporters to the application-owned provider.
+- Or, build and manage an application-owned provider pipeline.
 
-What Langfuse will not do for you:
+Langfuse does not:
 
-- replace your app's exporter topology automatically
-- install a second backend by default
-- infer whether you want multi-export just because you called `Langfuse.configure`
+- Replace the application exporter topology automatically.
+- Install a second backend by default.
+- Enable export to multiple backends after a `Langfuse.configure` call.
+
+## Operational Lifecycle
+
+The SDK controls its internal tracing and scoring lifecycle:
+
+- Invalid tracing configuration logs one warning and uses a no-op tracer.
+- `Langfuse.configured?` checks local client readiness without network access.
+- `LANGFUSE_TRACING_ENABLED=false` disables Langfuse tracing and scoring.
+- `OTEL_SDK_DISABLED=true` disables trace export.
+- `OTEL_SDK_DISABLED=true` does not disable score, prompt, or read APIs.
+- A normal process exit flushes pending traces and scores.
+- Queues and background workers reset in child processes from the Ruby `fork` path.
+
+Do not add a second `at_exit` callback.
+Use `Langfuse.shutdown` for an earlier shutdown.
+Use `Langfuse.force_flush` before immediate readback.
+An abrupt termination such as `SIGKILL` cannot flush buffered data.
+
+For tests, inject `config.span_exporter` before tracing starts.
+For batch processor telemetry, provide a fast and thread-safe `config.metrics_reporter`.
+The application controls the reporter lifecycle.
+Langfuse controls the configured exporter lifecycle.
+See [CONFIGURATION.md](CONFIGURATION.md) and [TESTING.md](TESTING.md).
 
 ## Export Filtering
 
-`config.should_export_span` is a filter on spans handled by Langfuse's provider. That is it.
+`config.should_export_span` filters spans that the Langfuse provider processes.
 
 The SDK calls the filter once after each span finishes. The callback can use the span's final attributes.
 
@@ -299,9 +356,11 @@ Langfuse.configure do |config|
 end
 ```
 
-Use it when you want to narrow what Langfuse exports after Langfuse owns the provider path.
+Use the filter to reduce the spans that the Langfuse provider exports.
 
-Do not pretend filtering is the fix for ambient-span overcapture. Isolation is the fix. The default isolated setup already prevents random global spans from leaking into Langfuse.
+Export filtering does not prevent ambient-span overcapture.
+Use provider isolation for this purpose.
+The default isolated configuration does not export unrelated global spans to Langfuse.
 
 Public helper predicates:
 
@@ -316,15 +375,21 @@ The exact signatures live in [API_REFERENCE.md](API_REFERENCE.md).
 ## Best Practices
 
 - Put workflow-level output on the root observation and model-level output on the generation.
-- Capture `usage_details` on every generation you care about.
+- Capture `usage_details` on each applicable generation.
 - Use descriptive observation names tied to real workflow steps.
 - Use `Langfuse.propagate_attributes` early, before you start child observations.
 - Keep `should_export_span` allocation-light and side-effect free.
 - Add scores only after you have a stable trace flow. See [SCORING.md](SCORING.md).
 
+After you instrument a path, execute the path.
+Flush data at the verification boundary.
+Then, fetch the stored observations.
+See [DATA_ACCESS.md](DATA_ACCESS.md) for SDK reads and independent Langfuse CLI verification.
+
 ## Masking
 
-If inputs or outputs contain sensitive data, configure `mask` and let the SDK redact values before serialization:
+If input or output contains sensitive data, configure `mask`.
+The SDK changes the selected values before serialization:
 
 ```ruby
 Langfuse.configure do |config|
@@ -376,7 +441,16 @@ batch unchanged. The hook receives `Langfuse::MaskOtelSpansParams` and returns
 `Langfuse::MaskOtelSpansResult` with typed sparse patches. Errors fail closed:
 the batch, span, or invalid attribute is omitted rather than exported unmasked.
 
-Only the Langfuse export copy is transformed. If you also send telemetry to
-another OpenTelemetry backend, that backend receives the original spans and needs
-its own masking. The two hooks are independent; applications may configure either
-or both. The full contract is in [CONFIGURATION.md](CONFIGURATION.md#mask_otel_spans).
+The SDK changes only the Langfuse export copy.
+Another OpenTelemetry backend receives the original spans.
+Configure separate masking for that backend.
+The two hooks are independent.
+An application can configure one hook or both hooks.
+The full contract is in [CONFIGURATION.md](CONFIGURATION.md#mask_otel_spans).
+
+## See Also
+
+- [DATA_ACCESS.md](DATA_ACCESS.md) — verify traces and query observations or metrics
+- [CONFIGURATION.md](CONFIGURATION.md) — tracing controls, batching, exporters, and masking contracts
+- [SCORING.md](SCORING.md) — attach evaluation and feedback signals
+- [Langfuse trace best practices](https://langfuse.com/docs/observability/best-practices) — platform guidance for trace structure

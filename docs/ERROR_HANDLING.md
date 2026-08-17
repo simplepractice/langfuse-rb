@@ -79,25 +79,20 @@ client.get_prompt("greeting")
 **Solution:**
 
 1. Verify keys in Langfuse UI (Project Settings → API Keys)
-2. Check you're using keys from correct project
+2. Check that you use keys from the correct project
 3. Regenerate keys if compromised
 
-```ruby
-# Debug: Print first few chars of keys
-config = Langfuse.configuration
-puts "Public key: #{config.public_key[0..10]}..."
-puts "Secret key: #{config.secret_key[0..10]}..."
-```
+Do not print, inspect, or log any part of an API key. Compare the configured project and environment-variable names instead. Use a bounded authenticated read to validate the complete credential pair.
 
 ### `Langfuse::NotFoundError`
 
-**Cause:** Requested resource doesn't exist (404 response)
+**Cause:** The requested resource does not exist (404 response)
 
 **Common scenarios:**
 - Prompt name misspelled
 - Prompt not deployed in Langfuse UI
-- Requesting specific version that doesn't exist
-- Label doesn't exist
+- The requested version does not exist
+- The label does not exist
 
 **Example:**
 
@@ -122,7 +117,7 @@ prompt = client.get_prompt(
   fallback: "Hello {{name}}!",
   type: :text
 )
-# If prompt doesn't exist, uses fallback without error
+# If the prompt does not exist, use the fallback without an error
 ```
 
 **Option 3:** Graceful degradation
@@ -257,7 +252,7 @@ The SDK automatically retries certain operations:
 - Max 2 retries (3 total attempts)
 - Same error conditions and backoff
 
-You don't need to implement retries for these operations.
+You do not need to implement retries for these operations.
 
 ### Application-Level Retries
 
@@ -296,8 +291,8 @@ end
 ```
 
 **Don't retry:**
-- `UnauthorizedError` (credentials won't fix themselves)
-- `NotFoundError` (resource doesn't exist)
+- `UnauthorizedError` (a retry does not correct invalid credentials)
+- `NotFoundError` (the resource does not exist)
 - `ConfigurationError` (code issue, not transient)
 
 ## Fallback Patterns
@@ -428,8 +423,12 @@ This logs:
 
 ```ruby
 config = Langfuse.configuration
-puts config.inspect
+puts "Langfuse host: #{config.base_url}"
+puts "Langfuse environment: #{config.environment || 'default'}"
+puts "Langfuse locally configured: #{Langfuse.configured?}"
 ```
+
+Do not call `config.inspect` in logs. The configuration object contains the secret key.
 
 ### Check Cache State
 
@@ -444,11 +443,11 @@ puts "Cache enabled: #{stats[:enabled]}"
 ```ruby
 begin
   prompts = Langfuse.client.list_prompts(limit: 1)
-  puts "✓ Credentials valid, found #{prompts.size} prompt(s)"
+  puts "OK: Credentials are valid. Found #{prompts.size} prompt(s)."
 rescue Langfuse::UnauthorizedError
-  puts "✗ Invalid credentials"
+  puts "ERROR: Credentials are invalid."
 rescue Langfuse::ApiError => e
-  puts "✗ API error: #{e.message}"
+  puts "ERROR: API request failed: #{e.message}"
 end
 ```
 

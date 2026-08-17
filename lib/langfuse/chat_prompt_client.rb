@@ -12,7 +12,7 @@ module Langfuse
   # @example Basic usage
   #   prompt_data = api_client.get_prompt("support_chat")
   #   chat_prompt = Langfuse::ChatPromptClient.new(prompt_data)
-  #   chat_prompt.compile(variables: { user_name: "Alice", issue: "login" })
+  #   chat_prompt.compile(user_name: "Alice", issue: "login")
   #   # => [{ role: "system", content: "You are a support agent..." }, ...]
   #
   # @example Accessing metadata

@@ -4,7 +4,8 @@ Complete guide to managing LLM prompts with Langfuse.
 
 ## Overview
 
-Langfuse centralizes prompt management, allowing you to:
+Langfuse provides central prompt management.
+You can:
 - Version and iterate prompts without code changes
 - A/B test prompt variations
 - Roll back to previous versions
@@ -20,6 +21,7 @@ The SDK supports two prompt types:
 | Method | Description |
 |--------|-------------|
 | `get_prompt(name)` | Fetch a prompt by name |
+| `prompt.variables` | List the template variables a caller must provide |
 | `compile_prompt(name, variables:)` | Fetch and compile in one call |
 | `create_prompt(name:, prompt:, type:)` | Create a new prompt or version |
 | `update_prompt(name:, version:, labels:)` | Update labels on a version |
@@ -45,6 +47,7 @@ prompt.tags       # => ["marketing", "seo"]
 prompt.config     # => { "temperature" => 0.7, "model" => "gpt-4" }
 prompt.prompt     # => "Write a {{tone}} product description for {{product_name}}..."
 prompt.type       # => "text"
+prompt.variables  # => ["tone", "product_name"]
 prompt.commit_message  # => "Improve product tone"
 prompt.resolution_graph # => nil
 prompt.is_fallback # => false
@@ -66,6 +69,40 @@ description = prompt.compile(
 puts description
 # => "Write a professional product description for Wireless Headphones..."
 ```
+
+### Inspecting Required Variables
+
+Call `variables` before compilation to validate a prompt contract.
+You can also use it to generate a form or find an incompatible prompt change:
+
+```ruby
+prompt = client.get_prompt("support-answer", label: "production")
+
+prompt.variables
+# => ["customer.name", "question", "context"]
+```
+
+The method parses the Mustache template.
+It does not use a text search:
+
+- Names stay in the order of their first occurrence.
+- Each duplicate name occurs one time.
+- Dotted names such as `customer.name` do not change.
+- The result includes section and inverted-section names.
+- Variables in a section include the full section scope.
+- The result does not include Mustache comments.
+- The result does not include chat message placeholders.
+- Invalid Mustache syntax raises `Mustache::Parser::SyntaxError`.
+
+For chat prompts, the SDK examines the content in message order.
+It returns one list without duplicate names:
+
+```ruby
+prompt = client.get_prompt("support-chat", label: "production")
+prompt.variables # => ["agent.role", "customer.name", "question"]
+```
+
+The method reports referenced variables. It does not determine whether a Mustache section is optional for a specific call.
 
 ### Using Metadata
 
@@ -475,7 +512,7 @@ message = client.compile_prompt(
 
 ### `list_prompts` - Browse Available Prompts
 
-List all prompts in your project:
+List all prompts in the project:
 
 ```ruby
 prompts = client.list_prompts
@@ -492,7 +529,7 @@ prompts = client.list_prompts(page: 2, limit: 50)
 
 ## Fallback Handling
 
-Provide a fallback template for development or when prompts don't exist:
+Provide a fallback template for development or when a prompt does not exist:
 
 ```ruby
 prompt = client.get_prompt(
@@ -502,7 +539,7 @@ prompt = client.get_prompt(
 )
 
 message = prompt.compile(name: "Bob")
-# If prompt doesn't exist in Langfuse, uses fallback
+# If the prompt does not exist in Langfuse, use the fallback
 ```
 
 **Important:** You must specify `type:` when using `fallback`.
@@ -598,7 +635,7 @@ Langfuse.observe("generate-response", as_type: :generation) do |gen|
     }
   )
 
-  # Record prompt metadata in trace
+  # Record generation data and link the managed prompt version
   gen.model = prompt.config["model"]
   gen.input = messages
   gen.output = response.dig("choices", 0, "message", "content")
@@ -607,17 +644,14 @@ Langfuse.observe("generate-response", as_type: :generation) do |gen|
     completion_tokens: response.dig("usage", "completion_tokens"),
     total_tokens: response.dig("usage", "total_tokens")
   }
-  gen.metadata = {
-    prompt_name: prompt.name,
-    prompt_version: prompt.version,
-    prompt_labels: prompt.labels
-  }
+  gen.update(prompt: prompt)
 
   response
 end
 ```
 
-This creates a trace with full prompt provenance, making it easy to correlate outputs with specific prompt versions.
+The trace contains the prompt version and other provenance data.
+Use this data to correlate outputs with prompt versions.
 
 See [TRACING.md](TRACING.md) for more tracing patterns.
 
@@ -628,3 +662,4 @@ See [TRACING.md](TRACING.md) for more tracing patterns.
 - [CACHING.md](CACHING.md) - Optimizing prompt fetch performance
 - [ERROR_HANDLING.md](ERROR_HANDLING.md) - Handling prompt errors
 - [API_REFERENCE.md](API_REFERENCE.md) - Complete method signatures for all prompt methods
+- [Langfuse prompt variables](https://langfuse.com/docs/prompt-management/features/variables) - Platform variable concepts

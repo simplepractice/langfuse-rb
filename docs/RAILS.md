@@ -1,6 +1,7 @@
 # Rails Integration Guide
 
-This guide assumes you already read [GETTING_STARTED.md](GETTING_STARTED.md). It is for applied Rails patterns, not basic setup repetition.
+Read [GETTING_STARTED.md](GETTING_STARTED.md) before you use this guide.
+This guide contains Rails integration patterns.
 
 ## Initializer Pattern
 
@@ -18,17 +19,15 @@ Langfuse.configure do |config|
   config.cache_stale_ttl = Rails.env.production? ? 300 : 0
   config.logger = Rails.logger
 end
-
-at_exit do
-  Langfuse.shutdown(timeout: 10)
-end
 ```
 
 Notes:
 
 - `Langfuse.configure` stores config only
 - module-level tracing works without replacing the global `OpenTelemetry.tracer_provider`
-- if you do choose a global install with `Langfuse.tracer_provider`, that is a separate explicit step and you own its lifecycle
+- If you install `Langfuse.tracer_provider` globally, the application controls its lifecycle.
+- the SDK flushes pending traces and scores during normal process exit; do not register another `at_exit` hook
+- the SDK resets its queues and background workers in forked Puma, Unicorn, or Resque children
 
 ## Controller Pattern
 
@@ -116,7 +115,7 @@ This keeps the trace shape honest:
 
 ## Background Jobs
 
-Jobs are where people usually lie to themselves about propagation. Rails does not continue Langfuse trace context across processes for you.
+Rails does not continue Langfuse trace context across job processes automatically. Pass the required context explicitly.
 
 ### Enqueue with Explicit Trace Context
 
@@ -165,7 +164,9 @@ class ProcessDocumentJob < ApplicationJob
 end
 ```
 
-Passing `trace_id` is the pragmatic default. It rejoins the same trace, but it does not restore an exact parent span relationship across process boundaries. If you need that, carry and restore OpenTelemetry context yourself.
+Pass `trace_id` to continue the same trace.
+This value does not restore an exact parent span relationship across process boundaries.
+For that relationship, pass and restore OpenTelemetry context in the application.
 
 ## Testing
 
@@ -210,7 +211,7 @@ For SDK integration coverage, prefer the repo's existing WebMock/VCR patterns in
 
 ### Cache Settings
 
-For multi-process Rails deployments, `cache_backend = :rails` is usually the right default if `Rails.cache` is already backed by Redis.
+For a multi-process Rails deployment, use `cache_backend = :rails` when Redis supplies `Rails.cache`.
 
 ```ruby
 Langfuse.configure do |config|
@@ -238,15 +239,15 @@ prompt = Langfuse.client.get_prompt(
 
 ### Global OTel Install
 
-If you install `Langfuse.tracer_provider` as the global provider, remember the lifecycle contract:
+If you install `Langfuse.tracer_provider` as the global provider, apply this lifecycle contract:
 
 - `Langfuse.reset!` tears down the internal provider
 - `Langfuse.shutdown` shuts it down
-- after either one, you must reinstall the provider yourself if the app still expects it globally
+- After either call, install the provider again if the application still requires it globally.
 
 ## Operational Debugging
 
-Turn logging up when you need to see configuration and export behavior:
+Set the log level to `DEBUG` to examine configuration and export behavior:
 
 ```ruby
 Langfuse.configure do |config|
@@ -269,9 +270,9 @@ Langfuse.client.prompt_cache_stats
 The usual problem is stale cache, not a broken prompt API.
 
 1. Wait for `cache_ttl` to expire.
-2. Refresh the specific prompt if you need fresh state now.
+2. Refresh the specific prompt when the application needs the current state.
 3. Invalidate the prompt name or clear the prompt cache namespace.
-4. Lower `cache_ttl` in development if you are iterating quickly.
+4. Lower `cache_ttl` in development when you test prompt changes.
 
 ```ruby
 Langfuse.client.refresh_prompt("greeting", label: "production")
@@ -292,9 +293,12 @@ Langfuse.configuration.base_url.present?
 Then check the ownership assumption:
 
 - `Langfuse.observe(...)` should work once Langfuse is configured
-- third-party ambient OpenTelemetry spans do not go to Langfuse unless you explicitly install `Langfuse.tracer_provider`
+- The SDK does not export third-party ambient OpenTelemetry spans unless you install `Langfuse.tracer_provider`.
 - `should_export_span` only runs for spans handled by Langfuse's provider
 
 ### Unexpected Spans After Global Install
 
-That means you chose the global-provider path and now Langfuse is seeing application-wide spans. That is expected. Narrow the export path with `should_export_span` if needed, but do not confuse that with the isolated default behavior.
+This result occurs when the application installs the Langfuse provider globally.
+In this mode, Langfuse receives application-wide spans.
+Use `should_export_span` to reduce this export set.
+The isolated default mode does not export these spans.

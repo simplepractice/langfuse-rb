@@ -8,18 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Client#list_observations`, `Client#query_metrics`, and `Client#list_scores` expose the current v2 observations and metrics APIs and the v3 scores API.
+- Text and correction score types are available through the score creation and read APIs.
 - `ScoreClient#create!`, `Client#create_score!`, and `Langfuse.create_score!` create scores through the synchronous Scores API, return the created score ID, and raise API errors. The existing `create` methods retain fire-and-forget ingestion batching.
 - `Langfuse.configured?` checks locally whether the global client can be constructed without accessing the network.
 - `Config#metrics_reporter` forwards OpenTelemetry batch span processor metrics to an application-owned reporter without allowing reporter failures to interrupt tracing.
 - `Config#span_exporter` lets applications inject an OpenTelemetry span exporter into Langfuse's existing tracing pipeline.
+- `TextPromptClient#variables` and `ChatPromptClient#variables` expose referenced Mustache variables in source order.
+- `Config#tracing_enabled` and `LANGFUSE_TRACING_ENABLED` provide an application-wide tracing and scoring kill switch.
 
 ### Changed
+- Trace export uses direct Langfuse v4 OTLP ingestion so current observation and metric reads can see new spans without the legacy ingestion delay.
+- `LANGFUSE_TIMEOUT`, `LANGFUSE_FLUSH_AT`, `LANGFUSE_FLUSH_INTERVAL`, and `LANGFUSE_DEBUG` now configure their corresponding defaults.
+- The asynchronous score queue is bounded. Score flushes split batches before a multi-score JSON payload exceeds 2.5 MB.
 - Client construction now rejects invalid `batch_size` and `flush_interval` values before score batching can fail later.
 - Configuration validation now requires `public_key` and `secret_key` to be non-empty Strings and `base_url` to be an absolute HTTP or HTTPS URL.
 - Assigning `nil` to `Config#logger` now selects a null logger so SDK logger calls remain safe.
 - Implicit observations warn once and use a no-op tracer when tracing configuration is invalid. Explicit `Langfuse.tracer_provider` access still raises `ConfigurationError`.
 
 ### Fixed
+- Export-stage masking can transform third-party OpenTelemetry spans while preserving the original span for other exporters.
+- SDK-owned queues and workers reset after Ruby `fork` so parent work is not duplicated in child processes.
+- Pending spans and scores flush once during normal process exit.
 - Score creation now uses the configured client environment when a score does not provide an environment override.
 - Configuration validation now reports invalid numeric types, stale cache settings, and tracing callables as `ConfigurationError`.
 - Tracing validates batching and sampling settings before it creates an OpenTelemetry span processor.

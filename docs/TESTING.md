@@ -9,6 +9,8 @@ send trace data over HTTP.
 
 Create one exporter for the test process. Configure it before tracing starts.
 Dummy API keys are still required because tracing validates all connection settings.
+Ensure the test process does not inherit `LANGFUSE_TRACING_ENABLED=false` or
+`OTEL_SDK_DISABLED=true`; either setting prevents the exporter from receiving spans.
 
 ```ruby
 # spec/support/langfuse.rb
