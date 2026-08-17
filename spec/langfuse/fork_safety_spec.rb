@@ -2,7 +2,7 @@
 
 RSpec.describe Langfuse::ForkSafety do
   describe ".register" do
-    it "runs the registered reset once in a forked child" do
+    it "runs the registered reset once after each fork" do
       skip "fork is not available" unless Process.respond_to?(:fork)
 
       resource_class = Class.new do
@@ -21,12 +21,16 @@ RSpec.describe Langfuse::ForkSafety do
       end
       resource = resource_class.new
       described_class.register(resource)
-      child_pid, status, child_state = capture_forked_state do
-        { pid: resource.reset_pid, count: resource.reset_count }
+
+      2.times do
+        child_pid, status, child_state = capture_forked_state do
+          { pid: resource.reset_pid, count: resource.reset_count }
+        end
+
+        expect(status).to be_success
+        expect(child_state).to eq(pid: child_pid, count: 1)
       end
 
-      expect(status).to be_success
-      expect(child_state).to eq(pid: child_pid, count: 1)
       expect(resource.reset_count).to eq(0)
     end
 
