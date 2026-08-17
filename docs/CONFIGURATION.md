@@ -309,7 +309,7 @@ end
 
 Explicit Ruby configuration overrides `LANGFUSE_TRACING_ENABLED`. The environment variable accepts `true` or `false` without case sensitivity. `OTEL_SDK_DISABLED=true` disables OpenTelemetry trace export. Direct score ingestion remains available.
 
-When `tracing_enabled` is false, trace and score calls are no-ops. They do not require Langfuse credentials and do not create network requests. Prompt and data API calls still validate the normal client configuration when used. Synchronous `create_score!` returns `nil` while telemetry is disabled. Changes to `tracing_enabled` apply to the initialized SDK. Environment variables are read when configuration is created.
+When `tracing_enabled` is false, trace and score calls are no-ops. They do not require Langfuse credentials and do not create network requests. Buffered spans are discarded instead of exported while the setting is false. Prompt and data API calls still validate the normal client configuration when used. Synchronous `create_score!` returns `nil` while telemetry is disabled. Changes to `tracing_enabled` apply to the initialized SDK. Environment variables are read when configuration is created.
 
 #### `logger`
 

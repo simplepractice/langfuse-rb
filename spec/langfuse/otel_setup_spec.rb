@@ -305,6 +305,27 @@ RSpec.describe Langfuse::OtelSetup do
       expect(exporter.finished_spans.map(&:name)).to eq(["langfuse-span"])
     end
 
+    it "drops buffered spans when telemetry is disabled before export" do
+      Langfuse.observe("before-disable").end
+
+      Langfuse.configure { |c| c.tracing_enabled = false }
+      Langfuse.force_flush(timeout: 1)
+
+      expect(exporter.finished_spans).to be_empty
+    end
+
+    it "exports new spans after telemetry is re-enabled" do
+      Langfuse.observe("before-disable").end
+      Langfuse.configure { |c| c.tracing_enabled = false }
+      Langfuse.force_flush(timeout: 1)
+
+      Langfuse.configure { |c| c.tracing_enabled = true }
+      Langfuse.observe("after-enable").end
+      Langfuse.force_flush(timeout: 1)
+
+      expect(exporter.finished_spans.map(&:name)).to eq(["after-enable"])
+    end
+
     it "exports each completed observation once" do
       Langfuse.observe("root") do |root|
         root.start_observation("generation", as_type: :generation) { |generation| generation.update(output: "ok") }

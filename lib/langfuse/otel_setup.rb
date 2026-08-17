@@ -4,6 +4,7 @@ require "opentelemetry/sdk"
 require "opentelemetry/exporter/otlp"
 require "base64"
 require_relative "masking_exporter"
+require_relative "trace_export_guard"
 
 module Langfuse
   # OpenTelemetry initialization and setup for Langfuse tracing.
@@ -115,7 +116,10 @@ module Langfuse
           sampler: build_sampler(config.sample_rate)
         )
         provider.add_span_processor(
-          SpanProcessor.new(config: config, exporter: build_exporter(config))
+          SpanProcessor.new(
+            config: config,
+            exporter: TraceExportGuard.new(delegate: build_exporter(config), config: config)
+          )
         )
         provider
       end
