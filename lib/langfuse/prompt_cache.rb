@@ -290,7 +290,6 @@ module Langfuse
     def reset_after_fork
       @monitor = Monitor.new
       @locks = {}
-      reset_swr_after_fork
     end
 
     # Implementation of StaleWhileRevalidate abstract methods

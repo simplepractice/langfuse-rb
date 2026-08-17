@@ -51,8 +51,6 @@ module Langfuse
     # @param refresh_threads [Integer] Number of background refresh threads (default: 5)
     # @return [void]
     def initialize_swr(refresh_threads: 5)
-      @swr_refresh_threads = refresh_threads
-      @swr_shutdown = false
       @thread_pool = initialize_thread_pool(refresh_threads)
     end
 
@@ -145,23 +143,13 @@ module Langfuse
     #
     # @return [void]
     def shutdown
-      @swr_shutdown = true
-      thread_pool = @thread_pool
-      @thread_pool = nil
-      return unless thread_pool
+      return unless @thread_pool
 
-      thread_pool.shutdown
-      thread_pool.wait_for_termination(5) # Wait up to 5 seconds
+      @thread_pool.shutdown
+      @thread_pool.wait_for_termination(5) # Wait up to 5 seconds
     end
 
     private
-
-    def reset_swr_after_fork
-      @thread_pool = nil
-      return if @swr_shutdown || !@swr_refresh_threads
-
-      @thread_pool = initialize_thread_pool(@swr_refresh_threads)
-    end
 
     # Initialize thread pool for background refresh operations
     #
@@ -186,13 +174,12 @@ module Langfuse
     # @param key [String] Cache key
     # @yield Block to execute to fetch fresh data
     # @return [void]
-    # rubocop:disable Naming/PredicateMethod
     def schedule_refresh(key, ttl: nil, stale_ttl: nil, on_success: nil, on_failure: nil, &block)
       # Prevent duplicate refreshes
       lock_key = build_lock_key(key)
       return false unless acquire_lock(lock_key)
 
-      @thread_pool.post do
+      scheduled = @thread_pool.post do
         value = block.call
         set_cache_entry(key, value, ttl: ttl, stale_ttl: stale_ttl)
         on_success&.call(value)
@@ -203,9 +190,9 @@ module Langfuse
         release_lock(lock_key)
       end
 
-      true
+      release_lock(lock_key) unless scheduled
+      scheduled
     end
-    # rubocop:enable Naming/PredicateMethod
 
     # Fetch data and cache it with SWR metadata
     #

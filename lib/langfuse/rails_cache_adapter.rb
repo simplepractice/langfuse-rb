@@ -263,7 +263,6 @@ module Langfuse
     def reset_after_fork
       @generation_memo = {}
       @generation_memo_mutex = Mutex.new
-      reset_swr_after_fork
     end
 
     # Implementation of StaleWhileRevalidate abstract methods

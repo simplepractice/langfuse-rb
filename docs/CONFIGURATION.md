@@ -705,7 +705,7 @@ See [CACHING.md](CACHING.md) for performance comparison.
 The SDK restores its background state after `fork` on Ruby 3.2 and later. This applies to Puma cluster workers, Unicorn workers, Resque workers, and other processes created through Ruby's standard fork path.
 
 - The child receives a new score queue and flush timer.
-- The child receives new prompt-cache synchronization objects and stale-while-revalidate worker pools.
+- The child receives new prompt-cache synchronization objects. `concurrent-ruby` resets stale-while-revalidate worker state on the first child submission.
 - Scores queued before the fork remain owned by the parent. The child discards its copied queue to prevent duplicate ingestion.
 - In-memory prompt values remain available in the child. Rails cache data remains owned by the configured Rails cache store.
 - OpenTelemetry's batch span processor performs its own process-ID reset for trace export.

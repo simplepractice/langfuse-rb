@@ -1157,16 +1157,12 @@ RSpec.describe Langfuse::RailsCacheAdapter do
       skip "fork is not available" unless Process.respond_to?(:fork)
 
       adapter = described_class.new(ttl: 60, stale_ttl: 120, refresh_threads: 1)
-      parent_pool = adapter.thread_pool
       parent_mutex = adapter.instance_variable_get(:@generation_memo_mutex)
       adapter.instance_variable_get(:@generation_memo)["prompt"] = { value: 1 }
 
       _child_pid, status, child_state = capture_forked_state do
-        child_pool = adapter.thread_pool
         child_mutex = adapter.instance_variable_get(:@generation_memo_mutex)
         {
-          pool_replaced: !child_pool.equal?(parent_pool),
-          pool_running: child_pool.running?,
           mutex_replaced: !child_mutex.equal?(parent_mutex),
           generation_memo: adapter.instance_variable_get(:@generation_memo)
         }
@@ -1174,12 +1170,9 @@ RSpec.describe Langfuse::RailsCacheAdapter do
 
       expect(status).to be_success
       expect(child_state).to eq(
-        pool_replaced: true,
-        pool_running: true,
         mutex_replaced: true,
         generation_memo: {}
       )
-      expect(adapter.thread_pool).to equal(parent_pool)
       expect(adapter.instance_variable_get(:@generation_memo_mutex)).to equal(parent_mutex)
       expect(adapter.instance_variable_get(:@generation_memo)).to eq("prompt" => { value: 1 })
     ensure
