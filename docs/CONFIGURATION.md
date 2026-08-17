@@ -598,6 +598,10 @@ The SDK automatically reads these environment variables as defaults when no expl
 - `LANGFUSE_PUBLIC_KEY` — public API key
 - `LANGFUSE_SECRET_KEY` — secret API key
 - `LANGFUSE_BASE_URL` — API endpoint (defaults to `https://cloud.langfuse.com`)
+- `LANGFUSE_TIMEOUT` — HTTP request timeout in seconds (defaults to `5`)
+- `LANGFUSE_FLUSH_AT` — maximum score and trace batch size (defaults to `50`)
+- `LANGFUSE_FLUSH_INTERVAL` — maximum batch wait in seconds (defaults to `10`)
+- `LANGFUSE_DEBUG` — set to `true` to use the `DEBUG` logger level
 - `LANGFUSE_TRACING_ENVIRONMENT` — default trace environment
 - `LANGFUSE_RELEASE` — default release identifier (falls back to common CI commit envs if present)
 - `LANGFUSE_SAMPLE_RATE` — trace sampling rate (`0.0..1.0`, defaults to `1.0`)
@@ -618,6 +622,10 @@ end
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_BASE_URL=https://cloud.langfuse.com  # Optional
+LANGFUSE_TIMEOUT=10                           # Optional
+LANGFUSE_FLUSH_AT=100                         # Optional
+LANGFUSE_FLUSH_INTERVAL=5                     # Optional
+LANGFUSE_DEBUG=true                           # Optional
 LANGFUSE_SAMPLE_RATE=0.25                     # Optional
 ```
 

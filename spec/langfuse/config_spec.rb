@@ -24,6 +24,10 @@ RSpec.describe Langfuse::Config do
       ENV["LANGFUSE_TRACING_ENVIRONMENT"] = "staging"
       ENV["LANGFUSE_RELEASE"] = "release-123"
       ENV["LANGFUSE_SAMPLE_RATE"] = "0.25"
+      ENV["LANGFUSE_TIMEOUT"] = "9"
+      ENV["LANGFUSE_FLUSH_AT"] = "25"
+      ENV["LANGFUSE_FLUSH_INTERVAL"] = "1.5"
+      ENV["LANGFUSE_DEBUG"] = "true"
 
       config = described_class.new
 
@@ -33,6 +37,10 @@ RSpec.describe Langfuse::Config do
       expect(config.environment).to eq("staging")
       expect(config.release).to eq("release-123")
       expect(config.sample_rate).to eq(0.25)
+      expect(config.timeout).to eq(9)
+      expect(config.batch_size).to eq(25)
+      expect(config.flush_interval).to eq(1.5)
+      expect(config.logger.level).to eq(Logger::DEBUG)
     ensure
       ENV.delete("LANGFUSE_PUBLIC_KEY")
       ENV.delete("LANGFUSE_SECRET_KEY")
@@ -40,6 +48,52 @@ RSpec.describe Langfuse::Config do
       ENV.delete("LANGFUSE_TRACING_ENVIRONMENT")
       ENV.delete("LANGFUSE_RELEASE")
       ENV.delete("LANGFUSE_SAMPLE_RATE")
+      ENV.delete("LANGFUSE_TIMEOUT")
+      ENV.delete("LANGFUSE_FLUSH_AT")
+      ENV.delete("LANGFUSE_FLUSH_INTERVAL")
+      ENV.delete("LANGFUSE_DEBUG")
+    end
+
+    it "prefers explicit batching, timeout, and logger settings over environment variables" do
+      ENV["LANGFUSE_TIMEOUT"] = "9"
+      ENV["LANGFUSE_FLUSH_AT"] = "25"
+      ENV["LANGFUSE_FLUSH_INTERVAL"] = "1.5"
+      ENV["LANGFUSE_DEBUG"] = "true"
+
+      config = described_class.new do |candidate|
+        candidate.timeout = 12
+        candidate.batch_size = 30
+        candidate.flush_interval = 2
+        candidate.logger.level = Logger::ERROR
+      end
+
+      expect(config.timeout).to eq(12)
+      expect(config.batch_size).to eq(30)
+      expect(config.flush_interval).to eq(2)
+      expect(config.logger.level).to eq(Logger::ERROR)
+    ensure
+      ENV.delete("LANGFUSE_TIMEOUT")
+      ENV.delete("LANGFUSE_FLUSH_AT")
+      ENV.delete("LANGFUSE_FLUSH_INTERVAL")
+      ENV.delete("LANGFUSE_DEBUG")
+    end
+
+    it "raises ConfigurationError for non-numeric batching and timeout environment values" do
+      invalid_values = {
+        "LANGFUSE_TIMEOUT" => "slow",
+        "LANGFUSE_FLUSH_AT" => "many",
+        "LANGFUSE_FLUSH_INTERVAL" => "often"
+      }
+
+      invalid_values.each do |key, value|
+        ENV[key] = value
+
+        expect { described_class.new }.to raise_error(Langfuse::ConfigurationError, /#{key}/)
+
+        ENV.delete(key)
+      end
+    ensure
+      invalid_values&.each_key { |key| ENV.delete(key) }
     end
 
     it "raises ConfigurationError for invalid LANGFUSE_SAMPLE_RATE" do
