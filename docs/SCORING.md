@@ -184,6 +184,21 @@ Langfuse.create_score(
 )
 ```
 
+### Behavior When Langfuse Is Not Configured
+
+`Langfuse.create_score`, `Langfuse.score_active_observation`, `Langfuse.score_active_trace`, and `observation.score_trace` drop the score and return `nil` when credentials are missing. They log one warning per process rather than one per call. This mirrors how `Langfuse.observe` falls back to a no-op tracer, so the same application code runs unchanged in environments without Langfuse configured — no guard required:
+
+```ruby
+# Safe in every environment, configured or not
+Langfuse.observe("generate-summary") do |gen|
+  summary = generate_summary(document)
+  Langfuse.score_active_observation(name: "quality", value: 0.88)
+  summary
+end
+```
+
+`Langfuse.create_score!` still raises `ConfigurationError`, so use it when a missing configuration should be treated as an error. Invalid arguments raise `ArgumentError` from both variants regardless of configuration.
+
 ### Scoring Active Observations
 
 Score the currently active observation (from OpenTelemetry context):

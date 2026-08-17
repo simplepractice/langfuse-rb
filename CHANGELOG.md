@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Langfuse.auth_check`, `Langfuse.auth_check!`, `Client#auth_check`, and `Client#auth_check!` check credentials through the projects API. The non-bang methods return `false` for every failure, including network errors, so use the bang methods to tell failures apart.
 
 ### Changed
+- `Langfuse.create_score`, `Langfuse.score_active_observation`, `Langfuse.score_active_trace`, and `observation.score_trace` now drop the score and return `nil` when Langfuse is unconfigured, warning once per process instead of raising `ConfigurationError`. Tracing already degraded to a no-op, so unguarded application code now behaves the same on the scoring path. `Langfuse.create_score!` still raises.
 - Client construction now rejects invalid `batch_size` and `flush_interval` values before score batching can fail later.
 - Configuration validation now requires `public_key`, `secret_key`, and `base_url` to be non-empty Strings. Present values with another type raise a specific type error.
 - Assigning `nil` to `Config#logger` now selects a null logger so SDK logger calls remain safe.

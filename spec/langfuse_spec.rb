@@ -173,6 +173,66 @@ RSpec.describe Langfuse do
     end
   end
 
+  describe "scoring while unconfigured" do
+    before { described_class.reset! }
+
+    it "drops scores instead of raising so unguarded code keeps working" do
+      expect { described_class.create_score(name: "quality", value: 1.0, trace_id: "abc") }.not_to raise_error
+      expect(described_class.create_score(name: "quality", value: 1.0, trace_id: "abc")).to be_nil
+      expect(a_request(:any, /.*/)).not_to have_been_made
+    end
+
+    it "drops active-span scores raised from inside an observation" do
+      expect do
+        described_class.observe("op") do |obs|
+          described_class.score_active_observation(name: "accuracy", value: 0.9)
+          described_class.score_active_trace(name: "overall", value: 1.0)
+          obs.score_trace(name: "trace-level", value: 1.0)
+        end
+      end.not_to raise_error
+    end
+
+    it "warns once no matter how many scores are dropped" do
+      logger = RSpec.configuration.test_logger
+      allow(logger).to receive(:warn)
+
+      3.times { described_class.create_score(name: "quality", value: 1.0, trace_id: "abc") }
+
+      expect(logger).to have_received(:warn).with(/Langfuse scoring is disabled/).once
+    end
+
+    it "still raises from create_score! so callers can detect the failure" do
+      expect do
+        described_class.create_score!(name: "quality", value: 1.0, trace_id: "abc")
+      end.to raise_error(Langfuse::ConfigurationError)
+    end
+
+    # Argument errors must not depend on whether the environment happens to have
+    # credentials, or a typo would only surface in production.
+    it "still raises ArgumentError for invalid arguments while dropping the score" do
+      expect do
+        described_class.create_score(name: "quality", value: "text", data_type: :numeric, trace_id: "abc")
+      end.to raise_error(ArgumentError)
+
+      expect { described_class.create_score(name: "", value: 1.0, trace_id: "abc") }
+        .to raise_error(ArgumentError, /name is required/)
+
+      expect { described_class.score_active_observation(name: "q", value: "text", data_type: :numeric) }
+        .to raise_error(ArgumentError)
+    end
+
+    it "raises the same ArgumentError once configured" do
+      described_class.configure do |config|
+        config.public_key = "pk_test"
+        config.secret_key = "sk_test"
+      end
+
+      expect do
+        described_class.create_score(name: "quality", value: "text", data_type: :numeric, trace_id: "abc")
+      end.to raise_error(ArgumentError)
+    end
+  end
+
   describe ".tracer_provider" do
     it "raises when tracing is not ready" do
       described_class.reset!
