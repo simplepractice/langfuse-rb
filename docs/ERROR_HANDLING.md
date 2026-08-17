@@ -48,10 +48,12 @@ end
 ```
 
 **Validation checklist:**
-- `public_key` present and starts with `pk-lf-`
-- `secret_key` present and starts with `sk-lf-`
+- `public_key` and `secret_key` are non-empty Strings
+- `base_url` is an absolute HTTP or HTTPS URL
+- `batch_size` is a positive Integer
+- `flush_interval` and other numeric settings are in their documented ranges
 - `cache_backend` is `:memory`, `:rails`, or `:auto`
-- If `:rails` is selected, or `:auto` resolves to `:rails`, Rails and `Rails.cache` are available
+- If `:rails` is selected while caching is enabled, Rails and `Rails.cache` are available
 
 ### `Langfuse::UnauthorizedError`
 

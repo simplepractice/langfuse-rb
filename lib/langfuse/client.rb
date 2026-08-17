@@ -845,7 +845,7 @@ module Langfuse
     end
 
     def rails_cache_available?
-      defined?(Rails) && Rails.respond_to?(:cache) && Rails.cache
+      RailsCacheAdapter.available?
     end
 
     # Create in-memory cache with SWR support if enabled

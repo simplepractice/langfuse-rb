@@ -117,6 +117,87 @@ RSpec.describe Langfuse::Config do
       config = described_class.new
       expect(config.logger).to be_a(Logger)
     end
+
+    it "uses a null logger when the configured logger is nil" do
+      config = described_class.new { |c| c.logger = nil }
+
+      expect(config.logger).to be_a(Logger)
+      expect { config.logger.warn("not emitted") }.not_to raise_error
+    end
+
+    it "gives each config its own null logger so mutations stay local" do
+      config = described_class.new { |c| c.logger = nil }
+      other = described_class.new { |c| c.logger = nil }
+      original_level = other.logger.level
+
+      config.logger.level = original_level + 1
+
+      expect(other.logger).not_to equal(config.logger)
+      expect(other.logger.level).to eq(original_level)
+    end
+
+    it "uses the default logger when Rails.logger is nil" do
+      rails_class = Class.new do
+        def self.logger = nil
+      end
+      stub_const("Rails", rails_class)
+
+      expect(described_class.new.logger).to be_a(Logger)
+    end
+  end
+
+  describe "#valid?" do
+    let(:config) do
+      described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+      end
+    end
+
+    it "returns true for configuration that can construct a client" do
+      expect(config.valid?).to be true
+    end
+
+    it "returns false instead of raising for invalid configuration" do
+      config.batch_size = "invalid"
+
+      expect(config.valid?).to be false
+    end
+
+    it "returns false when a custom logger does not satisfy the logger contract" do
+      config.logger = Object.new
+
+      expect(config.valid?).to be false
+    end
+
+    it "returns false instead of raising for non-finite or unordered numeric settings" do
+      invalid_values = [Complex(1, 1), Float::NAN, Float::INFINITY]
+      numeric_settings = %i[
+        timeout
+        cache_ttl
+        cache_max_size
+        cache_lock_timeout
+        cache_stale_ttl
+        cache_refresh_threads
+        flush_interval
+      ]
+
+      numeric_settings.product(invalid_values).each do |setting, value|
+        candidate = config.dup
+        candidate.public_send("#{setting}=", value)
+
+        expect(candidate.valid?).to be(false), "expected #{setting}=#{value.inspect} to be invalid"
+      end
+    end
+
+    it "does not include tracing-only callbacks in client readiness" do
+      config.should_export_span = "not callable"
+      config.mask = "not callable"
+      config.mask_otel_spans = "not callable"
+
+      expect(config.valid?).to be true
+      expect { Langfuse::Client.new(config) }.not_to raise_error
+    end
   end
 
   describe "#validate!" do
@@ -209,22 +290,72 @@ RSpec.describe Langfuse::Config do
           "timeout must be positive"
         )
       end
-    end
 
-    context "when should_export_span is invalid" do
-      it "raises ConfigurationError when it does not respond to #call" do
-        config.should_export_span = "not callable"
+      it "raises ConfigurationError when the value is a String" do
+        config.timeout = "5"
 
         expect { config.validate! }.to raise_error(
           Langfuse::ConfigurationError,
-          "should_export_span must respond to #call"
+          "timeout must be positive"
+        )
+      end
+    end
+
+    context "when connection settings have invalid types" do
+      it "reports a present non-string public key as a type error" do
+        config.public_key = 123
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "public_key must be a String"
         )
       end
 
-      it "accepts callables" do
-        config.should_export_span = ->(_span) { true }
+      # Credentials are interpolated into the Basic Auth header, so a #to_str-only
+      # value would authenticate with its #to_s output rather than the key.
+      it "rejects a public key that only responds to #to_str" do
+        string_like_key = Object.new
+        def string_like_key.to_str = "pk_test"
 
-        expect { config.validate! }.not_to raise_error
+        config.public_key = string_like_key
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "public_key must be a String"
+        )
+      end
+    end
+
+    context "when base_url is malformed" do
+      ["not-a-url", "://bad", "ftp://langfuse.example.com", "https://"].each do |base_url|
+        it "rejects #{base_url.inspect}" do
+          config.base_url = base_url
+
+          expect { config.validate! }.to raise_error(
+            Langfuse::ConfigurationError,
+            "base_url must be an absolute HTTP or HTTPS URL"
+          )
+        end
+      end
+    end
+
+    context "when batching settings are invalid" do
+      it "raises ConfigurationError when batch_size is a String" do
+        config.batch_size = "50"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "batch_size must be a positive Integer"
+        )
+      end
+
+      it "raises ConfigurationError when flush_interval is nil" do
+        config.flush_interval = nil
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "flush_interval must be positive"
+        )
       end
     end
 
@@ -253,6 +384,15 @@ RSpec.describe Langfuse::Config do
       it "allows positive values" do
         config.cache_ttl = 300
         expect { config.validate! }.not_to raise_error
+      end
+
+      it "raises ConfigurationError when the value is a Symbol" do
+        config.cache_ttl = :sixty
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_ttl must be non-negative"
+        )
       end
     end
 
@@ -296,9 +436,23 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.not_to raise_error
       end
 
-      it "allows :rails backend" do
+      it "allows :rails backend when Rails.cache is available" do
+        rails_class = Class.new do
+          def self.cache = Object.new
+        end
+        stub_const("Rails", rails_class)
         config.cache_backend = :rails
+
         expect { config.validate! }.not_to raise_error
+      end
+
+      it "rejects :rails backend when Rails.cache is unavailable" do
+        config.cache_backend = :rails
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          /Rails\.cache is not available/
+        )
       end
 
       it "allows :auto backend" do
@@ -339,6 +493,13 @@ RSpec.describe Langfuse::Config do
 
       it "raises ConfigurationError when non-numeric" do
         expect { config.sample_rate = "abc" }.to raise_error(
+          Langfuse::ConfigurationError,
+          "sample_rate must be numeric"
+        )
+      end
+
+      it "raises ConfigurationError when the value is a complex number" do
+        expect { config.sample_rate = Complex(1, 1) }.to raise_error(
           Langfuse::ConfigurationError,
           "sample_rate must be numeric"
         )
@@ -386,6 +547,15 @@ RSpec.describe Langfuse::Config do
         config.cache_stale_ttl = :indefinite
         expect { config.validate! }.not_to raise_error
       end
+
+      it "raises ConfigurationError when the value is a String" do
+        config.cache_stale_ttl = "300"
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_stale_ttl must be non-negative or :indefinite"
+        )
+      end
     end
 
     context "when cache_refresh_threads is invalid" do
@@ -417,6 +587,15 @@ RSpec.describe Langfuse::Config do
         config.cache_refresh_threads = 5
         expect { config.validate! }.not_to raise_error
       end
+
+      it "raises ConfigurationError when the value is a Symbol" do
+        config.cache_refresh_threads = :many
+
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "cache_refresh_threads must be positive"
+        )
+      end
     end
 
     context "when validating stale-while-revalidate with cache backend" do
@@ -429,8 +608,8 @@ RSpec.describe Langfuse::Config do
         )
       end
 
-      it "allows SWR with Rails cache backend" do
-        config.cache_backend = :rails
+      it "allows SWR with auto cache backend" do
+        config.cache_backend = :auto
         config.cache_stale_while_revalidate = true
         expect { config.validate! }.not_to raise_error
       end
@@ -441,8 +620,8 @@ RSpec.describe Langfuse::Config do
         expect { config.validate! }.not_to raise_error
       end
 
-      it "allows SWR disabled with Rails cache backend" do
-        config.cache_backend = :rails
+      it "allows SWR disabled with auto cache backend" do
+        config.cache_backend = :auto
         config.cache_stale_while_revalidate = false
         expect { config.validate! }.not_to raise_error
       end
@@ -452,6 +631,66 @@ RSpec.describe Langfuse::Config do
         config.cache_stale_while_revalidate = false
         expect { config.validate! }.not_to raise_error
       end
+    end
+  end
+
+  describe "#validate_tracing!" do
+    let(:config) do
+      described_class.new do |c|
+        c.public_key = "pk_test"
+        c.secret_key = "sk_test"
+      end
+    end
+
+    it "does not validate client-only cache settings" do
+      config.cache_backend = :unknown
+
+      expect { config.validate_tracing! }.not_to raise_error
+    end
+
+    it "validates shared batching settings" do
+      config.batch_size = nil
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "batch_size must be a positive Integer"
+      )
+    end
+
+    it "validates export-stage masking" do
+      config.mask_otel_spans = "not callable"
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask_otel_spans must respond to #call"
+      )
+    end
+
+    it "validates creation-time masking" do
+      config.mask = "not callable"
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask must respond to #call"
+      )
+    end
+
+    it "validates the export filter" do
+      config.should_export_span = "not callable"
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "should_export_span must respond to #call"
+      )
+    end
+
+    it "validates the logger contract" do
+      config.logger = Object.new
+
+      expect { config.validate_tracing! }.to raise_error(
+        Langfuse::ConfigurationError,
+        "logger must respond to #debug, #info, #warn, #error"
+      )
     end
   end
 
@@ -560,24 +799,24 @@ RSpec.describe Langfuse::Config do
 
     it "passes validation when mask is nil" do
       config.mask = nil
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "passes validation when mask responds to #call" do
       config.mask = ->(data:) { data }
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "passes validation with a method object" do
       obj = Object.new
       def obj.call(data:) = data
       config.mask = obj
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "fails validation when mask does not respond to #call" do
       config.mask = "not_callable"
-      expect { config.validate! }.to raise_error(
+      expect { config.validate_tracing! }.to raise_error(
         Langfuse::ConfigurationError,
         "mask must respond to #call"
       )
@@ -585,7 +824,7 @@ RSpec.describe Langfuse::Config do
 
     it "fails validation when mask is a non-callable object" do
       config.mask = 42
-      expect { config.validate! }.to raise_error(
+      expect { config.validate_tracing! }.to raise_error(
         Langfuse::ConfigurationError,
         "mask must respond to #call"
       )
@@ -606,17 +845,17 @@ RSpec.describe Langfuse::Config do
 
     it "passes validation when mask_otel_spans is nil" do
       config.mask_otel_spans = nil
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "passes validation when mask_otel_spans responds to #call" do
       config.mask_otel_spans = ->(params:) { params and nil }
-      expect { config.validate! }.not_to raise_error
+      expect { config.validate_tracing! }.not_to raise_error
     end
 
     it "fails validation when mask_otel_spans does not respond to #call" do
       config.mask_otel_spans = "not_callable"
-      expect { config.validate! }.to raise_error(
+      expect { config.validate_tracing! }.to raise_error(
         Langfuse::ConfigurationError,
         "mask_otel_spans must respond to #call"
       )
@@ -624,6 +863,13 @@ RSpec.describe Langfuse::Config do
   end
 
   describe "stale-while-revalidate integration" do
+    before do
+      rails_class = Class.new do
+        def self.cache = Object.new
+      end
+      stub_const("Rails", rails_class)
+    end
+
     it "works with all configuration options together" do
       config = described_class.new do |c|
         c.public_key = "pk_test"

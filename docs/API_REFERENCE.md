@@ -112,6 +112,18 @@ RSpec.configure do |config|
 end
 ```
 
+### `Langfuse.configured?`
+
+Check whether the local configuration can construct `Langfuse.client`.
+
+```ruby
+Langfuse.configured? # => true or false
+```
+
+This method does not access the network. A `true` result does not prove that credentials are valid or that trace export works.
+
+Tracing does not require this guard. `Langfuse.observe` warns once and uses a no-op tracer when tracing configuration is invalid, so application code can use the same observation wrapper in every environment.
+
 ### `Langfuse.tracer_provider`
 
 Return Langfuse's internal tracer provider so you can explicitly install it as the global OpenTelemetry provider.

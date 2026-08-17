@@ -3,7 +3,7 @@
 require "spec_helper"
 
 RSpec.describe Langfuse::OtelSetup do
-  let(:logger) { instance_double(Logger, info: nil, debug: nil, warn: nil) }
+  let(:logger) { instance_double(Logger, info: nil, debug: nil, warn: nil, error: nil) }
   let(:exporter) { OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new }
   let(:config) do
     Langfuse::Config.new do |c|
@@ -85,6 +85,26 @@ RSpec.describe Langfuse::OtelSetup do
       expect { described_class.setup(config) }.to raise_error(
         Langfuse::ConfigurationError,
         "should_export_span must respond to #call"
+      )
+    end
+
+    it "rejects invalid batch_size before building the span processor" do
+      config.batch_size = "abc"
+      Langfuse.configuration = config
+
+      expect(described_class).not_to receive(:build_tracer_provider)
+      expect { Langfuse.tracer_provider }.to raise_error(
+        Langfuse::ConfigurationError,
+        /batch_size/
+      )
+    end
+
+    it "validates mask_otel_spans in setup" do
+      config.mask_otel_spans = "bad"
+
+      expect { described_class.setup(config) }.to raise_error(
+        Langfuse::ConfigurationError,
+        "mask_otel_spans must respond to #call"
       )
     end
 

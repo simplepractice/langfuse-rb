@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "logger"
+require "uri"
 
 module Langfuse
   # Configuration object for Langfuse client
@@ -33,7 +34,7 @@ module Langfuse
     attr_accessor :timeout
 
     # @return [Logger] Logger instance for debugging
-    attr_accessor :logger
+    attr_reader :logger
 
     # @return [Integer] Cache TTL in seconds
     attr_accessor :cache_ttl
@@ -144,6 +145,9 @@ module Langfuse
     # @return [Float] Default trace sampling rate (sample all traces)
     DEFAULT_SAMPLE_RATE = 1.0
 
+    # @return [Array<Symbol>] Methods required from a custom logger
+    LOGGER_METHODS = %i[debug info warn error].freeze
+
     # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
 
@@ -184,39 +188,58 @@ module Langfuse
       @flush_interval = DEFAULT_FLUSH_INTERVAL
       @job_queue = DEFAULT_JOB_QUEUE
       initialize_tracing_defaults
-      @logger = default_logger
+      self.logger = default_logger
 
       yield(self) if block_given?
+    end
+
+    # Set the logger. A nil value disables output while preserving the logger contract.
+    #
+    # @param value [Logger, nil] Logger instance, or nil to disable logging
+    # @return [Logger] The normalized logger
+    def logger=(value)
+      @logger = value || Logger.new(IO::NULL)
     end
 
     # Validate the configuration
     #
     # @raise [ConfigurationError] if configuration is invalid
     # @return [void]
-    # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def validate!
-      raise ConfigurationError, "public_key is required" if public_key.nil? || public_key.empty?
-      raise ConfigurationError, "secret_key is required" if secret_key.nil? || secret_key.empty?
-      raise ConfigurationError, "base_url cannot be empty" if base_url.nil? || base_url.empty?
-      raise ConfigurationError, "timeout must be positive" if timeout.nil? || timeout <= 0
-      raise ConfigurationError, "cache_ttl must be non-negative" if cache_ttl.nil? || cache_ttl.negative?
-      raise ConfigurationError, "cache_max_size must be positive" if cache_max_size.nil? || cache_max_size <= 0
-
-      if cache_lock_timeout.nil? || cache_lock_timeout <= 0
-        raise ConfigurationError,
-              "cache_lock_timeout must be positive"
-      end
-
-      validate_swr_config!
-
-      validate_cache_backend!
+      validate_connection_settings!
+      validate_batching_settings!
       validate_sample_rate!
+      validate_client_settings!
       validate_callable!(prompt_cache_observer, "prompt_cache_observer")
+      validate_logger!
+    end
+
+    # Check whether the configuration can construct a client.
+    #
+    # This check is local. It does not validate credentials or network access.
+    #
+    # @return [Boolean] true when {#validate!} succeeds
+    def valid?
+      validate!
+      true
+    rescue ConfigurationError
+      false
+    end
+
+    # Validate only settings consumed by tracing setup and export.
+    #
+    # @api private
+    # @raise [ConfigurationError] if tracing configuration is invalid
+    # @return [void]
+    def validate_tracing!
+      validate_connection_settings!
+      validate_batching_settings!
+      validate_sample_rate!
       validate_callable!(should_export_span, "should_export_span")
       validate_callable!(mask, "mask")
       validate_callable!(mask_otel_spans, "mask_otel_spans")
+      validate_logger!
     end
-    # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     # Normalize stale_ttl value
     #
@@ -247,11 +270,9 @@ module Langfuse
     private
 
     def default_logger
-      if defined?(Rails) && Rails.respond_to?(:logger)
-        Rails.logger
-      else
-        Logger.new($stdout, level: Logger::WARN)
-      end
+      return Rails.logger if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
+
+      Logger.new($stdout, level: Logger::WARN)
     end
 
     def initialize_tracing_defaults
@@ -263,18 +284,91 @@ module Langfuse
       @mask_otel_spans = nil
     end
 
+    def validate_connection_settings!
+      validate_required_string!("public_key", public_key)
+      validate_required_string!("secret_key", secret_key)
+      validate_base_url!
+    end
+
+    def validate_batching_settings!
+      unless batch_size.is_a?(Integer) && batch_size.positive?
+        raise ConfigurationError, "batch_size must be a positive Integer"
+      end
+
+      validate_positive_number!("flush_interval", flush_interval)
+    end
+
+    def validate_client_settings!
+      validate_positive_number!("timeout", timeout)
+      validate_non_negative_number!("cache_ttl", cache_ttl)
+      validate_positive_number!("cache_max_size", cache_max_size)
+      validate_positive_number!("cache_lock_timeout", cache_lock_timeout)
+      validate_swr_config!
+      validate_cache_backend!
+    end
+
+    # Credentials reach the API as interpolated strings, so a value that only
+    # answers #to_str would authenticate with its #to_s output instead.
+    def validate_required_string!(name, value, empty_message: "#{name} is required")
+      raise ConfigurationError, empty_message if value.nil?
+
+      raise ConfigurationError, "#{name} must be a String" unless value.is_a?(String)
+
+      raise ConfigurationError, empty_message if value.empty?
+    end
+
+    def validate_base_url!
+      validate_required_string!("base_url", base_url, empty_message: "base_url cannot be empty")
+      uri = URI.parse(base_url)
+      return if %w[http https].include?(uri.scheme) && !uri.host.to_s.empty?
+
+      raise ConfigurationError, "base_url must be an absolute HTTP or HTTPS URL"
+    rescue URI::InvalidURIError
+      raise ConfigurationError, "base_url must be an absolute HTTP or HTTPS URL"
+    end
+
+    def validate_positive_number!(name, value)
+      return if finite_ordered_number?(value) && value.positive?
+
+      raise ConfigurationError, "#{name} must be positive"
+    end
+
+    def validate_non_negative_number!(name, value)
+      return if finite_ordered_number?(value) && !value.negative?
+
+      raise ConfigurationError, "#{name} must be non-negative"
+    end
+
+    def finite_ordered_number?(value)
+      value.is_a?(Numeric) && value.respond_to?(:positive?) && value.finite?
+    end
+
     def validate_cache_backend!
       valid_backends = %i[memory rails auto]
-      return if valid_backends.include?(cache_backend)
+      unless valid_backends.include?(cache_backend)
+        raise ConfigurationError,
+              "cache_backend must be one of #{valid_backends.inspect}, got #{cache_backend.inspect}"
+      end
+
+      return unless cache_backend == :rails && cache_ttl.positive?
+      return if RailsCacheAdapter.available?
 
       raise ConfigurationError,
-            "cache_backend must be one of #{valid_backends.inspect}, got #{cache_backend.inspect}"
+            "Rails.cache is not available. Rails cache backend requires Rails with a configured cache store."
     end
 
     def validate_callable!(value, name)
       return if value.nil? || value.respond_to?(:call)
 
       raise ConfigurationError, "#{name} must respond to #call"
+    end
+
+    def validate_logger!
+      missing_methods = LOGGER_METHODS.reject { |method_name| logger.respond_to?(method_name) }
+      return if missing_methods.empty?
+
+      required_methods = LOGGER_METHODS.map { |method_name| "##{method_name}" }.join(", ")
+      raise ConfigurationError, "logger must respond to #{required_methods}"
     end
 
     def validate_swr_config!
@@ -296,17 +390,15 @@ module Langfuse
               "cache_stale_ttl must be non-negative or :indefinite"
       end
 
-      # Validate numeric values are non-negative
-      return unless cache_stale_ttl.is_a?(Integer) && cache_stale_ttl.negative?
+      return if cache_stale_ttl == :indefinite
+      return if finite_ordered_number?(cache_stale_ttl) && !cache_stale_ttl.negative?
 
       raise ConfigurationError,
             "cache_stale_ttl must be non-negative or :indefinite"
     end
 
     def validate_refresh_threads!
-      return unless cache_refresh_threads.nil? || cache_refresh_threads <= 0
-
-      raise ConfigurationError, "cache_refresh_threads must be positive"
+      validate_positive_number!("cache_refresh_threads", cache_refresh_threads)
     end
 
     def validate_sample_rate!
@@ -343,7 +435,7 @@ module Langfuse
       return numeric_value if numeric_value.between?(0.0, 1.0)
 
       raise ConfigurationError, "sample_rate must be between 0.0 and 1.0"
-    rescue ArgumentError, TypeError
+    rescue ArgumentError, RangeError, TypeError
       raise ConfigurationError, "sample_rate must be numeric"
     end
   end

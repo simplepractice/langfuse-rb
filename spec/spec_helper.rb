@@ -47,6 +47,7 @@ RSpec.configure do |config|
     ENV.delete("LANGFUSE_BASE_URL")
     ENV.delete("LANGFUSE_TRACING_ENVIRONMENT")
     ENV.delete("LANGFUSE_RELEASE")
+    ENV.delete("LANGFUSE_SAMPLE_RATE")
 
     # Stub OTLP endpoint BEFORE reset (which may flush traces)
     # (tests can override this with more specific stubs if needed)

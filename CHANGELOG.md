@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `ScoreClient#create!`, `Client#create_score!`, and `Langfuse.create_score!` create scores through the synchronous Scores API, return the created score ID, and raise API errors. The existing `create` methods retain fire-and-forget ingestion batching.
+- `Langfuse.configured?` checks locally whether the global client can be constructed without accessing the network.
+
+### Changed
+- Client construction now rejects invalid `batch_size` and `flush_interval` values before score batching can fail later.
+- Configuration validation now requires `public_key` and `secret_key` to be non-empty Strings and `base_url` to be an absolute HTTP or HTTPS URL.
+- Assigning `nil` to `Config#logger` now selects a null logger so SDK logger calls remain safe.
+- Implicit observations warn once and use a no-op tracer when tracing configuration is invalid. Explicit `Langfuse.tracer_provider` access still raises `ConfigurationError`.
+
+### Fixed
+- Configuration validation now reports invalid numeric types, stale cache settings, and tracing callables as `ConfigurationError`.
+- Tracing validates batching and sampling settings before it creates an OpenTelemetry span processor.
+- Explicit Rails cache configuration now fails validation when `Rails.cache` is unavailable. Previously only the presence of `Rails.cache` as a method was checked, so a client built before Rails ran `initialize_cache` failed later on the first cache read instead.
 
 ## [0.10.1] - 2026-05-05
 

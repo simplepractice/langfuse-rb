@@ -88,6 +88,67 @@ RSpec.describe Langfuse do
     end
   end
 
+  describe ".configured?" do
+    it "returns true when the global client can be constructed" do
+      expect(described_class.configured?).to be true
+      expect { described_class.client }.not_to raise_error
+    end
+
+    {
+      public_key: 123,
+      secret_key: Object.new,
+      base_url: [],
+      timeout: "5",
+      batch_size: nil,
+      flush_interval: :ten,
+      cache_ttl: "60",
+      cache_max_size: false,
+      cache_lock_timeout: [],
+      cache_stale_ttl: "30",
+      cache_refresh_threads: :five,
+      cache_backend: :unknown,
+      prompt_cache_observer: "callable",
+      logger: Object.new
+    }.each do |attribute, value|
+      it "returns false when #{attribute} is #{value.inspect}" do
+        described_class.configuration.public_send("#{attribute}=", value)
+
+        expect(described_class.configured?).to be false
+      end
+    end
+
+    it "returns false without raising when configuration construction fails" do
+      described_class.reset!
+      ENV["LANGFUSE_SAMPLE_RATE"] = "invalid"
+
+      expect(described_class.configured?).to be false
+    ensure
+      ENV.delete("LANGFUSE_SAMPLE_RATE")
+    end
+
+    it "returns false when base_url is malformed" do
+      described_class.configuration.base_url = "://bad"
+
+      expect(described_class.configured?).to be false
+    end
+
+    it "does not access the network" do
+      expect(described_class.configured?).to be true
+      expect(a_request(:any, /.*/)).not_to have_been_made
+    end
+
+    it "does not treat tracing-only callbacks as client readiness" do
+      described_class.configure do |config|
+        config.should_export_span = "not callable"
+        config.mask = "not callable"
+        config.mask_otel_spans = "not callable"
+      end
+
+      expect(described_class.configured?).to be true
+      expect { described_class.client }.not_to raise_error
+    end
+  end
+
   describe ".tracer_provider" do
     it "raises when tracing is not ready" do
       described_class.reset!
@@ -516,11 +577,51 @@ RSpec.describe Langfuse do
 
       expect(logger).to receive(:warn).once.with(/Langfuse tracing is disabled/)
 
-      first = described_class.observe("first")
+      first_result = described_class.observe("first") { :business_result }
       second = described_class.observe("second")
 
-      expect(first.otel_span.recording?).to be(false)
+      expect(first_result).to eq(:business_result)
       expect(second.otel_span.recording?).to be(false)
+    end
+
+    it "uses a no-op tracer when configuration construction itself fails" do
+      described_class.reset!
+      ENV["LANGFUSE_SAMPLE_RATE"] = "invalid"
+      allow(RSpec.configuration.test_logger).to receive(:warn)
+
+      observation = nil
+      expect { observation = described_class.observe("construction-failure") }.not_to raise_error
+      expect(observation.otel_span.recording?).to be(false)
+    ensure
+      ENV.delete("LANGFUSE_SAMPLE_RATE")
+    end
+
+    it "traces when client-only configuration is invalid" do
+      described_class.configuration.cache_backend = :unknown
+
+      expect(described_class.configured?).to be false
+
+      observation = described_class.observe("client-independent-tracing")
+
+      expect(observation.otel_span.recording?).to be(true)
+    ensure
+      observation&.end
+    end
+
+    it "uses a no-op tracer when the custom logger contract is invalid" do
+      described_class.configuration.logger = Object.new
+
+      observation = nil
+      expect { observation = described_class.observe("invalid-logger") }.not_to raise_error
+      expect(observation.otel_span.recording?).to be(false)
+    end
+
+    it "uses a no-op tracer when base_url is malformed" do
+      described_class.configuration.base_url = "://bad"
+
+      observation = nil
+      expect { observation = described_class.observe("malformed-base-url") }.not_to raise_error
+      expect(observation.otel_span.recording?).to be(false)
     end
 
     it "creates and returns observation without block" do

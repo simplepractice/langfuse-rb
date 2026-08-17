@@ -294,8 +294,10 @@ config.logger = Logger.new('log/langfuse.log')
 config.logger.level = Logger::DEBUG
 
 # Disable logging
-config.logger = Logger.new(IO::NULL)
+config.logger = nil
 ```
+
+The SDK normalizes `nil` to a null logger. Logger calls remain safe when output is disabled.
 
 #### `tracing_async` ⚠️ Experimental
 
@@ -457,7 +459,7 @@ There are three states worth documenting.
 - `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
 - `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
 - `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is ready
-- if `public_key`, `secret_key`, or `base_url` are missing, module-level tracing falls back to a no-op tracer and logs one warning
+- if tracing configuration is invalid, module-level tracing falls back to a no-op tracer and logs one warning
 
 ### Explicit Global Install with `Langfuse.tracer_provider`
 
@@ -669,16 +671,33 @@ Langfuse.client
 # => Raises Langfuse::ConfigurationError: "public_key is required"
 ```
 
-Validation rules:
+Client validation fails before the client starts. Tracing validates its own settings before the tracing processor starts. Invalid values raise `Langfuse::ConfigurationError`.
 
-- `public_key` must be present
-- `secret_key` must be present
+Use `Langfuse.configured?` for a local, non-raising client-readiness check. This method does not validate credentials, network access, or trace delivery. `Langfuse.observe` does not require this guard. It uses a no-op tracer when tracing configuration is invalid.
+
+Client-readiness rules:
+
+- `public_key` and `secret_key` must be non-empty Strings
+- `base_url` must be an absolute HTTP or HTTPS URL
+- `batch_size` must be a positive Integer
+- `flush_interval`, `timeout`, `cache_max_size`, `cache_lock_timeout`, and `cache_refresh_threads` must be positive numbers
+- `cache_ttl` must be a non-negative number
+- `cache_stale_ttl` must be a non-negative number or `:indefinite`
+- `sample_rate` must be between `0.0` and `1.0`
 - `cache_backend` must be `:memory`, `:rails`, or `:auto`
-- If `:rails` is selected, or `:auto` resolves to `:rails`, Rails and `Rails.cache` must be available
+- If `:rails` is selected while caching is enabled, Rails and `Rails.cache` must be available
 - `prompt_cache_observer` must respond to `#call` (if set)
+- `logger` must respond to `#debug`, `#info`, `#warn`, and `#error`
+
+Tracing reuses the credential, batching, sampling, and logger rules. It also validates these tracing-only settings:
+
 - `should_export_span` must respond to `#call` (if set)
 - `mask` must respond to `#call` (if set)
 - `mask_otel_spans` must respond to `#call` (if set)
+
+### Rails cache validation and boot order
+
+Setting `cache_backend = :rails` while caching is enabled requires `Rails.cache` to be populated at validation time. Rails assigns `Rails.cache` during its own `initialize_cache` step, so a Langfuse initializer that builds a client earlier than that now raises `ConfigurationError` instead of failing later on the first cache read. Build the client lazily, or use `:auto`, which falls back to the in-memory cache when `Rails.cache` is unavailable.
 
 ## Accessing Current Configuration
 

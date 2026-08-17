@@ -112,10 +112,23 @@ module Langfuse
       @client ||= Client.new(configuration)
     end
 
+    # Check whether the local configuration can construct a client.
+    #
+    # This method does not access the network or validate credentials.
+    #
+    # @return [Boolean] true when the local configuration is valid
+    def configured?
+      configuration.valid?
+    rescue ConfigurationError
+      # Reading `configuration` builds it from the environment, which can fail
+      # on its own before there is anything to validate.
+      false
+    end
+
     # Return Langfuse's internal tracer provider for explicit global OpenTelemetry installation.
     #
     # @return [OpenTelemetry::SDK::Trace::TracerProvider]
-    # @raise [ConfigurationError] if tracing is not fully configured
+    # @raise [ConfigurationError] if tracing configuration is invalid
     #
     # @example
     #   Langfuse.configure do |config|
@@ -125,13 +138,10 @@ module Langfuse
     #
     #   OpenTelemetry.tracer_provider = Langfuse.tracer_provider
     def tracer_provider
-      unless tracing_config_ready?
-        raise ConfigurationError,
-              "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
-      end
-
       OtelSetup.setup(configuration) unless OtelSetup.initialized?
       OtelSetup.tracer_provider
+    rescue ConfigurationError => e
+      raise ConfigurationError, tracing_disabled_message(e.message)
     end
 
     # Shutdown Langfuse and flush any pending traces and scores
@@ -403,13 +413,13 @@ module Langfuse
       @configuration = nil
       @client = nil
       @noop_tracer = nil
-      @tracing_disabled_warning_emitted = false
+      @emitted_warnings = nil
     rescue StandardError
       # Ignore shutdown errors during reset (e.g., in tests)
       @configuration = nil
       @client = nil
       @noop_tracer = nil
-      @tracing_disabled_warning_emitted = false
+      @emitted_warnings = nil
     end
 
     # Creates a new observation (root or child)
@@ -561,9 +571,8 @@ module Langfuse
     #
     # @return [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     def otel_tracer
-      return tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION) if setup_tracing_if_ready
+      return tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION) if ensure_tracing_started
 
-      warn_tracing_disabled_once
       noop_tracer
     end
 
@@ -601,41 +610,48 @@ module Langfuse
       observation_class.new(otel_span, otel_tracer, attributes: attributes)
     end
 
-    # rubocop:disable Naming/PredicateMethod
-    def setup_tracing_if_ready
+    def ensure_tracing_started
       return true if OtelSetup.initialized?
-      return false unless tracing_config_ready?
 
       OtelSetup.setup(configuration)
       true
-    end
-    # rubocop:enable Naming/PredicateMethod
-
-    def tracing_config_ready?
-      configured?(configuration.public_key) &&
-        configured?(configuration.secret_key) &&
-        configured?(configuration.base_url)
+    rescue ConfigurationError => e
+      warn_once(:tracing, tracing_disabled_message(e.message))
+      false
     end
 
-    def configured?(value)
-      !value.nil? && !value.empty?
-    end
+    # A dropped span is otherwise silent, so warn the first time it happens
+    # without flooding logs on every subsequent call.
+    def warn_once(key, message)
+      warning_mutex.synchronize do
+        return if emitted_warnings[key]
 
-    def warn_tracing_disabled_once
-      return if @tracing_disabled_warning_emitted
-
-      tracing_warning_mutex.synchronize do
-        return if @tracing_disabled_warning_emitted
-
-        configuration.logger.warn(
-          "Langfuse tracing is disabled until public_key, secret_key, and base_url are configured."
-        )
-        @tracing_disabled_warning_emitted = true
+        warning_logger.warn(message)
+        emitted_warnings[key] = true
       end
     end
 
-    def tracing_warning_mutex
-      @tracing_warning_mutex ||= Mutex.new
+    def emitted_warnings
+      @emitted_warnings ||= {}
+    end
+
+    # The warning fires precisely when configuration is known-bad, which
+    # includes the case where building it raises. Reading `configuration` here
+    # would re-raise and escape the rescue that called us, so use the memoized
+    # object only if it already exists.
+    def warning_logger
+      configured_logger = @configuration&.logger
+      return configured_logger if configured_logger.respond_to?(:warn)
+
+      @warning_logger ||= Logger.new($stdout, level: Logger::WARN)
+    end
+
+    def tracing_disabled_message(detail)
+      "Langfuse tracing is disabled: #{detail}"
+    end
+
+    def warning_mutex
+      @warning_mutex ||= Mutex.new
     end
 
     def noop_tracer
