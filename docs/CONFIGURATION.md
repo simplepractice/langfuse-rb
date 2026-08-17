@@ -599,7 +599,7 @@ The SDK automatically reads these environment variables as defaults when no expl
 - `LANGFUSE_SECRET_KEY` — secret API key
 - `LANGFUSE_BASE_URL` — API endpoint (defaults to `https://cloud.langfuse.com`)
 - `LANGFUSE_TIMEOUT` — HTTP request timeout in seconds (defaults to `5`)
-- `LANGFUSE_FLUSH_AT` — maximum score and trace batch size (defaults to `50`)
+- `LANGFUSE_FLUSH_AT` — score flush threshold and maximum trace batch size (defaults to `50`)
 - `LANGFUSE_FLUSH_INTERVAL` — maximum batch wait in seconds (defaults to `10`)
 - `LANGFUSE_DEBUG` — set to `true` to write SDK logs to stdout at the `DEBUG` level
 - `LANGFUSE_TRACING_ENVIRONMENT` — default trace environment
