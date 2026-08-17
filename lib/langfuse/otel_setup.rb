@@ -18,6 +18,7 @@ module Langfuse
       sample_rate
       should_export_span
       mask_otel_spans
+      metrics_reporter
       tracing_async
       batch_size
       flush_interval

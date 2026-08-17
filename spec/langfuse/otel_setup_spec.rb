@@ -65,6 +65,28 @@ RSpec.describe Langfuse::OtelSetup do
       expect(described_class.setup(config)).to equal(provider)
     end
 
+    it "requires reset before a replacement metrics reporter takes effect" do
+      first_reporter = instance_double(
+        OpenTelemetry::SDK::Trace::Export::MetricsReporter,
+        add_to_counter: nil,
+        record_value: nil,
+        observe_value: nil
+      )
+      second_reporter = instance_double(
+        OpenTelemetry::SDK::Trace::Export::MetricsReporter,
+        add_to_counter: nil,
+        record_value: nil,
+        observe_value: nil
+      )
+      config.metrics_reporter = first_reporter
+      provider = described_class.setup(config)
+      config.metrics_reporter = second_reporter
+
+      expect(logger).to receive(:warn).with(/metrics_reporter.*require Langfuse.reset!/)
+
+      expect(described_class.setup(config)).to equal(provider)
+    end
+
     it "shuts down unpublished providers lost in the setup race" do
       candidate_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider, shutdown: nil)
       existing_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider)

@@ -106,6 +106,11 @@ module Langfuse
     #   results fail closed by dropping the Langfuse export batch.
     attr_accessor :mask_otel_spans
 
+    # @return [#add_to_counter, #record_value, #observe_value, nil] Reporter for
+    #   OpenTelemetry batch span processor metrics. The reporter must be fast,
+    #   thread-safe, and nonblocking. The application owns its lifecycle.
+    attr_accessor :metrics_reporter
+
     # @return [String] Default Langfuse API base URL
     DEFAULT_BASE_URL = "https://cloud.langfuse.com"
 
@@ -147,6 +152,10 @@ module Langfuse
 
     # @return [Array<Symbol>] Methods required from a custom logger
     LOGGER_METHODS = %i[debug info warn error].freeze
+
+    # Methods defined by OpenTelemetry's metrics reporter contract.
+    METRICS_REPORTER_METHODS = %i[add_to_counter record_value observe_value].freeze
+    private_constant :METRICS_REPORTER_METHODS
 
     # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
@@ -238,6 +247,7 @@ module Langfuse
       validate_callable!(should_export_span, "should_export_span")
       validate_callable!(mask, "mask")
       validate_callable!(mask_otel_spans, "mask_otel_spans")
+      validate_metrics_reporter!
       validate_logger!
     end
 
@@ -282,6 +292,7 @@ module Langfuse
       @should_export_span = nil
       @mask = nil
       @mask_otel_spans = nil
+      @metrics_reporter = nil
     end
 
     def validate_connection_settings!
@@ -369,6 +380,18 @@ module Langfuse
 
       required_methods = LOGGER_METHODS.map { |method_name| "##{method_name}" }.join(", ")
       raise ConfigurationError, "logger must respond to #{required_methods}"
+    end
+
+    def validate_metrics_reporter!
+      return if metrics_reporter.nil?
+
+      missing_methods = METRICS_REPORTER_METHODS.reject do |method_name|
+        metrics_reporter.respond_to?(method_name)
+      end
+      return if missing_methods.empty?
+
+      required_methods = METRICS_REPORTER_METHODS.map { |method_name| "##{method_name}" }.join(", ")
+      raise ConfigurationError, "metrics_reporter must respond to #{required_methods}"
     end
 
     def validate_swr_config!

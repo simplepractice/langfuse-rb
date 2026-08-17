@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `ScoreClient#create!`, `Client#create_score!`, and `Langfuse.create_score!` create scores through the synchronous Scores API, return the created score ID, and raise API errors. The existing `create` methods retain fire-and-forget ingestion batching.
 - `Langfuse.configured?` checks locally whether the global client can be constructed without accessing the network.
+- `Config#metrics_reporter` forwards OpenTelemetry batch span processor metrics to an application-owned reporter without allowing reporter failures to interrupt tracing.
 
 ### Changed
 - Client construction now rejects invalid `batch_size` and `flush_interval` values before score batching can fail later.
