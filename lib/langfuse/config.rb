@@ -294,8 +294,11 @@ module Langfuse
     end
 
     def initialize_logger
-      self.logger = default_logger
-      @logger.level = Logger::DEBUG if env_true?("LANGFUSE_DEBUG")
+      self.logger = if env_true?("LANGFUSE_DEBUG")
+                      Logger.new($stdout, level: Logger::DEBUG)
+                    else
+                      default_logger
+                    end
     end
 
     def default_logger

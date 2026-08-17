@@ -601,7 +601,7 @@ The SDK automatically reads these environment variables as defaults when no expl
 - `LANGFUSE_TIMEOUT` — HTTP request timeout in seconds (defaults to `5`)
 - `LANGFUSE_FLUSH_AT` — maximum score and trace batch size (defaults to `50`)
 - `LANGFUSE_FLUSH_INTERVAL` — maximum batch wait in seconds (defaults to `10`)
-- `LANGFUSE_DEBUG` — set to `true` to use the `DEBUG` logger level
+- `LANGFUSE_DEBUG` — set to `true` to write SDK logs to stdout at the `DEBUG` level
 - `LANGFUSE_TRACING_ENVIRONMENT` — default trace environment
 - `LANGFUSE_RELEASE` — default release identifier (falls back to common CI commit envs if present)
 - `LANGFUSE_SAMPLE_RATE` — trace sampling rate (`0.0..1.0`, defaults to `1.0`)
