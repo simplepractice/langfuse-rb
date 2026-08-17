@@ -5,6 +5,14 @@ require "spec_helper"
 RSpec.describe Langfuse::OtelSetup do
   let(:logger) { instance_double(Logger, info: nil, debug: nil, warn: nil, error: nil) }
   let(:exporter) { OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new }
+  let(:metrics_reporter) do
+    instance_double(
+      OpenTelemetry::SDK::Trace::Export::MetricsReporter,
+      add_to_counter: nil,
+      record_value: nil,
+      observe_value: nil
+    )
+  end
   let(:config) do
     Langfuse::Config.new do |c|
       c.public_key = "pk_test_123"
@@ -14,12 +22,12 @@ RSpec.describe Langfuse::OtelSetup do
       c.batch_size = 10
       c.flush_interval = 1
       c.logger = logger
+      c.span_exporter = exporter
     end
   end
 
   before do
     described_class.shutdown(timeout: 1) if described_class.initialized?
-    allow(described_class).to receive(:build_exporter).and_return(exporter)
   end
 
   after do
@@ -87,18 +95,14 @@ RSpec.describe Langfuse::OtelSetup do
       expect(described_class.setup(config)).to equal(provider)
     end
 
-    it "shuts down unpublished providers lost in the setup race" do
-      candidate_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider, shutdown: nil)
-      existing_provider = instance_double(OpenTelemetry::SDK::Trace::TracerProvider)
+    it "keeps an injected exporter live during concurrent setup" do
+      providers = Queue.new
+      threads = 5.times.map { Thread.new { providers << described_class.setup(config) } }
+      threads.each(&:join)
 
-      allow(described_class).to receive_messages(
-        build_tracer_provider: candidate_provider,
-        publish_provider: [existing_provider, false],
-        existing_provider_for: existing_provider
-      )
-
-      expect(candidate_provider).to receive(:shutdown).with(timeout: 30)
-      expect(described_class.setup(config)).to equal(existing_provider)
+      resolved = 5.times.map { providers.pop }
+      expect(resolved.map(&:object_id).uniq.length).to eq(1)
+      expect(exporter.export([])).to eq(OpenTelemetry::SDK::Trace::Export::SUCCESS)
     end
 
     it "validates should_export_span in setup" do
@@ -191,7 +195,14 @@ RSpec.describe Langfuse::OtelSetup do
   end
 
   describe ".build_exporter transport" do
+    it "uses an injected exporter without constructing OTLP" do
+      expect(OpenTelemetry::Exporter::OTLP::Exporter).not_to receive(:new)
+
+      expect(described_class.send(:build_exporter, config)).to equal(exporter)
+    end
+
     it "configures direct v4 OTLP ingestion without changing transport settings" do
+      config.span_exporter = nil
       expected_headers = {
         "Authorization" => "Basic #{Base64.strict_encode64('pk_test_123:sk_test_456')}",
         "x-langfuse-ingestion-version" => "4",
@@ -281,6 +292,7 @@ RSpec.describe Langfuse::OtelSetup do
         c.batch_size = 10
         c.flush_interval = 1
         c.logger = logger
+        c.span_exporter = exporter
       end
     end
 
@@ -322,6 +334,7 @@ RSpec.describe Langfuse::OtelSetup do
         c.tracing_async = false
         c.should_export_span = ->(_span) { false }
         c.logger = logger
+        c.span_exporter = exporter
       end
 
       OpenTelemetry.tracer_provider = Langfuse.tracer_provider
@@ -329,6 +342,38 @@ RSpec.describe Langfuse::OtelSetup do
       Langfuse.force_flush(timeout: 1)
 
       expect(exporter.finished_spans).to be_empty
+    end
+
+    it "keeps filtering, defaults, app-root tracking, and metrics in the injected pipeline" do
+      Langfuse.reset!
+      Langfuse.configure do |c|
+        c.public_key = config.public_key
+        c.secret_key = config.secret_key
+        c.tracing_async = false
+        c.environment = "test"
+        c.release = "release-123"
+        c.should_export_span = ->(span) { span.name != "drop-me" }
+        c.metrics_reporter = metrics_reporter
+        c.span_exporter = exporter
+        c.logger = logger
+      end
+
+      Langfuse.observe("root") do |root|
+        root.start_observation("child") { |child| child.update(output: "ok") }
+      end
+      Langfuse.observe("drop-me") { |span| span.update(output: "discarded") }
+      Langfuse.force_flush(timeout: 1)
+
+      spans = exporter.finished_spans.to_h { |span| [span.name, span] }
+      expect(spans.keys).to contain_exactly("root", "child")
+      expect(spans.fetch("root").attributes).to include(
+        Langfuse::OtelAttributes::ENVIRONMENT => "test",
+        Langfuse::OtelAttributes::RELEASE => "release-123",
+        Langfuse::OtelAttributes::IS_APP_ROOT => true
+      )
+      expect(metrics_reporter).to have_received(:add_to_counter).with(
+        "otel.bsp.exported_spans", increment: 2, labels: {}
+      )
     end
   end
 
@@ -338,12 +383,19 @@ RSpec.describe Langfuse::OtelSetup do
     end
 
     it "returns the plain OTLP exporter when mask_otel_spans is nil" do
+      config.span_exporter = nil
       expect(described_class.send(:build_exporter, config)).to be_a(OpenTelemetry::Exporter::OTLP::Exporter)
     end
 
-    it "wraps the OTLP exporter in a MaskingExporter when mask_otel_spans is configured" do
+    it "wraps an injected exporter in a MaskingExporter when mask_otel_spans is configured" do
       config.mask_otel_spans = ->(**) {}
-      expect(described_class.send(:build_exporter, config)).to be_a(Langfuse::MaskingExporter)
+      allow(exporter).to receive(:force_flush).and_call_original
+
+      masked_exporter = described_class.send(:build_exporter, config)
+      masked_exporter.force_flush(timeout: 1)
+
+      expect(masked_exporter).to be_a(Langfuse::MaskingExporter)
+      expect(exporter).to have_received(:force_flush).with(timeout: 1)
     end
   end
 
@@ -363,7 +415,6 @@ RSpec.describe Langfuse::OtelSetup do
 
     before do
       allow(described_class).to receive(:build_exporter).and_call_original
-      allow(OpenTelemetry::Exporter::OTLP::Exporter).to receive(:new).and_return(exporter)
       Langfuse.reset!
       Langfuse.configure do |c|
         c.public_key = config.public_key
@@ -371,6 +422,7 @@ RSpec.describe Langfuse::OtelSetup do
         c.base_url = config.base_url
         c.tracing_async = false
         c.mask_otel_spans = mask_hook
+        c.span_exporter = exporter
         c.logger = logger
       end
     end
@@ -391,6 +443,82 @@ RSpec.describe Langfuse::OtelSetup do
       Langfuse.force_flush(timeout: 1)
 
       expect(seen_spans.map(&:name)).to eq(["llm-call"])
+    end
+  end
+
+  describe "injected exporter lifecycle" do
+    def build_config(span_exporter)
+      Langfuse::Config.new do |candidate|
+        candidate.public_key = "pk_test"
+        candidate.secret_key = "sk_test"
+        candidate.tracing_async = false
+        candidate.span_exporter = span_exporter
+        candidate.logger = logger
+      end
+    end
+
+    def finish_span(provider, name)
+      provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span(name).finish
+    end
+
+    it "warns and keeps the active exporter until reset" do
+      replacement = OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new
+      provider = described_class.setup(config)
+      config.span_exporter = replacement
+
+      expect(logger).to receive(:warn).with(/span_exporter.*require Langfuse.reset!/)
+      expect(described_class.setup(config)).to equal(provider)
+      finish_span(provider, "first-exporter")
+      described_class.force_flush(timeout: 1)
+
+      expect(exporter.finished_spans.map(&:name)).to eq(["first-exporter"])
+      expect(replacement.finished_spans).to be_empty
+    end
+
+    it "shuts down the injected exporter with its provider" do
+      described_class.setup(config)
+
+      described_class.shutdown(timeout: 1)
+
+      expect(exporter.export([])).to eq(OpenTelemetry::SDK::Trace::Export::FAILURE)
+    end
+
+    it "shuts down the injected exporter during Langfuse.reset!" do
+      Langfuse.configuration = config
+      Langfuse.tracer_provider
+
+      Langfuse.reset!
+
+      expect(exporter.export([])).to eq(OpenTelemetry::SDK::Trace::Export::FAILURE)
+    end
+
+    it "keeps consecutive exporter sessions isolated" do
+      first_provider = described_class.setup(config)
+      finish_span(first_provider, "first-session")
+      described_class.force_flush(timeout: 1)
+      expect(exporter.finished_spans.map(&:name)).to eq(["first-session"])
+      described_class.shutdown(timeout: 1)
+
+      second_exporter = OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new
+      second_provider = described_class.setup(build_config(second_exporter))
+      finish_span(second_provider, "second-session")
+      described_class.force_flush(timeout: 1)
+
+      expect(second_exporter.finished_spans.map(&:name)).to eq(["second-session"])
+    end
+
+    it "does not send a late span from a stopped provider to the next exporter" do
+      first_provider = described_class.setup(config)
+      late_span = first_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span("late-first")
+      described_class.shutdown(timeout: 1)
+
+      second_exporter = OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new
+      second_provider = described_class.setup(build_config(second_exporter))
+      finish_span(second_provider, "second-session")
+      late_span.finish
+      described_class.force_flush(timeout: 1)
+
+      expect(second_exporter.finished_spans.map(&:name)).to eq(["second-session"])
     end
   end
 end

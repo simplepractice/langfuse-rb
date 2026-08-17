@@ -19,6 +19,7 @@ module Langfuse
       should_export_span
       mask_otel_spans
       metrics_reporter
+      span_exporter
       tracing_async
       batch_size
       flush_interval
@@ -35,19 +36,9 @@ module Langfuse
       # @return [OpenTelemetry::SDK::Trace::TracerProvider]
       def setup(config)
         config.validate_tracing!
-        return existing_provider_for(config) if initialized?
+        provider, created = setup_mutex.synchronize { setup_locked(config) }
 
-        candidate_provider = nil
-        provider = nil
-        created = false
-        candidate_provider = build_tracer_provider(config)
-        provider, created = publish_provider(candidate_provider, tracing_config_snapshot(config))
-        unless created
-          candidate_provider.shutdown(timeout: 30)
-          return existing_provider_for(config)
-        end
-
-        log_initialized(config)
+        log_initialized(config) if created
         provider
       rescue StandardError
         rollback_provider(provider) if created
@@ -98,23 +89,13 @@ module Langfuse
         @tracer_provider
       end
 
-      def publish_provider(provider, snapshot)
-        created = false
-        current = nil
+      def setup_locked(config)
+        return [existing_provider_for(config), false] if @tracer_provider
 
-        # This mutex only guards publication so setup never exposes a half-built provider.
-        setup_mutex.synchronize do
-          if @tracer_provider
-            current = @tracer_provider
-          else
-            @tracer_provider = provider
-            @config_snapshot = snapshot
-            current = provider
-            created = true
-          end
-        end
-
-        [current, created]
+        provider = build_tracer_provider(config)
+        @tracer_provider = provider
+        @config_snapshot = tracing_config_snapshot(config)
+        [provider, true]
       end
 
       def rollback_provider(provider)
@@ -140,14 +121,18 @@ module Langfuse
       end
 
       def build_exporter(config)
-        exporter = OpenTelemetry::Exporter::OTLP::Exporter.new(
+        exporter = config.span_exporter || build_otlp_exporter(config)
+        return exporter unless config.mask_otel_spans
+
+        MaskingExporter.new(delegate: exporter, hook: config.mask_otel_spans, logger: config.logger)
+      end
+
+      def build_otlp_exporter(config)
+        OpenTelemetry::Exporter::OTLP::Exporter.new(
           endpoint: "#{config.base_url}/api/public/otel/v1/traces",
           headers: build_headers(config.public_key, config.secret_key),
           compression: "gzip"
         )
-        return exporter unless config.mask_otel_spans
-
-        MaskingExporter.new(delegate: exporter, hook: config.mask_otel_spans, logger: config.logger)
       end
 
       def log_initialized(config)

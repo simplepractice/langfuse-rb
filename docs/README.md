@@ -9,6 +9,7 @@ This is the consumer hub. Start here unless you are already looking for a specif
 3. **[Tracing](TRACING.md)** — Root observations, nested generations, events, propagation, and OpenTelemetry ownership
 4. **[Scoring](SCORING.md)** — Add evaluation and feedback signals to traces and observations
 5. **[Rails](RAILS.md)** — Applied controller, service, job, testing, and operational patterns
+6. **[Testing tracing](TESTING.md)** — In-memory exporter recipes and lifecycle constraints
 
 ## By Intent
 

@@ -312,6 +312,24 @@ config.tracing_async = true
 
 **Current Behavior:** Uses OpenTelemetry `BatchSpanProcessor` in both modes. Async mode uses `flush_interval` for scheduled export; sync mode uses a 60-second schedule delay and is usually paired with explicit `force_flush` for deterministic delivery timing.
 
+#### `span_exporter`
+
+- **Type:** Object responding to `export`, `force_flush`, and `shutdown`, or `nil`
+- **Default:** `nil` (uses Langfuse's OTLP exporter)
+- **Description:** Replaces the OTLP exporter inside Langfuse's tracing pipeline
+
+The supplied exporter still receives spans through Langfuse's normal sampler,
+filter, environment and release defaults, application-root tracking, masking, batch
+processor, and metrics reporter. Langfuse does not create an OTLP exporter when this
+setting is present.
+
+The internal tracer provider owns the exporter after tracing starts. The provider
+calls `shutdown` on the exporter during `Langfuse.shutdown` or `Langfuse.reset!`.
+Do not reuse a stopped exporter. Changing this setting after tracing starts requires
+`Langfuse.reset!` and a new exporter.
+
+For in-memory RSpec and Minitest recipes, see [TESTING.md](TESTING.md).
+
 #### `metrics_reporter`
 
 - **Type:** Object responding to `add_to_counter`, `record_value`, and `observe_value`, or `nil`
@@ -559,6 +577,7 @@ After the first successful tracing initialization, these settings require `Langf
 - `sample_rate`
 - `should_export_span`
 - `metrics_reporter`
+- `span_exporter`
 - `tracing_async`
 - `batch_size`
 - `flush_interval`
@@ -759,6 +778,7 @@ Tracing reuses the credential, batching, sampling, and logger rules. It also val
 - `mask` must respond to `#call` (if set)
 - `mask_otel_spans` must respond to `#call` (if set)
 - `metrics_reporter` must respond to `#add_to_counter`, `#record_value`, and `#observe_value` (if set)
+- `span_exporter` must respond to `#export`, `#force_flush`, and `#shutdown` (if set)
 
 ### Rails cache validation and boot order
 

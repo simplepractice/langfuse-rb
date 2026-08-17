@@ -169,7 +169,8 @@ Passing `trace_id` is the pragmatic default. It rejoins the same trace, but it d
 
 ## Testing
 
-Reset global state between examples and stub external calls aggressively.
+For prompt and client unit tests, reset global state between examples and stub
+external calls aggressively.
 
 ```ruby
 RSpec.configure do |config|
@@ -178,6 +179,11 @@ RSpec.configure do |config|
   end
 end
 ```
+
+Do not combine this reset hook with a process-level injected span exporter.
+`Langfuse.reset!` shuts down that exporter. To assert real spans through the normal
+Langfuse processor, use the application-owned exporter recipe in
+[TESTING.md](TESTING.md).
 
 Stub prompt fetches at the client boundary:
 

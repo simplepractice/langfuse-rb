@@ -111,6 +111,11 @@ module Langfuse
     #   thread-safe, and nonblocking. The application owns its lifecycle.
     attr_accessor :metrics_reporter
 
+    # @return [#export, #force_flush, #shutdown, nil] Span exporter used by
+    #   Langfuse's internal tracer provider. The provider owns the exporter
+    #   lifecycle after tracing starts. nil selects the default OTLP exporter.
+    attr_accessor :span_exporter
+
     # @return [String] Default Langfuse API base URL
     DEFAULT_BASE_URL = "https://cloud.langfuse.com"
 
@@ -156,6 +161,10 @@ module Langfuse
     # Methods defined by OpenTelemetry's metrics reporter contract.
     METRICS_REPORTER_METHODS = %i[add_to_counter record_value observe_value].freeze
     private_constant :METRICS_REPORTER_METHODS
+
+    # Methods required by OpenTelemetry's span exporter contract.
+    SPAN_EXPORTER_METHODS = %i[export force_flush shutdown].freeze
+    private_constant :SPAN_EXPORTER_METHODS
 
     # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
@@ -248,6 +257,7 @@ module Langfuse
       validate_callable!(mask, "mask")
       validate_callable!(mask_otel_spans, "mask_otel_spans")
       validate_metrics_reporter!
+      validate_span_exporter!
       validate_logger!
     end
 
@@ -293,6 +303,7 @@ module Langfuse
       @mask = nil
       @mask_otel_spans = nil
       @metrics_reporter = nil
+      @span_exporter = nil
     end
 
     def validate_connection_settings!
@@ -392,6 +403,18 @@ module Langfuse
 
       required_methods = METRICS_REPORTER_METHODS.map { |method_name| "##{method_name}" }.join(", ")
       raise ConfigurationError, "metrics_reporter must respond to #{required_methods}"
+    end
+
+    def validate_span_exporter!
+      return if span_exporter.nil?
+
+      missing_methods = SPAN_EXPORTER_METHODS.reject do |method_name|
+        span_exporter.respond_to?(method_name)
+      end
+      return if missing_methods.empty?
+
+      required_methods = SPAN_EXPORTER_METHODS.map { |method_name| "##{method_name}" }.join(", ")
+      raise ConfigurationError, "span_exporter must respond to #{required_methods}"
     end
 
     def validate_swr_config!
