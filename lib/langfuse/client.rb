@@ -29,8 +29,13 @@ module Langfuse
     # @return [Config] The client configuration
     attr_reader :config
 
-    # @return [ApiClient, DeferredApiClient] The underlying or deferred API client
-    attr_reader :api_client
+    # Return the underlying API client, building it on first non-telemetry use.
+    #
+    # @return [ApiClient] The underlying API client
+    # @raise [ConfigurationError] if the full client configuration is invalid
+    def api_client
+      @api_client || @api_client_mutex.synchronize { @api_client ||= build_validated_api_client }
+    end
 
     # Pure pass-throughs to {ApiClient}. See {ApiClient} for parameter and
     # return-value documentation; the public surface here is identical.
@@ -73,12 +78,19 @@ module Langfuse
     # @return [Client]
     def initialize(config)
       @config = config
+      @api_client_mutex = Mutex.new
       @score_client_mutex = Mutex.new
       @project_id = nil
       # One-shot lookup: avoids repeated blocking API calls in URL helpers
       # (trace_url, dataset_url, dataset_run_url) when the project endpoint is down.
       @project_id_fetched = false
-      initialize_telemetry_clients
+      if telemetry_enabled?
+        config.validate!
+        @api_client = build_api_client
+        @score_client = build_score_client
+      else
+        config.validate_telemetry_disabled!
+      end
     end
 
     # Fetch a prompt and return the appropriate client
@@ -497,7 +509,7 @@ module Langfuse
     # @return [void]
     def shutdown
       @score_client&.shutdown
-      @api_client.shutdown
+      @api_client_mutex.synchronize { @api_client }&.shutdown
     end
 
     # Create a new dataset
@@ -698,17 +710,6 @@ module Langfuse
 
     private
 
-    def initialize_telemetry_clients
-      if telemetry_enabled?
-        config.validate!
-        @api_client = build_api_client
-        @score_client = build_score_client
-      else
-        config.validate_telemetry_disabled!
-        @api_client = DeferredApiClient.new { build_validated_api_client }
-      end
-    end
-
     def build_validated_api_client
       config.validate!
       build_api_client
@@ -738,7 +739,7 @@ module Langfuse
     end
 
     def build_score_client
-      ScoreClient.new(api_client: @api_client, config: config)
+      ScoreClient.new(api_client: api_client, config: config)
     end
 
     attr_reader :score_client

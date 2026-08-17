@@ -14,7 +14,6 @@ RSpec.describe Langfuse::Client do
       client = described_class.new(config)
       WebMock.reset_executed_requests!
 
-      expect(client.api_client).to be_a(Langfuse::DeferredApiClient)
       expect(client.create_score(name: nil, value: nil)).to be_nil
       expect(client.create_score!(name: nil, value: nil)).to be_nil
       expect(a_request(:any, /.*/)).not_to have_been_made
@@ -29,6 +28,12 @@ RSpec.describe Langfuse::Client do
         "public_key is required"
       )
       expect(a_request(:any, /.*/)).not_to have_been_made
+    end
+
+    it "does not validate unused API credentials during shutdown" do
+      client = described_class.new(config)
+
+      expect { client.shutdown }.not_to raise_error
     end
 
     it "allows prompt access when normal client configuration is valid" do
