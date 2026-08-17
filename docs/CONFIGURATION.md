@@ -700,6 +700,18 @@ config.cache_store = :redis_cache_store, { url: ENV['REDIS_URL'] }
 
 See [CACHING.md](CACHING.md) for performance comparison.
 
+## Forking Servers and Workers
+
+The SDK restores its background state after `fork` on Ruby 3.2 and later. This applies to Puma cluster workers, Unicorn workers, Resque workers, and other processes created through Ruby's standard fork path.
+
+- The child receives a new score queue and flush timer.
+- The child receives new prompt-cache synchronization objects and stale-while-revalidate worker pools.
+- Scores queued before the fork remain owned by the parent. The child discards its copied queue to prevent duplicate ingestion.
+- In-memory prompt values remain available in the child. Rails cache data remains owned by the configured Rails cache store.
+- OpenTelemetry's batch span processor performs its own process-ID reset for trace export.
+
+The parent keeps its original queue and worker objects. Shutdown remains independent in each process.
+
 ## Configuration by Environment
 
 ### Development

@@ -51,6 +51,8 @@ module Langfuse
     # @param refresh_threads [Integer] Number of background refresh threads (default: 5)
     # @return [void]
     def initialize_swr(refresh_threads: 5)
+      @swr_refresh_threads = refresh_threads
+      @swr_shutdown = false
       @thread_pool = initialize_thread_pool(refresh_threads)
     end
 
@@ -143,13 +145,23 @@ module Langfuse
     #
     # @return [void]
     def shutdown
-      return unless @thread_pool
+      @swr_shutdown = true
+      thread_pool = @thread_pool
+      @thread_pool = nil
+      return unless thread_pool
 
-      @thread_pool.shutdown
-      @thread_pool.wait_for_termination(5) # Wait up to 5 seconds
+      thread_pool.shutdown
+      thread_pool.wait_for_termination(5) # Wait up to 5 seconds
     end
 
     private
+
+    def reset_swr_after_fork
+      @thread_pool = nil
+      return if @swr_shutdown || !@swr_refresh_threads
+
+      @thread_pool = initialize_thread_pool(@swr_refresh_threads)
+    end
 
     # Initialize thread pool for background refresh operations
     #

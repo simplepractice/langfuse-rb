@@ -40,6 +40,7 @@ module Langfuse
 end
 
 require_relative "langfuse/config"
+require_relative "langfuse/fork_safety"
 require_relative "langfuse/cache_constants"
 require_relative "langfuse/prompt_cache"
 require_relative "langfuse/prompt_fetch_result"
