@@ -677,7 +677,7 @@ Use `Langfuse.configured?` for a local, non-raising readiness check. This method
 
 Validation rules:
 
-- `public_key`, `secret_key`, and `base_url` must be non-empty string-like values
+- `public_key`, `secret_key`, and `base_url` must be non-empty Strings
 - `batch_size` must be a positive Integer
 - `flush_interval`, `timeout`, `cache_max_size`, `cache_lock_timeout`, and `cache_refresh_threads` must be positive numbers
 - `cache_ttl` must be a non-negative number
@@ -689,6 +689,10 @@ Validation rules:
 - `should_export_span` must respond to `#call` (if set)
 - `mask` must respond to `#call` (if set)
 - `mask_otel_spans` must respond to `#call` (if set)
+
+### Rails cache validation and boot order
+
+Setting `cache_backend = :rails` while caching is enabled requires `Rails.cache` to be populated at validation time. Rails assigns `Rails.cache` during its own `initialize_cache` step, so a Langfuse initializer that builds a client earlier than that now raises `ConfigurationError` instead of failing later on the first cache read. Build the client lazily, or use `:auto`, which falls back to the in-memory cache when `Rails.cache` is unavailable.
 
 ## Accessing Current Configuration
 

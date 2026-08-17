@@ -94,46 +94,36 @@ RSpec.describe Langfuse do
       expect { described_class.client }.not_to raise_error
     end
 
-    it "returns false for every hostile configuration value" do
-      hostile_values = {
-        public_key: 123,
-        secret_key: Object.new,
-        base_url: [],
-        timeout: "5",
-        batch_size: nil,
-        flush_interval: :ten,
-        cache_ttl: "60",
-        cache_max_size: false,
-        cache_lock_timeout: [],
-        cache_stale_ttl: "30",
-        cache_refresh_threads: :five,
-        cache_backend: :unknown,
-        prompt_cache_observer: "callable",
-        mask: 123,
-        mask_otel_spans: [],
-        should_export_span: {}
-      }
-
-      hostile_values.each do |attribute, value|
+    {
+      public_key: 123,
+      secret_key: Object.new,
+      base_url: [],
+      timeout: "5",
+      batch_size: nil,
+      flush_interval: :ten,
+      cache_ttl: "60",
+      cache_max_size: false,
+      cache_lock_timeout: [],
+      cache_stale_ttl: "30",
+      cache_refresh_threads: :five,
+      cache_backend: :unknown,
+      prompt_cache_observer: "callable",
+      mask: 123,
+      mask_otel_spans: [],
+      should_export_span: {}
+    }.each do |attribute, value|
+      it "returns false when #{attribute} is #{value.inspect}" do
         described_class.configuration.public_send("#{attribute}=", value)
-        expect(described_class.configured?).to be(false), "expected #{attribute}=#{value.inspect} to be invalid"
-        described_class.reset!
-        described_class.configure do |config|
-          config.public_key = "pk_test"
-          config.secret_key = "sk_test"
-        end
+
+        expect(described_class.configured?).to be false
       end
     end
 
-    it "returns false and warns once when configuration construction fails" do
+    it "returns false without raising when configuration construction fails" do
       described_class.reset!
       ENV["LANGFUSE_SAMPLE_RATE"] = "invalid"
-      logger = RSpec.configuration.test_logger
-      allow(logger).to receive(:warn)
 
       expect(described_class.configured?).to be false
-      expect(described_class.configured?).to be false
-      expect(logger).to have_received(:warn).with(/sample_rate must be numeric/).once
     ensure
       ENV.delete("LANGFUSE_SAMPLE_RATE")
     end
@@ -165,6 +155,13 @@ RSpec.describe Langfuse do
 
       expect(described_class.auth_check).to be false
       expect { described_class.auth_check! }.to raise_error(Langfuse::UnauthorizedError)
+    end
+
+    it "returns false when the request never reaches Langfuse" do
+      stub_request(:get, projects_url).to_timeout
+
+      expect(described_class.auth_check).to be false
+      expect { described_class.auth_check! }.to raise_error(Langfuse::ApiError)
     end
 
     it "returns false when credentials are absent" do

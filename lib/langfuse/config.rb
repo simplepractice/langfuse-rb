@@ -144,9 +144,6 @@ module Langfuse
     # @return [Float] Default trace sampling rate (sample all traces)
     DEFAULT_SAMPLE_RATE = 1.0
 
-    # @return [Logger] Logger used when logging is explicitly disabled
-    NULL_LOGGER = Logger.new(IO::NULL)
-
     # @return [Integer] Number of seconds representing indefinite cache duration (~1000 years)
     INDEFINITE_SECONDS = 1000 * 365 * 24 * 60 * 60
 
@@ -196,21 +193,21 @@ module Langfuse
     #
     # @param value [Logger, nil] Logger instance, or nil to disable logging
     # @return [Logger] The normalized logger
-    # @raise [Exception] if assigning the logger fails at the Ruby runtime level
     def logger=(value)
-      @logger = value || NULL_LOGGER
+      @logger = value || Logger.new(IO::NULL)
     end
 
     # Validate the configuration
     #
+    # Covers everything {#validate_tracing!} checks plus the client-only settings.
+    #
     # @raise [ConfigurationError] if configuration is invalid
     # @return [void]
     def validate!
-      validate_connection_settings!
-      validate_batching_settings!
-      validate_sample_rate!
+      validate_tracing!
       validate_client_settings!
-      validate_callables!
+      validate_callable!(prompt_cache_observer, "prompt_cache_observer")
+      validate_callable!(mask, "mask")
     end
 
     # Check whether the configuration can construct a client.
@@ -218,7 +215,6 @@ module Langfuse
     # This check is local. It does not validate credentials or network access.
     #
     # @return [Boolean] true when {#validate!} succeeds
-    # @raise [Exception] if a fatal non-StandardError exception occurs
     def valid?
       validate!
       true
@@ -305,19 +301,14 @@ module Langfuse
       validate_cache_backend!
     end
 
-    def validate_callables!
-      validate_callable!(prompt_cache_observer, "prompt_cache_observer")
-      validate_callable!(mask, "mask")
-      validate_callable!(mask_otel_spans, "mask_otel_spans")
-      validate_callable!(should_export_span, "should_export_span")
-    end
-
+    # Credentials reach the API as interpolated strings, so a value that only
+    # answers #to_str would authenticate with its #to_s output instead.
     def validate_required_string!(name, value, empty_message: "#{name} is required")
       raise ConfigurationError, empty_message if value.nil?
 
-      raise ConfigurationError, "#{name} must be a String" unless value.respond_to?(:to_str)
+      raise ConfigurationError, "#{name} must be a String" unless value.is_a?(String)
 
-      raise ConfigurationError, empty_message if value.to_str.empty?
+      raise ConfigurationError, empty_message if value.empty?
     end
 
     def validate_positive_number!(name, value)

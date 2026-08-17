@@ -100,6 +100,19 @@ module Langfuse
 
     # Check whether the configured credentials authenticate with Langfuse.
     #
+    # Any API failure returns false, including a request that never reached
+    # Langfuse, so false does not prove the credentials are wrong. Use
+    # {#auth_check!} to tell the failures apart.
+    #
+    # @return [Boolean] true when Langfuse accepts the credentials
+    def auth_check
+      auth_check!
+    rescue ApiError
+      false
+    end
+
+    # Check whether the configured credentials authenticate with Langfuse, raising on failure.
+    #
     # @return [true] true when Langfuse accepts the credentials
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] if the API request fails or returns no project

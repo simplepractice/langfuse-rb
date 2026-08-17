@@ -117,22 +117,24 @@ module Langfuse
     # This method does not access the network or validate credentials.
     #
     # @return [Boolean] true when the local configuration is valid
-    # @raise [Exception] if a fatal non-StandardError exception occurs
     def configured?
       configuration.valid?
-    rescue ConfigurationError => e
-      warn_invalid_configuration_once(e.message)
+    rescue ConfigurationError
+      # Reading `configuration` builds it from the environment, which can fail
+      # on its own before there is anything to validate.
       false
     end
 
     # Check whether Langfuse accepts the configured credentials.
     #
+    # Invalid local configuration and any API failure both return false,
+    # including a request that never reached Langfuse, so false does not prove
+    # the credentials are wrong. Use {.auth_check!} to tell the failures apart.
+    #
     # @return [Boolean] true when authentication succeeds, otherwise false
-    # @raise [Exception] if a fatal non-StandardError exception occurs
     def auth_check
-      auth_check!
-      true
-    rescue ConfigurationError, ApiError
+      client.auth_check
+    rescue ConfigurationError
       false
     end
 
@@ -435,14 +437,12 @@ module Langfuse
       @client = nil
       @noop_tracer = nil
       @tracing_disabled_warning_emitted = false
-      @invalid_configuration_warning_emitted = false
     rescue StandardError
       # Ignore shutdown errors during reset (e.g., in tests)
       @configuration = nil
       @client = nil
       @noop_tracer = nil
       @tracing_disabled_warning_emitted = false
-      @invalid_configuration_warning_emitted = false
     end
 
     # Creates a new observation (root or child)
@@ -594,7 +594,7 @@ module Langfuse
     #
     # @return [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
     def otel_tracer
-      return tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION) if setup_tracing_if_ready
+      return tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION) if ensure_tracing_started
 
       noop_tracer
     end
@@ -633,7 +633,7 @@ module Langfuse
       observation_class.new(otel_span, otel_tracer, attributes: attributes)
     end
 
-    def setup_tracing_if_ready
+    def ensure_tracing_started
       return true if OtelSetup.initialized?
 
       OtelSetup.setup(configuration)
@@ -654,18 +654,7 @@ module Langfuse
       end
     end
 
-    def warn_invalid_configuration_once(detail)
-      return if @invalid_configuration_warning_emitted
-
-      warning_mutex.synchronize do
-        return if @invalid_configuration_warning_emitted
-
-        warning_logger.warn("Langfuse configuration is invalid: #{detail}")
-        @invalid_configuration_warning_emitted = true
-      end
-    end
-
-    # Both warning paths fire precisely when configuration is known-bad, which
+    # The warning fires precisely when configuration is known-bad, which
     # includes the case where building it raises. Reading `configuration` here
     # would re-raise and escape the rescue that called us, so use the memoized
     # object only if it already exists.

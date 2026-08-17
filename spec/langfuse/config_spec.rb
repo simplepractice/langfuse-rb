@@ -121,8 +121,19 @@ RSpec.describe Langfuse::Config do
     it "uses a null logger when the configured logger is nil" do
       config = described_class.new { |c| c.logger = nil }
 
-      expect(config.logger).to equal(described_class::NULL_LOGGER)
+      expect(config.logger).to be_a(Logger)
       expect { config.logger.warn("not emitted") }.not_to raise_error
+    end
+
+    it "gives each config its own null logger so mutations stay local" do
+      config = described_class.new { |c| c.logger = nil }
+      other = described_class.new { |c| c.logger = nil }
+      original_level = other.logger.level
+
+      config.logger.level = original_level + 1
+
+      expect(other.logger).not_to equal(config.logger)
+      expect(other.logger.level).to eq(original_level)
     end
 
     it "uses the default logger when Rails.logger is nil" do
@@ -265,13 +276,18 @@ RSpec.describe Langfuse::Config do
         )
       end
 
-      it "accepts a string-like public key" do
+      # Credentials are interpolated into the Basic Auth header, so a #to_str-only
+      # value would authenticate with its #to_s output rather than the key.
+      it "rejects a public key that only responds to #to_str" do
         string_like_key = Object.new
         def string_like_key.to_str = "pk_test"
 
         config.public_key = string_like_key
 
-        expect { config.validate! }.not_to raise_error
+        expect { config.validate! }.to raise_error(
+          Langfuse::ConfigurationError,
+          "public_key must be a String"
+        )
       end
     end
 

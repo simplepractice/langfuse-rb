@@ -1496,6 +1496,35 @@ RSpec.describe Langfuse::Client do
     end
   end
 
+  describe "#auth_check" do
+    let(:client) { described_class.new(valid_config) }
+    let(:projects_url) { "#{valid_config.base_url}/api/public/projects" }
+
+    it "returns true when the credentials have a project" do
+      stub_request(:get, projects_url)
+        .to_return(
+          status: 200,
+          body: { "data" => [{ "id" => "project-id" }] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      expect(client.auth_check).to be true
+    end
+
+    it "returns false when Langfuse rejects the credentials" do
+      stub_request(:get, projects_url)
+        .to_return(status: 401, body: { message: "Invalid credentials" }.to_json)
+
+      expect(client.auth_check).to be false
+    end
+
+    it "returns false when the request never reaches Langfuse" do
+      stub_request(:get, projects_url).to_timeout
+
+      expect(client.auth_check).to be false
+    end
+  end
+
   describe "#trace_url" do
     let(:client) { described_class.new(valid_config) }
     let(:base_url) { valid_config.base_url }
