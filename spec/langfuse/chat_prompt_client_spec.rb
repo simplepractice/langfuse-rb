@@ -152,6 +152,30 @@ RSpec.describe Langfuse::ChatPromptClient do
     end
   end
 
+  describe "#variables" do
+    it "returns unique variables across message templates" do
+      data = prompt_data.merge(
+        "prompt" => [
+          { "role" => "system", "content" => "Hello {{user.name}} and {{shared}}" },
+          { "role" => "user", "content" => "{{shared}} {{#details}}{{topic}}{{/details}}" }
+        ]
+      )
+
+      expect(described_class.new(data).variables).to eq(%w[user.name shared details details.topic])
+    end
+
+    it "excludes message placeholders" do
+      data = prompt_data.merge(
+        "prompt" => [
+          { "type" => "placeholder", "name" => "history" },
+          { type: "message", role: "user", content: "Question: {{{question}}}" }
+        ]
+      )
+
+      expect(described_class.new(data).variables).to eq(["question"])
+    end
+  end
+
   describe "#compile" do
     let(:client) { described_class.new(prompt_data) }
 
