@@ -1,14 +1,28 @@
-# Getting Started with Langfuse Ruby SDK
+# Getting Started
 
-This is the happy path for a new consumer. The goal is simple: configure the SDK once, fetch a real prompt, send a real trace, and know where to go next without guessing how tracing works.
+This guide shows how to install the SDK and create a trace.
+It also shows how to verify the trace in Langfuse.
+You can add prompts and scores after this verification.
 
-## Before You Start
+## 1. Prepare the Environment
 
-- Ruby `>= 3.2.0`
-- A Langfuse project with API keys
-- At least one prompt created in the Langfuse UI
+You need Ruby `>= 3.2.0`, a Langfuse project, and project API keys.
 
-## 1. Install the Gem
+Set these variables in the process that runs the application:
+
+```bash
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+```
+
+`LANGFUSE_BASE_URL` is optional for Langfuse Cloud.
+The SDK does not load `.env` files.
+Load a `.env` file before SDK initialization.
+
+## 2. Install the Gem
+
+Add the SDK to your `Gemfile`:
 
 ```ruby
 gem "langfuse-rb"
@@ -20,76 +34,44 @@ Then install dependencies:
 bundle install
 ```
 
-## 2. Configure Langfuse Once at Startup
+## 3. Configure the Singleton Client
 
-Rails first, because that is the common consumer path.
-
-```ruby
-# config/initializers/langfuse.rb
-Langfuse.configure do |config|
-  config.public_key = Rails.application.credentials.dig(:langfuse, :public_key)
-  config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
-  config.base_url = ENV.fetch("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
-
-  config.cache_backend = :rails
-  config.cache_ttl = 300
-  config.cache_stale_ttl = 300
-end
-```
-
-Plain Ruby uses the same API:
+The SDK reads credentials from the environment.
+Use `Langfuse.configure` for application settings:
 
 ```ruby
 require "langfuse"
 
 Langfuse.configure do |config|
-  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
-  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
-  config.base_url = ENV.fetch("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+  config.environment = ENV.fetch("APP_ENV", "development")
+  config.release = ENV["APP_RELEASE"]
 end
 ```
 
-`Langfuse.configure` stores configuration only. It does not replace `OpenTelemetry.tracer_provider`. The default onboarding path is isolated tracing through the Langfuse helpers. If you want Langfuse to become the global OpenTelemetry provider, that is an explicit later step in [TRACING.md](TRACING.md#opentelemetry-integration).
+In a Rails application, put this block in `config/initializers/langfuse.rb`.
+See [RAILS.md](RAILS.md) for cache and job patterns.
 
-For the full config surface, see [CONFIGURATION.md](CONFIGURATION.md).
+`Langfuse.configure` stores configuration.
+It does not replace the process-wide `OpenTelemetry.tracer_provider`.
+The helper API uses an isolated Langfuse provider by default.
+Read [TRACING.md](TRACING.md#opentelemetry-integration) before you install the provider globally.
 
-## 3. Fetch and Compile a Prompt
-
-Create a prompt in the Langfuse UI first. For example:
-
-- Name: `support-answer`
-- Type: chat
-- Label: `production`
-
-Then fetch and compile it in your app:
+You can check local client readiness without a network request:
 
 ```ruby
-prompt = Langfuse.client.get_prompt("support-answer", label: "production")
-
-messages = prompt.compile(
-  customer_name: "Alice",
-  question: "How do I reset my password?"
-)
+abort "Langfuse configuration is incomplete" unless Langfuse.configured?
 ```
 
-If you prefer the one-call version:
+This check does not validate credentials.
+It also does not prove ingestion.
+The tracing helpers use a no-op tracer when the configuration is invalid.
+Thus, most request paths do not need this guard.
 
-```ruby
-messages = Langfuse.client.compile_prompt(
-  "support-answer",
-  label: "production",
-  variables: {
-    customer_name: "Alice",
-    question: "How do I reset my password?"
-  }
-)
-```
+## 4. Create a Useful Trace
 
-More prompt patterns live in [PROMPTS.md](PROMPTS.md).
-
-## 4. Send Your First Real Trace
-
-Use a root observation for the workflow, then nest the model call as a generation. This is the pattern most consumers actually want.
+Use one trace for each self-contained unit of work.
+Use stable action names.
+Put meaningful input and output on the root observation.
 
 ```ruby
 class SupportAnswerService
@@ -100,43 +82,25 @@ class SupportAnswerService
   def call(user:, question:)
     Langfuse.propagate_attributes(
       user_id: user.id.to_s,
-      session_id: "support-#{user.id}"
+      session_id: "support-#{user.id}",
+      tags: ["support"]
     ) do
-      Langfuse.observe("support-answer", input: { question: question }) do |root|
-        prompt = Langfuse.client.get_prompt("support-answer", label: "production")
-        messages = prompt.compile(
-          customer_name: user.name,
-          question: question
-        )
+      Langfuse.observe("answer-support-question", input: { question: question }) do |root|
+        answer = root.start_observation("generate-answer", as_type: :generation) do |generation|
+          generation.model = "gpt-4.1-mini"
+          generation.input = { question: question }
 
-        answer = root.start_observation("llm-response", as_type: :generation) do |gen|
-          gen.model = "gpt-4.1-mini"
-          gen.input = messages
+          response = @llm_client.chat(question)
 
-          response = @llm_client.chat(
-            parameters: {
-              model: "gpt-4.1-mini",
-              messages: messages
-            }
+          generation.update(
+            output: response.fetch(:content),
+            usage_details: response.fetch(:usage)
           )
 
-          answer = response.dig("choices", 0, "message", "content")
-
-          gen.update(
-            output: answer,
-            usage_details: {
-              prompt_tokens: response.dig("usage", "prompt_tokens"),
-              completion_tokens: response.dig("usage", "completion_tokens"),
-              total_tokens: response.dig("usage", "total_tokens")
-            }
-          )
-
-          answer
+          response.fetch(:content)
         end
 
-        root.event(name: "reply-generated", input: { channel: "support" })
         root.update(output: { answer: answer })
-
         answer
       end
     end
@@ -144,60 +108,122 @@ class SupportAnswerService
 end
 ```
 
-Why this shape matters:
+This creates:
 
-- The root observation gives you a real trace entrypoint
-- The nested generation carries model-specific fields like `model` and `usage_details`
-- `root.event(...)` persists a point-in-time annotation on the active observation
-- `root.update(...)` persists the final workflow output instead of leaving the trace half-empty
+- One root observation for the support workflow.
+- One nested generation for the model call.
+- Root input and output for trace-level review.
+- Model and token information on the generation.
+- User, session, environment, and tag values for filters.
 
-Plain Ruby is the same pattern without Rails wrappers:
+See [TRACING.md](TRACING.md) for events, background jobs, custom trace IDs, masking, and OpenTelemetry ownership.
 
-```ruby
-Langfuse.observe("support-answer", input: { question: question }) do |root|
-  answer = root.start_observation("llm-response", as_type: :generation) do |gen|
-    gen.model = "gpt-4.1-mini"
-    # ...
-  end
+## 5. Flush Before Immediate Readback
 
-  root.update(output: { answer: answer })
-end
-```
+The SDK exports data in batches.
+A normal process exit flushes pending data automatically.
+Long-running applications do not need to flush each request.
 
-For deeper tracing patterns, see [TRACING.md](TRACING.md).
-
-## 5. Verify It Worked
-
-After running the code:
-
-1. Open the Langfuse UI.
-2. Find the `support-answer` trace.
-3. Confirm you can see:
-   - the root observation input and output
-   - the nested `llm-response` generation
-   - usage details on the generation
-   - the `reply-generated` event
-
-If you do not see traces, start with [ERROR_HANDLING.md](ERROR_HANDLING.md) and the Rails operational checks in [RAILS.md](RAILS.md#troubleshooting).
-
-## 6. Add Scores Once Traces Exist
-
-Do not invent a scoring workflow before the trace is working. First make the trace visible, then attach evaluation or feedback signals.
-
-Example:
+Call `Langfuse.force_flush` at an explicit durability boundary.
+Also call it before an immediate verification read:
 
 ```ruby
-Langfuse.observe("support-answer") do |root|
-  # ... do work ...
-  root.score_trace(name: "customer-satisfaction", value: 5)
-end
+Langfuse.force_flush
 ```
 
-Scoring details live in [SCORING.md](SCORING.md).
+The normal exit hook cannot run after abrupt termination such as `SIGKILL`.
 
-## What to Read Next
+## 6. Verify Backend Ingestion
 
-- [PROMPTS.md](PROMPTS.md) if prompt versioning and fallbacks are your next problem
-- [TRACING.md](TRACING.md) if you need nested workflows, events, jobs, or OpenTelemetry integration
-- [SCORING.md](SCORING.md) if you want feedback or eval signals on traces
-- [RAILS.md](RAILS.md) if you are wiring this into controllers, services, or background jobs
+Keep the trace ID returned by the root observation when you need deterministic readback:
+
+```ruby
+trace_id = nil
+
+Langfuse.observe("verify-sdk", input: { source: "getting-started" }) do |root|
+  trace_id = root.trace_id
+  root.update(output: { status: "ok" })
+end
+
+Langfuse.force_flush
+
+rows = Langfuse.client.list_observations(
+  trace_id: trace_id,
+  fields: "core,basic,io"
+).fetch("data")
+
+raise "trace was not ingested" unless rows.any? { |row| row["name"] == "verify-sdk" }
+```
+
+Ingestion can have a short delay.
+A deployment probe must retry the bounded read.
+Do not use an unbounded project scan.
+
+The Langfuse CLI provides an independent read path:
+
+```bash
+export LANGFUSE_HOST="${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}"
+npx --yes langfuse-cli@latest api observations list \
+  --trace-id "$TRACE_ID" \
+  --fields core,basic,io \
+  --json
+```
+
+CLI JSON output contains `status`, `headers`, and `body`.
+Observation rows are in `body.data`.
+See [DATA_ACCESS.md](DATA_ACCESS.md) for pagination, metrics, score reads, and a complete verification procedure.
+
+## 7. Add a Managed Prompt
+
+Create a prompt in Langfuse.
+Then, fetch the prompt by a stable label:
+
+```ruby
+prompt = Langfuse.client.get_prompt("support-answer", label: "production")
+
+expected_variables = ["customer.name", "question"]
+raise "prompt contract changed" unless prompt.variables == expected_variables
+
+messages = prompt.compile(
+  customer: { name: "Alice" },
+  question: "How do I reset my password?"
+)
+```
+
+See [PROMPTS.md](PROMPTS.md) for text and chat prompts, message placeholders, fallbacks, versioning, and caching.
+
+## 8. Add Scores Deliberately
+
+Use asynchronous score creation for inline telemetry:
+
+```ruby
+Langfuse.create_score(
+  name: "helpful",
+  value: true,
+  trace_id: trace_id,
+  data_type: :boolean
+)
+```
+
+Use synchronous score creation when the caller needs delivery confirmation:
+
+```ruby
+score_id = Langfuse.create_score!(
+  id: "feedback-#{feedback.id}",
+  name: "helpful",
+  value: true,
+  trace_id: trace_id,
+  data_type: :boolean
+)
+```
+
+See [SCORING.md](SCORING.md) for delivery semantics, score types, environment inheritance, batching, and idempotency.
+
+## Next Steps
+
+- [Prompt Management](PROMPTS.md) for managed prompt workflows
+- [Tracing](TRACING.md) for trace design and OpenTelemetry integration
+- [Scoring](SCORING.md) for evaluation and feedback
+- [Data Access](DATA_ACCESS.md) for SDK and CLI queries
+- [Configuration](CONFIGURATION.md) for production controls
+- [Testing Tracing](TESTING.md) for network-free span assertions

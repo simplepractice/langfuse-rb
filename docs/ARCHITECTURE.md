@@ -1,6 +1,6 @@
 # Architecture Overview
 
-High-level architecture and key design decisions for the Langfuse Ruby SDK.
+This document describes the Langfuse Ruby SDK architecture and its main design decisions.
 
 ## Table of Contents
 
@@ -16,23 +16,25 @@ The Langfuse Ruby SDK follows these core principles:
 
 ### 1. LaunchDarkly-Inspired API
 
-**Flat API surface** - All methods on `Client`, not nested managers:
+Put all public methods on `Client`.
+Do not use nested managers:
 
 ```ruby
-# ✅ Good - Flat API
+# Correct: flat API
 client.get_prompt("name")
 client.compile_prompt("name", variables: {})
 
-# ❌ Avoid - Nested managers
+# Incorrect: nested managers
 client.prompts.get("name")
 client.prompts.compile("name")
 ```
 
-**Why?** Simpler, more discoverable API with better IDE autocomplete support.
+This API reduces the number of classes that a user must know.
+It also gives direct IDE autocomplete results.
 
 ### 2. Rails-Friendly
 
-Global configuration pattern that feels natural in Rails:
+Use one global configuration block in Rails:
 
 ```ruby
 # config/initializers/langfuse.rb
@@ -41,7 +43,7 @@ Langfuse.configure do |config|
   config.secret_key = ENV['LANGFUSE_SECRET_KEY']
 end
 
-# Use anywhere
+# Use the configured client
 client = Langfuse.client
 ```
 
@@ -54,21 +56,22 @@ client = Langfuse.client
 
 ### 4. Minimal Dependencies
 
-Only add dependencies when absolutely necessary:
+Add a dependency only when the SDK requires it:
 
-- **Faraday** - HTTP client (industry standard)
-- **Mustache** - Variable templating (logic-less, secure)
-- **OpenTelemetry** - Distributed tracing (CNCF standard)
+- **Faraday** - HTTP client
+- **Mustache** - Logic-free variable templates
+- **OpenTelemetry** - Distributed tracing
 
-No Rails dependency - works in any Ruby project.
+The SDK has no Rails dependency.
+It operates in any supported Ruby project.
 
 ### 5. Thread-Safe by Default
 
-All components use proper synchronization:
+SDK components use these synchronization mechanisms:
 
 - `PromptCache` uses Monitor
 - `RailsCacheAdapter` uses Redis atomic operations
-- `ScoreClient` uses Queue and Mutex for thread-safe batching
+- `ScoreClient` uses a bounded `PendingScoreQueue` and mutexes for ordered batching
 - OpenTelemetry handles context propagation
 
 ## Core Components
@@ -88,7 +91,8 @@ end
 **Responsibilities:**
 - Store SDK configuration
 - Validate required settings
-- Provide defaults
+- Read supported environment defaults
+- Control tracing and scoring independently from the OpenTelemetry trace switch
 
 ### 2. HTTP Client (`Langfuse::ApiClient`)
 
@@ -116,7 +120,7 @@ prompt_data = api_client.get_prompt("name")
 
 #### TextPromptClient
 
-For simple string templates:
+Use this client for string templates:
 
 ```ruby
 prompt = TextPromptClient.new(api_response)
@@ -183,6 +187,7 @@ text = client.compile_prompt("name", variables: { name: "Alice" })
 - Cache backend selection
 - High-level API methods
 - Score creation and management (delegates to ScoreClient)
+- Current observation, metric, and score reads (delegates through ReadApi)
 
 ### 6. Tracing Layer (OpenTelemetry-based)
 
@@ -230,6 +235,10 @@ span.end
 - **OtelSetup** - Initializes OpenTelemetry SDK with OTLP exporter
 - **SpanProcessor** - Propagates trace-level attributes to child spans
 - **OtelAttributes** - Converts Langfuse attributes to OpenTelemetry format
+- **MaskingExporter** - Applies export-stage patches to Langfuse's span copy
+- **AppRootTracking** - Preserves logical application roots across filtered parents
+- **ForkSafety** - Rebuilds SDK-owned background state in child processes
+- **ExitHook** - Flushes pending tracing and scores during normal process exit
 
 **Responsibilities:**
 - Wrap OpenTelemetry spans with Langfuse-specific functionality
@@ -247,13 +256,15 @@ score_client.create(name: "quality", value: 0.85, trace_id: "abc123...")
 ```
 
 **Features:**
-- Thread-safe queuing with `Queue`
-- Automatic batching (configurable batch_size and flush_interval)
+- Bounded, ordered asynchronous queue
+- Synchronous score creation through the Scores API
+- Automatic batching by count, payload size, and flush interval
 - Background flush timer thread
 - Integration with OpenTelemetry spans (extracts trace_id/observation_id)
 
 **Responsibilities:**
 - Queue score events for batching
+- Reject or drop work at documented boundaries instead of allowing unbounded memory growth
 - Extract trace/observation IDs from active OTel spans
 - Batch and send scores to ingestion API
 - Handle graceful shutdown and flush
@@ -284,79 +295,83 @@ end
 
 **Decision:** Build tracing on OpenTelemetry instead of custom implementation
 
-**Why?**
-- Industry standard (CNCF)
-- W3C Trace Context compatibility when the host app configures propagation
-- Works with existing APM tools (Datadog, New Relic, etc.)
-- Battle-tested context and propagation model
+**Reasons:**
+- OpenTelemetry is a Cloud Native Computing Foundation standard.
+- It supports W3C Trace Context when the application configures propagation.
+- It can integrate with application performance monitoring tools.
+- It provides context and propagation components.
 
-**Trade-offs:**
-- ✅ More robust, future-proof
-- ✅ Cross-service tracing when the app installs an OpenTelemetry propagator
-- ❌ ~10 additional gem dependencies
-- ❌ Slightly more complex setup
+**Benefits:**
+- The application can use one trace context across services.
+- The application can install an OpenTelemetry propagator.
+
+**Limits:**
+- OpenTelemetry adds approximately 10 gem dependencies.
+- OpenTelemetry configuration adds setup steps.
 
 ### 2. Dual Cache Backend
 
 **Decision:** Support both in-memory and Rails.cache backends
 
-**Why?**
-- In-memory: Perfect for single-process apps, scripts, small deployments
-- Rails.cache: Essential for large multi-process deployments (100+ processes)
+**Reasons:**
+- The in-memory cache applies to scripts and single-process applications.
+- `Rails.cache` can share prompt data across processes.
 
-**Trade-offs:**
-- ✅ Flexibility for different use cases
-- ✅ Zero external dependencies by default
-- ❌ More code to maintain
-- ❌ Two code paths to test
+**Benefits:**
+- Applications can select a cache for their process model.
+- The default cache does not require an external service.
+
+**Limits:**
+- The SDK must maintain two cache implementations.
+- Tests must cover both cache implementations.
 
 ### 3. Stampede Protection via Distributed Locks
 
 **Decision:** Use Redis atomic operations for stampede protection
 
-**Why?**
-- Prevents thundering herd (1,200 simultaneous API calls → 1 call)
-- Critical for large-scale deployments
-- Works automatically with Rails.cache backend
+**Reasons:**
+- A distributed lock prevents concurrent cache misses from producing duplicate API calls.
+- The `Rails.cache` backend can coordinate many application processes.
 
-**Trade-offs:**
-- ✅ Massive performance improvement at scale
-- ✅ Automatic - no user configuration needed
-- ❌ Only works with Rails.cache backend
-- ❌ Slight latency increase for waiting processes
+**Benefits:**
+- One process refreshes a stale cache entry.
+- Other processes wait for the shared result.
+- No additional SDK option is necessary.
+
+**Limits:**
+- Distributed locking applies only to the `Rails.cache` backend.
+- Waiting processes have additional latency.
 
 ### 4. Mustache for Variable Substitution
 
 **Decision:** Use Mustache templating instead of ERB or custom solution
 
-**Why?**
-- Logic-less (no code execution = secure)
-- Same syntax as Langfuse JavaScript SDK (consistency)
-- Well-tested, mature library
-- Supports nested objects, arrays, conditionals
+**Reasons:**
+- Mustache templates do not execute Ruby code.
+- The syntax matches the Langfuse JavaScript SDK.
+- Mustache supports nested objects, arrays, and sections.
 
-**Alternatives considered:**
-- ERB: Too powerful, security concerns
-- String interpolation: Not flexible enough
-- Custom: Reinventing the wheel
+**Alternatives:**
+- ERB can execute Ruby code.
+- String interpolation does not support the required template structures.
+- A custom parser would duplicate Mustache behavior.
 
 ### 5. Flat API Surface
 
 **Decision:** All methods on `Client`, not nested managers
 
-**Why?**
-- Inspired by LaunchDarkly Ruby SDK
-- Simpler mental model
-- Better IDE autocomplete
-- Fewer classes to remember
+**Reasons:**
+- The LaunchDarkly Ruby SDK uses this API shape.
+- Direct methods reduce the number of public classes.
+- Direct methods give direct IDE autocomplete results.
 
 **Example:**
 ```ruby
-# ✅ Flat API
+# Correct: flat API
 client.get_prompt("name")
 client.compile_prompt("name", variables: {})
 
-# ❌ Nested (rejected)
+# Incorrect: nested API
 client.prompts.get("name")
 client.prompts.compile("name", variables: {})
 ```
@@ -365,49 +380,54 @@ client.prompts.compile("name", variables: {})
 
 **Decision:** `Langfuse.configure` block pattern with global client
 
-**Why?**
-- Rails-friendly (feels natural in initializers)
-- Reduces boilerplate (don't pass client everywhere)
-- Thread-safe singleton pattern
-- Easy to reset for testing
+**Reasons:**
+- Rails initializers commonly use global configuration blocks.
+- Application code does not have to pass a client to each object.
+- The singleton uses synchronization.
+- Tests can call `Langfuse.reset!`.
 
-**Trade-offs:**
-- ✅ Convenient for most use cases
-- ✅ Follows Rails conventions
-- ❌ Global state (can be problematic in tests)
-- ✅ Mitigated with `Langfuse.reset!` method
+**Benefits:**
+- Applications use one configuration entry point.
+- The configuration shape follows Rails conventions.
+
+**Limit:**
+- The singleton is global state.
 
 ### 7. Observation-Based Tracing Model
 
 **Decision:** Use unified observation model instead of separate trace/span/generation classes
 
-**Why?**
-- Aligns with Langfuse JavaScript SDK architecture
-- Single `start_observation()` method with `as_type` parameter
-- Flexible - supports 10+ observation types (span, generation, event, embedding, agent, tool, chain, retriever, evaluator, guardrail)
-- Consistent API for all observation types
+**Reasons:**
+- The model matches the Langfuse JavaScript SDK architecture.
+- One `start_observation()` method accepts an `as_type` parameter.
+- The API supports all Langfuse observation types.
 
-**Trade-offs:**
-- ✅ Consistent API across all observation types
-- ✅ Easy to add new observation types
-- ✅ Aligns with Langfuse platform model
-- ❌ Slightly more complex than separate classes
+**Benefits:**
+- All observation types use the same API.
+- The model can include new observation types.
+- The model matches the Langfuse platform.
 
-### 8. OTLP Export Instead of Custom Exporter
+**Limit:**
+- Callers must select the correct `as_type` value.
 
-**Decision:** Use OpenTelemetry OTLP exporter instead of custom Langfuse exporter
+### 8. OTLP as the Default Export Protocol
 
-**Why?**
-- Standard OpenTelemetry protocol (OTLP)
-- Langfuse server handles OTLP → Langfuse format conversion
-- Future-proof (OTLP is industry standard)
-- Automatic batching via BatchSpanProcessor
+**Decision:** Use the OpenTelemetry OTLP exporter by default.
+Require explicit exporter injection.
 
-**Trade-offs:**
-- ✅ Standard protocol (OTLP)
-- ✅ Server-side conversion (simpler SDK)
-- ✅ Works with any OTLP-compatible backend
-- ❌ Requires Langfuse server to support OTLP (which it does)
+**Reasons:**
+- OTLP is an OpenTelemetry protocol.
+- The Langfuse server converts OTLP data to the Langfuse format.
+- `BatchSpanProcessor` supplies batch export.
+- `Config#span_exporter` supplies an explicit test and integration interface.
+
+**Benefits:**
+- The SDK uses one export protocol.
+- The server owns format conversion.
+- An injected exporter uses the normal sampler, filter, enrichment, masking, and batch pipeline.
+
+**Limit:**
+- The Langfuse server must support OTLP.
 
 ## Data Flow
 
@@ -456,8 +476,10 @@ User Code
             └─> gen.usage_details = {...} → Sets token attributes via OTel span.set_attribute()
        ├─> OTel BatchSpanProcessor collects spans
        ├─> SpanProcessor propagates trace-level attributes to new spans
+       ├─> MaskingExporter transforms the Langfuse copy when configured
        └─> OTLP Exporter sends spans to Langfuse
             ├─> POST /api/public/otel/v1/traces (OTLP format)
+            ├─> x-langfuse-ingestion-version: 4
             ├─> Batch export (50 spans per batch, configurable)
             └─> Langfuse server converts OTLP → Langfuse ingestion format
 ```
@@ -466,15 +488,26 @@ User Code
 
 ```
 User Code
-  └─> Langfuse.create_score(name: "quality", value: 0.85, trace_id: "abc123")
-       ├─> ScoreClient.create() validates and normalizes score
-       ├─> Build score event hash
-       ├─> Queue event (thread-safe Queue)
-       ├─> Check if batch_size reached → trigger flush
-       └─> Background flush timer (every flush_interval seconds)
-            ├─> Collect queued events
-            ├─> ApiClient.send_batch() → POST /api/public/ingestion
-            └─> Retry on transient errors (429, 503, 504)
+User Code
+  ├─> Langfuse.create_score(...)
+  │    ├─> Validate, normalize, and snapshot the score payload
+  │    ├─> Add to bounded PendingScoreQueue
+  │    └─> Flush by count, payload size, timer, or lifecycle boundary
+  │         └─> ApiClient.send_batch() → POST /api/public/ingestion
+  └─> Langfuse.create_score!(...)
+       ├─> Validate, normalize, and snapshot the same score payload
+       └─> ApiClient.create_score() → POST /api/public/scores
+```
+
+### Process Lifecycle
+
+```
+Application boot
+  └─> Langfuse.configure stores settings
+       └─> First trace or client call starts required resources lazily
+            ├─> fork child rebuilds SDK-owned queues and workers
+            ├─> explicit force_flush sends pending spans without shutdown
+            └─> normal process exit shuts down tracing and scores once
 ```
 
 ## Technology Choices

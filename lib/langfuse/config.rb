@@ -79,7 +79,7 @@ module Langfuse
     # @return [Symbol] Reserved no-op queue name for future async job integration
     attr_accessor :job_queue
 
-    # @return [String, nil] Default tracing environment applied to new traces/observations
+    # @return [String, nil] Default environment applied to traces, observations, and scores
     attr_accessor :environment
 
     # @return [String, nil] Default release identifier applied to new traces/observations

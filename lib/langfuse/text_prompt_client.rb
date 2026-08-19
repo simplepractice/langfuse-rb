@@ -12,7 +12,7 @@ module Langfuse
   # @example Basic usage
   #   prompt_data = api_client.get_prompt("greeting")
   #   text_prompt = Langfuse::TextPromptClient.new(prompt_data)
-  #   text_prompt.compile(variables: { name: "Alice" })
+  #   text_prompt.compile(name: "Alice")
   #   # => "Hello Alice!"
   #
   # @example Accessing metadata

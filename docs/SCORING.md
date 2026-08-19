@@ -4,14 +4,40 @@ Add quality scores to your traces and observations for evaluation and analytics.
 
 ## Overview
 
-Scores let you evaluate LLM outputs:
+Use scores to evaluate LLM output:
+
 - **Human feedback:** User thumbs up/down, star ratings
 - **Automated metrics:** Accuracy, relevance, safety checks
 - **A/B testing:** Compare prompt/model performance
 
 Scores can be attached to:
+
 - Entire traces (end-to-end quality)
 - Individual observations (LLM call quality)
+
+## Choose a Delivery Mode
+
+The SDK provides two score creation contracts:
+
+| Method | Delivery | Return value | Best for |
+| --- | --- | --- | --- |
+| `create_score` | Asynchronous ingestion queue | `nil` | Inline telemetry and high-volume evaluation |
+| `create_score!` | Synchronous Scores API request | Created score ID | User feedback, durable verdicts, and workflows that must observe API failure |
+
+`create_score` confirms that the SDK accepted the score into its bounded queue.
+It does not confirm backend storage.
+`create_score!` confirms that Langfuse accepted the HTTP request.
+For retryable synchronous work, use a stable `id`.
+After an uncertain network failure, use the same complete payload for the retry.
+
+Both methods use the same score validation and environment order.
+An explicit score `environment` has first priority.
+`config.environment` has second priority.
+Otherwise, Langfuse uses its `default` environment.
+
+When `tracing_enabled` is false, both methods are no-ops.
+In this mode, `create_score!` returns `nil`.
+`OTEL_SDK_DISABLED=true` does not disable scores.
 
 ## Score Data Types
 
@@ -184,6 +210,18 @@ Langfuse.create_score(
 )
 ```
 
+Use the synchronous module-level method when delivery is part of the caller's contract:
+
+```ruby
+score_id = Langfuse.create_score!(
+  id: "feedback-#{feedback.id}",
+  name: "user_feedback",
+  value: true,
+  trace_id: trace_id,
+  data_type: :boolean
+)
+```
+
 ### Scoring Active Observations
 
 Score the currently active observation (from OpenTelemetry context):
@@ -203,7 +241,7 @@ Langfuse.observe("generate-summary", as_type: :generation) do |gen|
 end
 ```
 
-This is useful when you don't have the observation ID but want to score from within the traced block.
+Use this method when the traced block does not have an observation ID.
 
 ### Scoring Active Traces
 
@@ -403,7 +441,14 @@ Langfuse.configure do |config|
 end
 ```
 
-The asynchronous queue is bounded. If the queue is full, the SDK logs an error, drops the new score, and returns without waiting for capacity. The SDK splits flush requests before a multi-score JSON payload exceeds 2.5 MB. A failed batch stays at the front of the queue for a later flush. Use `create_score!` when the caller needs synchronous delivery and an API error result.
+The asynchronous queue has a fixed capacity.
+If the queue is full, the SDK logs an error and drops the new score.
+The call does not wait for capacity.
+The SDK keeps each multi-score JSON payload below 2.5 MB.
+Retryable failures keep the batch at the front of the queue.
+The SDK logs and discards permanent batch failures.
+Thus, the SDK can send later valid scores.
+Use `create_score!` when the caller needs synchronous delivery and an API error result.
 
 **Manual flush:**
 
@@ -414,12 +459,34 @@ Langfuse.create_score(name: "critical", value: 1, trace_id: "abc", data_type: :n
 Langfuse.flush_scores  # Send immediately
 ```
 
-Use before shutdown:
+Use a manual flush before an immediate readback.
+Also use it at an explicit durability boundary:
 
 ```ruby
-# Before process exit
 Langfuse.flush_scores
 ```
+
+A normal process exit flushes pending scores automatically.
+Do not flush on every request.
+An abrupt termination such as `SIGKILL` cannot run the exit hook.
+
+## Reading Scores
+
+Use `client.list_scores` for typed score records and cursor pagination:
+
+```ruby
+page = Langfuse.client.list_scores(
+  trace_id: trace_id,
+  data_type: "BOOLEAN,CORRECTION",
+  fields: "details,subject"
+)
+
+page.fetch("data").each do |score|
+  puts "#{score['dataType']}: #{score['value'].inspect}"
+end
+```
+
+See [DATA_ACCESS.md](DATA_ACCESS.md) for the v3 response contract, independent CLI readback, and end-to-end verification.
 
 ## Sampling Behavior
 
@@ -485,7 +552,7 @@ Langfuse.observe("process-order", trace_id: trace_id) do |obs|
   obs.update(output: result)
 end
 
-# Later (background job, different service) — recompute, don't look up
+# Later, in a background job or different service, calculate the ID again
 trace_id = Langfuse.create_trace_id(seed: "order-#{order.id}")
 
 Langfuse.create_score(
@@ -498,7 +565,7 @@ Langfuse.create_score(
 
 #### Alternative: Store the Trace ID
 
-If you don't have a stable external identifier, capture and persist the trace ID:
+If you do not have a stable external identifier, capture and store the trace ID:
 
 ```ruby
 # During request
@@ -559,3 +626,4 @@ Langfuse.create_score(
 - [TRACING.md](TRACING.md) - Creating observations to score
 - [API_REFERENCE.md](API_REFERENCE.md) - Complete scoring API reference
 - [CONFIGURATION.md](CONFIGURATION.md) - Batch configuration
+- [DATA_ACCESS.md](DATA_ACCESS.md) - Read and verify persisted scores

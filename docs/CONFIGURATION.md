@@ -18,7 +18,7 @@ Call this once at application startup (Rails initializer, boot script, etc.).
 
 ## Tracing Ownership
 
-This is the part people get wrong.
+Select the tracing owner before you configure OpenTelemetry.
 
 - `Langfuse.configure` stores configuration only.
 - Module-level tracing initializes lazily on first use.
@@ -26,7 +26,7 @@ This is the part people get wrong.
 - `Langfuse.tracer_provider` is the explicit seam for installing Langfuse as the global OpenTelemetry provider.
 - `should_export_span` only runs on spans handled by Langfuse's provider.
 - Filtering is not the fix for ambient-span overcapture. Isolation is.
-- Langfuse does not auto-configure a second OpenTelemetry backend or any multi-export pipeline for you.
+- Langfuse does not configure a second OpenTelemetry backend or an export pipeline with multiple destinations.
 
 Default isolated setup:
 
@@ -48,7 +48,22 @@ end
 OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 ```
 
-If you also want propagation or another OpenTelemetry backend, configure those in your application. Langfuse does not infer or install them.
+If the application needs propagation or another OpenTelemetry backend, configure them in the application.
+Langfuse does not install them.
+
+### Runtime Modes
+
+Do not combine the Langfuse telemetry switch with the OpenTelemetry switch:
+
+| Configuration | Traces | Asynchronous scores | Synchronous scores | Prompt and read APIs |
+| --- | --- | --- | --- | --- |
+| Default | Enabled | Enabled | Enabled | Enabled |
+| `tracing_enabled = false` or `LANGFUSE_TRACING_ENABLED=false` | Disabled | Disabled | Disabled and returns `nil` | Available with valid credentials |
+| `OTEL_SDK_DISABLED=true` | Disabled | Enabled | Enabled | Enabled |
+
+`tracing_enabled` is the Langfuse telemetry switch.
+It disables tracing and scoring.
+`OTEL_SDK_DISABLED` disables only OpenTelemetry trace export.
 
 ## All Configuration Options
 
@@ -177,8 +192,8 @@ This flag does not independently turn SWR on or off. SWR activates when `cache_s
 
 **Compatibility:**
 
-- ✅ Works with `:memory` backend
-- ✅ Works with `:rails` backend
+- Available with the `:memory` backend
+- Available with the `:rails` backend
 
 See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for detailed usage.
 
@@ -276,7 +291,13 @@ config.flush_interval = 5  # Flush more frequently
 config.score_queue_capacity = 20_000
 ```
 
-A full queue does not wait for capacity. The SDK logs an error and drops only the new asynchronous score. Synchronous `create_score!` calls do not use this queue. Flush requests remain below 2.5 MB when a batch contains more than one score. Failed batches stay queued in their original order for a later flush.
+A full queue does not wait for capacity.
+The SDK logs an error and drops only the new asynchronous score.
+Synchronous `create_score!` calls do not use this queue.
+A multi-score flush request stays below 2.5 MB.
+Retryable failures keep the batch at the front of the queue.
+The SDK logs and discards permanent batch failures.
+Thus, the SDK can send later valid scores.
 
 #### `sample_rate`
 
@@ -328,7 +349,7 @@ config.logger = nil
 
 The SDK normalizes `nil` to a null logger. Logger calls remain safe when output is disabled.
 
-#### `tracing_async` ⚠️ Experimental
+#### `tracing_async` (Experimental)
 
 - **Type:** Boolean
 - **Default:** `true`
@@ -422,7 +443,7 @@ Use one shared DogStatsD client. At application shutdown, call `Langfuse.shutdow
 before `statsd.close` so the final batch processor metrics can leave the DogStatsD
 client's buffer.
 
-#### `job_queue` ⚠️ Experimental
+#### `job_queue` (Experimental)
 
 - **Type:** Symbol
 - **Default:** `:default`
@@ -439,7 +460,7 @@ config.job_queue = :langfuse  # Reserved/no-op today
 
 - **Type:** String
 - **Default:** `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]` if set)
-- **Description:** Default tracing environment applied to new traces/observations
+- **Description:** Default environment applied to new traces, observations, and scores
 
 ```ruby
 config.environment = "production"
@@ -472,7 +493,7 @@ This callback only runs for spans processed by Langfuse's tracer provider. Under
 
 The SDK calls the callback once after each span finishes. The callback can use final attributes, duration, and status.
 
-If you want shared OpenTelemetry spans to be eligible for this filter, install Langfuse explicitly:
+To make shared OpenTelemetry spans eligible for this filter, install the Langfuse provider explicitly:
 
 ```ruby
 OpenTelemetry.tracer_provider = Langfuse.tracer_provider
@@ -484,7 +505,8 @@ When Langfuse processes a span and no custom filter is configured, default behav
 - Spans with `gen_ai.*` attributes
 - Spans from conservative LLM-related instrumentation scopes such as `langsmith.*`, `openinference.*`, and `opentelemetry.instrumentation.anthropic.*`
 
-Composing with `Langfuse.default_export_span?` keeps that allowlist and lets you add tighter exclusions.
+Combine the callback with `Langfuse.default_export_span?` to keep that allowlist.
+The callback can add more exclusions.
 
 Use this callback to narrow a provider path Langfuse already owns. Do not treat it as the fix for default ambient-span overcapture. The isolated default already prevents that problem.
 
@@ -573,7 +595,7 @@ There are three states worth documenting.
 
 ### Explicit Global Install with `Langfuse.tracer_provider`
 
-If you want Langfuse to own the global OpenTelemetry provider, install it explicitly:
+To make Langfuse the global OpenTelemetry provider, install it explicitly:
 
 ```ruby
 require "opentelemetry/trace/propagation/trace_context"
@@ -587,14 +609,18 @@ OpenTelemetry.tracer_provider = Langfuse.tracer_provider
 OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
 ```
 
-That global install is a lifecycle commitment. `Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider. If you reset or reconfigure Langfuse, reinstall the tracer provider and any propagators you want afterward.
+The application controls the lifecycle of a global provider installation.
+`Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider.
+After a reset or new configuration, install the required tracer provider and propagators again.
 
 ### Additional OTel Backends Are Application-Owned
 
-If you want spans in another OpenTelemetry backend as well, configure that pipeline in your application. Langfuse does not auto-install multi-export. That can mean:
+To send spans to another OpenTelemetry backend, configure the export pipeline in the application.
+Langfuse does not install export to multiple destinations.
+Use one of these configurations:
 
-- adding processors/exporters to the provider you own
-- or managing your own provider pipeline explicitly
+- Add processors or exporters to the application-owned provider.
+- Manage an application-owned provider pipeline.
 
 After the first successful tracing initialization, these settings require `Langfuse.reset!` before changes take effect:
 
@@ -631,9 +657,11 @@ The SDK automatically reads these environment variables as defaults when no expl
 - `LANGFUSE_FLUSH_AT` — score flush threshold and maximum trace batch size (defaults to `50`)
 - `LANGFUSE_FLUSH_INTERVAL` — maximum batch wait in seconds (defaults to `10`)
 - `LANGFUSE_DEBUG` — set to `true` to write SDK logs to stdout at the `DEBUG` level
+- `LANGFUSE_TRACING_ENABLED` — set to `false` to disable Langfuse tracing and scoring (defaults to `true`)
 - `LANGFUSE_TRACING_ENVIRONMENT` — default trace environment
 - `LANGFUSE_RELEASE` — default release identifier (falls back to common CI commit envs if present)
 - `LANGFUSE_SAMPLE_RATE` — trace sampling rate (`0.0..1.0`, defaults to `1.0`)
+- `OTEL_SDK_DISABLED` — set to `true` to disable OpenTelemetry trace export without disabling score, prompt, or read APIs
 
 Explicit configuration always takes precedence:
 
@@ -655,7 +683,11 @@ LANGFUSE_TIMEOUT=10                           # Optional
 LANGFUSE_FLUSH_AT=100                         # Optional
 LANGFUSE_FLUSH_INTERVAL=5                     # Optional
 LANGFUSE_DEBUG=true                           # Optional
+LANGFUSE_TRACING_ENABLED=true                 # Optional
+LANGFUSE_TRACING_ENVIRONMENT=production       # Recommended
+LANGFUSE_RELEASE=release-2026-08-17           # Optional
 LANGFUSE_SAMPLE_RATE=0.25                     # Optional
+# OTEL_SDK_DISABLED=true                      # Optional trace-only kill switch
 ```
 
 ## Rails-Specific Configuration
@@ -749,6 +781,10 @@ Call `Langfuse.shutdown` when the application must flush before process exit. An
 
 The exit callback runs once and does not allow shutdown errors to escape the process-exit path. Abrupt termination, such as `SIGKILL`, cannot run process-exit callbacks.
 
+Call `Langfuse.force_flush` or `Langfuse.flush_scores` before an immediate verification read.
+Do not flush on every request.
+Batch export is the normal runtime operation.
+
 ## Configuration by Environment
 
 ### Development
@@ -841,7 +877,11 @@ Tracing reuses the credential, batching, sampling, and logger rules. It also val
 
 ### Rails cache validation and boot order
 
-Setting `cache_backend = :rails` while caching is enabled requires `Rails.cache` to be populated at validation time. Rails assigns `Rails.cache` during its own `initialize_cache` step, so a Langfuse initializer that builds a client earlier than that now raises `ConfigurationError` instead of failing later on the first cache read. Build the client lazily, or use `:auto`, which falls back to the in-memory cache when `Rails.cache` is unavailable.
+When caching is enabled, `cache_backend = :rails` requires an available `Rails.cache` object during validation.
+Rails assigns `Rails.cache` during its `initialize_cache` step.
+An earlier Langfuse client build raises `ConfigurationError`.
+Build the client after `initialize_cache`.
+Alternatively, use `:auto` to select the in-memory cache when `Rails.cache` is unavailable.
 
 ## Accessing Current Configuration
 
