@@ -152,7 +152,7 @@ RSpec.describe Langfuse::SpanProcessor do
       span.finish
       span_data = exported_spans_by_name.fetch("generation")
       otlp_exporter = OpenTelemetry::Exporter::OTLP::Exporter.new(
-        endpoint: "http://localhost/api/public/otel/v1/traces"
+        endpoint: "https://localhost/api/public/otel/v1/traces"
       )
 
       expect(otlp_exporter.send(:encode, [span_data])).to be_a(String)
