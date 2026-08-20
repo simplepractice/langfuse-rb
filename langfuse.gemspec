@@ -29,12 +29,19 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   # Runtime dependencies - HTTP & Templating
-  spec.add_dependency "faraday", ">= 1.0", "< 3"
+  # faraday floor raised to 2.14.3 to exclude CVE-2026-33637 and CVE-2026-54297.
+  # This drops Faraday 1.x support; Faraday 2.x needs Ruby >= 3.0, satisfied by our >= 3.2.0 floor.
+  spec.add_dependency "faraday", ">= 2.14.3", "< 3"
   spec.add_dependency "faraday-retry", ">= 1.0", "< 3.0"
   spec.add_dependency "mustache", "~> 1.1"
+  # json is used directly at runtime (api_client, read_api, score_client) and was only
+  # constrained transitively via faraday. Declared explicitly with a >= 2.19.9 floor so
+  # consumers cannot resolve json affected by CVE-2026-54696.
+  spec.add_dependency "json", "~> 2.19", ">= 2.19.9"
 
   # Runtime dependencies - Concurrency (for SWR caching)
-  spec.add_dependency "concurrent-ruby", "~> 1.2"
+  # concurrent-ruby floor raised to 1.3.7 to exclude CVE-2026-54904/54905/54906.
+  spec.add_dependency "concurrent-ruby", ">= 1.3.7", "< 2.0"
 
   # Runtime dependencies - OpenTelemetry (for tracing)
   spec.add_dependency "opentelemetry-api", "~> 1.2"
