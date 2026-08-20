@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-20
+
+### Changed
+- Require Faraday 2.14.3 or newer, dropping Faraday 1.x compatibility (#115).
+
+### Fixed
+- Prevent consumers from resolving vulnerable Faraday, JSON, and concurrent-ruby versions (#115).
+
 ## [0.11.0] - 2026-08-19
 
 > [!NOTE]
@@ -165,7 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from legacy ingestion API to OTLP endpoint
 - Removed `tracing_enabled` configuration flag (#2)
 
-[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/simplepractice/langfuse-rb/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.9.0...v0.10.0
