@@ -1547,6 +1547,8 @@ run_experiment(name:, task:, data: nil, dataset_name: nil, description: nil,
 
 **Returns:** `ExperimentResult`
 
+The result exposes `experiment_id`, which is the dataset run ID for a dataset-backed experiment or a generated run-scoped ID for local data. See [EXPERIMENTS.md](EXPERIMENTS.md#langfuse-v4-attribution) for the observation attributes and propagation behavior.
+
 **Raises:** `ArgumentError` if both or neither of `data`/`dataset_name` provided
 
 **Example:**

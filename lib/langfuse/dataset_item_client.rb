@@ -103,6 +103,7 @@ module Langfuse
     #
     # Executes the block inside an observed span, flushes the trace, then
     # creates a dataset run item linking this item to the resulting trace.
+    # Use {Client#run_experiment} when Langfuse v4 experiment attribution is required.
     #
     # @param run_name [String] run name for grouping
     # @param run_description [String, nil] optional run description

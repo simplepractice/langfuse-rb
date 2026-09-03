@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Emit Langfuse v4 experiment attributes for local and dataset-backed experiment observations (#118).
+
 ## [0.12.0] - 2026-08-20
 
 ### Changed

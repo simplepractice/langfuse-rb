@@ -33,6 +33,7 @@ module Langfuse
       @description = description
       @run_name = run_name || "#{name} - #{Time.now.utc.iso8601}"
       @logger = Langfuse.configuration.logger
+      @fallback_experiment_id = ExperimentAttributes.generate_experiment_id
       @dataset_run_id = nil
       @dataset_id = nil
     end
@@ -53,6 +54,7 @@ module Langfuse
         run_evaluations: run_evals,
         run_name: @run_name,
         description: @description,
+        experiment_id: @dataset_run_id || @fallback_experiment_id,
         dataset_run_id: @dataset_run_id,
         dataset_run_url: build_dataset_run_url
       )
@@ -68,7 +70,7 @@ module Langfuse
         return ItemResult.new(item: item, trace_id: trace_id, observation_id: observation_id, error: task_error)
       end
 
-      evaluations = execute_evaluators(item, output, trace_id)
+      evaluations = execute_evaluators(item, output, trace_id, observation_id)
       ItemResult.new(item: item, output: output, trace_id: trace_id,
                      observation_id: observation_id, evaluations: evaluations)
     end
@@ -77,21 +79,19 @@ module Langfuse
       TracedExecution.call(
         trace_name: "experiment-#{@name}",
         input: item.input,
-        metadata: @metadata,
-        task: ->(_span) { @task.call(item) }
-      ) do |span, trace_id|
-        # Link before running task — server accepts forward-referenced trace IDs
-        link_to_dataset_run(item, trace_id, span.id) if item.is_a?(DatasetItemClient)
-      end
+        metadata: observation_metadata(item),
+        task: ->(_span) { @task.call(item) },
+        prepare_context: ->(span, trace_id) { prepare_experiment_context(item, span, trace_id) }
+      )
     end
 
-    def execute_evaluators(item, output, trace_id)
+    def execute_evaluators(item, output, trace_id, observation_id)
       evaluations = @evaluators.flat_map do |evaluator|
         raw_result = call_evaluator(evaluator, item, output)
         normalize_evaluator_result(raw_result, source: "Evaluator")
       end
 
-      evaluations.each { |evaluation| persist_score(evaluation, trace_id) }
+      evaluations.each { |evaluation| persist_score(evaluation, trace_id, observation_id) }
       evaluations
     end
 
@@ -104,10 +104,11 @@ module Langfuse
       nil
     end
 
-    def persist_score(evaluation, trace_id)
+    def persist_score(evaluation, trace_id, observation_id)
       @client.create_score(
         name: evaluation.name, value: evaluation.value,
-        trace_id: trace_id, comment: evaluation.comment, data_type: evaluation.data_type,
+        trace_id: trace_id, observation_id: observation_id,
+        comment: evaluation.comment, data_type: evaluation.data_type,
         config_id: evaluation.config_id, metadata: evaluation.metadata
       )
     rescue StandardError => e
@@ -152,6 +153,54 @@ module Langfuse
       response
     rescue StandardError => e
       @logger.warn("Dataset run item linking failed: #{e.message}")
+    end
+
+    def prepare_experiment_context(item, span, trace_id)
+      response = link_to_dataset_run(item, trace_id, span.id) if item.is_a?(DatasetItemClient)
+      root_experiment_attributes(item).each do |key, value|
+        span.otel_span.set_attribute(key, value)
+      end
+      propagated_experiment_attributes(item, span.id, response)
+    end
+
+    def root_experiment_attributes(item)
+      ExperimentAttributes.root(
+        description: @description,
+        expected_output: item.expected_output,
+        mask: Langfuse.configuration.mask
+      )
+    end
+
+    def propagated_experiment_attributes(item, observation_id, response)
+      ExperimentAttributes.propagated(
+        experiment_id: response&.dig("datasetRunId") || @fallback_experiment_id,
+        run_name: @run_name,
+        dataset_id: item_dataset_id(item),
+        item_id: item_id(item),
+        root_observation_id: observation_id,
+        experiment_metadata: @metadata,
+        item_metadata: item_metadata(item),
+        mask: Langfuse.configuration.mask
+      )
+    end
+
+    def observation_metadata(item)
+      ExperimentAttributes.observation_metadata(
+        name: @name,
+        run_name: @run_name,
+        experiment_metadata: @metadata,
+        item_metadata: item_metadata(item),
+        dataset_id: item_dataset_id(item),
+        dataset_item_id: item.is_a?(DatasetItemClient) ? item.id : nil
+      )
+    end
+
+    def item_id(item)
+      item.is_a?(DatasetItemClient) ? item.id : ExperimentAttributes.generate_item_id(item.input)
+    end
+
+    def item_dataset_id(item)
+      item.dataset_id if item.is_a?(DatasetItemClient)
     end
 
     def flush_all

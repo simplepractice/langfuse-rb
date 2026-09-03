@@ -15,6 +15,7 @@ result = client.run_experiment(
 
 puts result.format
 puts "#{result.successes.size} passed, #{result.failures.size} failed"
+puts result.experiment_id    # => experiment identifier shared by the run
 puts result.dataset_run_url  # => link to Langfuse UI
 ```
 
@@ -60,6 +61,14 @@ result = client.run_experiment(
 ```
 
 Each hash is wrapped into an `ExperimentItem` struct with `input`, `expected_output`, and `metadata` fields. Both symbol and string keys are accepted.
+
+## Langfuse v4 Attribution
+
+`run_experiment` adds the attributes that Langfuse v4 uses to discover experiments. The item root observation and every child observation share the experiment ID, run name, item ID, item root observation ID, experiment metadata, item metadata, and `sdk-experiment` environment.
+
+The run description and expected output stay on the item root observation. Item-level scores target both the trace and the item root observation.
+
+For a dataset-backed experiment, `result.experiment_id` is the server-provided dataset run ID. A local-data experiment receives one generated 16-character hexadecimal ID shared by all items in that run. Local item IDs are the first 16 hexadecimal characters of a SHA-256 digest over the SDK-serialized input.
 
 ## Parameters
 
@@ -174,6 +183,7 @@ Returned by `run_experiment`.
 | `description`      | String, nil         | Run description                            |
 | `item_results`     | Array\<ItemResult\> | All per-item results                       |
 | `run_evaluations`  | Array\<Evaluation\> | Run-level evaluation results               |
+| `experiment_id`    | String, nil         | Experiment ID shared by the run            |
 | `dataset_run_id`   | String, nil         | Dataset run ID from the server             |
 | `dataset_run_url`  | String, nil         | URL to the run in Langfuse UI              |
 

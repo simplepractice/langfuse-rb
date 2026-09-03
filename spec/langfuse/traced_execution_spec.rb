@@ -111,47 +111,52 @@ RSpec.describe Langfuse::TracedExecution do
       expect(error).to be_nil
     end
 
-    it "yields span and trace_id to the pre-task hook" do
+    it "passes span and trace_id to the context preparer" do
       yielded_span = nil
       yielded_trace_id = nil
 
       described_class.call(
         trace_name: "test-trace",
         input: {},
+        prepare_context: lambda { |span, trace_id|
+          yielded_span = span
+          yielded_trace_id = trace_id
+          {}
+        },
         task: ->(_span) { "result" }
-      ) do |span, trace_id|
-        yielded_span = span
-        yielded_trace_id = trace_id
-      end
+      )
 
       expect(yielded_span).to be_a(Langfuse::BaseObservation)
       expect(yielded_trace_id).to be_a(String)
       expect(yielded_trace_id.length).to eq(32)
     end
 
-    it "executes the pre-task hook before the task" do
+    it "executes the context preparer before the task" do
       call_order = []
 
       described_class.call(
         trace_name: "test-trace",
         input: {},
+        prepare_context: lambda { |_span, _trace_id|
+          call_order << :context
+          {}
+        },
         task: lambda { |_span|
           call_order << :task
           "result"
         }
-      ) do |_span, _trace_id|
-        call_order << :hook
-      end
+      )
 
-      expect(call_order).to eq(%i[hook task])
+      expect(call_order).to eq(%i[context task])
     end
 
-    it "still captures task error when pre-task hook is given" do
+    it "still captures task error when a context preparer is given" do
       _output, _trace_id, _observation_id, error = described_class.call(
         trace_name: "test-trace",
         input: {},
+        prepare_context: ->(_span, _trace_id) { {} },
         task: ->(_span) { raise StandardError, "task failed" }
-      ) { |_span, _trace_id| }
+      )
 
       expect(error).to be_a(StandardError)
       expect(error.message).to eq("task failed")

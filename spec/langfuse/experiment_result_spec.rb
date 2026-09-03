@@ -41,6 +41,7 @@ RSpec.describe Langfuse::ExperimentResult do
       expect(result.run_evaluations).to eq([])
       expect(result.run_name).to be_nil
       expect(result.description).to be_nil
+      expect(result.experiment_id).to be_nil
       expect(result.dataset_run_id).to be_nil
       expect(result.dataset_run_url).to be_nil
     end
@@ -57,8 +58,10 @@ RSpec.describe Langfuse::ExperimentResult do
     it "stores dataset_run_id and dataset_run_url" do
       result = described_class.new(
         name: "exp", item_results: [],
+        experiment_id: "experiment-123",
         dataset_run_id: "run-123", dataset_run_url: "https://example.com/run/123"
       )
+      expect(result.experiment_id).to eq("experiment-123")
       expect(result.dataset_run_id).to eq("run-123")
       expect(result.dataset_run_url).to eq("https://example.com/run/123")
     end

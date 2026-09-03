@@ -30,6 +30,11 @@ module Langfuse
     ENVIRONMENT_VALUE_PATTERN = /\A(?!langfuse)[a-z0-9_-]+\z/
     private_constant :ENVIRONMENT_VALUE_PATTERN
 
+    EXPERIMENT_ATTRIBUTES_CONTEXT_KEY = OpenTelemetry::Context.create_key(
+      "#{BAGGAGE_PREFIX}experiment_attributes"
+    )
+    private_constant :EXPERIMENT_ATTRIBUTES_CONTEXT_KEY
+
     # Map of propagated attribute keys to span attribute keys
     SPAN_KEY_MAP = {
       "user_id" => OtelAttributes::TRACE_USER_ID,
@@ -186,7 +191,25 @@ module Langfuse
       end
       # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
-      propagated_attributes
+      experiment_attributes = context.value(EXPERIMENT_ATTRIBUTES_CONTEXT_KEY) || {}
+      propagated_attributes.merge(experiment_attributes)
+    end
+
+    # Apply SDK-owned experiment attributes to the current span and future children.
+    #
+    # @param attributes [Hash<String, Object>] serialized OpenTelemetry experiment attributes
+    # @yield Block within which experiment attributes propagate
+    # @return [Object] the block result
+    # @api private
+    def self._with_experiment_attributes(attributes, &)
+      return yield if attributes.nil? || attributes.empty?
+
+      frozen_attributes = attributes.dup.freeze
+      current_span = OpenTelemetry::Trace.current_span
+      frozen_attributes.each { |key, value| current_span.set_attribute(key, value) } if current_span.recording?
+
+      context = OpenTelemetry::Context.current.set_value(EXPERIMENT_ATTRIBUTES_CONTEXT_KEY, frozen_attributes)
+      OpenTelemetry::Context.with_current(context, &)
     end
 
     # Merge metadata with existing context value

@@ -10,6 +10,29 @@ RSpec.describe Langfuse::Propagation do
     end
   end
 
+  describe "._with_experiment_attributes" do
+    it "sets current and child spans without leaking into later siblings" do
+      attributes = { "langfuse.experiment.id" => "experiment-1" }
+
+      Langfuse.observe("root") do |root|
+        described_class._with_experiment_attributes(attributes) do
+          child = root.start_observation("inside")
+          expect(root.otel_span.attributes).to include(attributes)
+          expect(child.otel_span.attributes).to include(attributes)
+          child.end
+        end
+
+        sibling = root.start_observation("outside")
+        expect(sibling.otel_span.attributes).not_to include("langfuse.experiment.id")
+        sibling.end
+      end
+    end
+
+    it "executes directly when attributes are empty" do
+      expect(described_class._with_experiment_attributes({}) { "result" }).to eq("result")
+    end
+  end
+
   shared_context "with baggage mock" do
     before do
       baggage_module = Module.new do

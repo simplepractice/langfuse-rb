@@ -37,6 +37,20 @@ RSpec.describe Langfuse::OtelAttributes do
       expect(described_class::ENVIRONMENT).to eq("langfuse.environment")
       expect(described_class::IS_APP_ROOT).to eq("langfuse.internal.is_app_root")
     end
+
+    it "defines v4 experiment attribute constants" do
+      expect(described_class::EXPERIMENT_ID).to eq("langfuse.experiment.id")
+      expect(described_class::EXPERIMENT_NAME).to eq("langfuse.experiment.name")
+      expect(described_class::EXPERIMENT_DESCRIPTION).to eq("langfuse.experiment.description")
+      expect(described_class::EXPERIMENT_METADATA).to eq("langfuse.experiment.metadata")
+      expect(described_class::EXPERIMENT_DATASET_ID).to eq("langfuse.experiment.dataset.id")
+      expect(described_class::EXPERIMENT_ITEM_ID).to eq("langfuse.experiment.item.id")
+      expect(described_class::EXPERIMENT_ITEM_EXPECTED_OUTPUT)
+        .to eq("langfuse.experiment.item.expected_output")
+      expect(described_class::EXPERIMENT_ITEM_METADATA).to eq("langfuse.experiment.item.metadata")
+      expect(described_class::EXPERIMENT_ITEM_ROOT_OBSERVATION_ID)
+        .to eq("langfuse.experiment.item.root_observation_id")
+    end
   end
 
   describe ".serialize" do

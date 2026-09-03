@@ -18,26 +18,29 @@ module Langfuse
     # @return [String, nil] run description
     # @return [Array<ItemResult>] per-item results (all items, including failures)
     # @return [Array<Evaluation>] run-level evaluation results
+    # @return [String, nil] resolved experiment ID shared by the run
     # @return [String, nil] dataset run ID from the server
     # @return [String, nil] URL to the dataset run in Langfuse UI
     attr_reader :name, :run_name, :description, :item_results, :run_evaluations,
-                :dataset_run_id, :dataset_run_url
+                :experiment_id, :dataset_run_id, :dataset_run_url
 
     # @param name [String] experiment/run name
     # @param item_results [Array<ItemResult>] per-item results
     # @param run_evaluations [Array<Evaluation>] run-level evaluations
     # @param run_name [String, nil] auto-generated run name
     # @param description [String, nil] run description
+    # @param experiment_id [String, nil] resolved experiment ID shared by the run
     # @param dataset_run_id [String, nil] dataset run ID from the server
     # @param dataset_run_url [String, nil] URL to the dataset run in Langfuse UI
     # rubocop:disable Metrics/ParameterLists
     def initialize(name:, item_results:, run_evaluations: [], run_name: nil, description: nil,
-                   dataset_run_id: nil, dataset_run_url: nil)
+                   experiment_id: nil, dataset_run_id: nil, dataset_run_url: nil)
       @name = name
       @item_results = item_results
       @run_evaluations = run_evaluations
       @run_name = run_name
       @description = description
+      @experiment_id = experiment_id
       @dataset_run_id = dataset_run_id
       @dataset_run_url = dataset_run_url
     end

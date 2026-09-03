@@ -15,9 +15,9 @@ module Langfuse
     # @param input [Object] input set on the root observation
     # @param metadata [Hash] metadata set on the root observation and trace
     # @param task [Proc] the callable to execute — receives the span
-    # @yield [span, trace_id] optional pre-task hook (e.g., dataset run linking)
+    # @param prepare_context [#call, nil] optional callable returning SDK-owned propagated attributes
     # @return [Array<(Object, String, String, StandardError | nil)>] output, trace_id, observation_id, error
-    def self.call(trace_name:, input:, task:, metadata: {})
+    def self.call(trace_name:, input:, task:, metadata: {}, prepare_context: nil)
       trace_id = nil
       observation_id = nil
       output = nil
@@ -26,9 +26,11 @@ module Langfuse
       Langfuse.observe(trace_name, input: input, metadata: metadata) do |span|
         trace_id = span.trace_id
         observation_id = span.id
-        Langfuse.propagate_attributes(trace_name: trace_name, metadata: metadata) do
-          yield(span, trace_id) if block_given?
-          output, task_error = execute_task(span, task)
+        experiment_attributes = prepare_context&.call(span, trace_id) || {}
+        Propagation._with_experiment_attributes(experiment_attributes) do
+          Langfuse.propagate_attributes(trace_name: trace_name, metadata: metadata) do
+            output, task_error = execute_task(span, task)
+          end
         end
       end
 

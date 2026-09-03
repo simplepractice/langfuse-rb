@@ -193,6 +193,9 @@ end
 
 The block receives a traced span. On completion (or error), the trace is flushed and the item is linked automatically.
 
+> [!NOTE]
+> Manual `item.link` calls and the lower-level `item.run` helper create dataset run links, but they cannot add Langfuse v4 experiment attributes to observations that have already started. Use `run_experiment` when the run must appear as a v4 experiment with complete observation attribution.
+
 ## Managing Dataset Runs
 
 Dataset runs are created when you link items into a named run, either manually or through experiments. Once a run exists, you can fetch it, list all runs for a dataset, or delete it by dataset name and run name.

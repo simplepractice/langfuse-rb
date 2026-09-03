@@ -55,6 +55,17 @@ module Langfuse
     OBSERVATION_COMPLETION_START_TIME = "langfuse.observation.completion_start_time"
     IS_APP_ROOT = "langfuse.internal.is_app_root"
 
+    # Experiment attributes
+    EXPERIMENT_ID = "langfuse.experiment.id"
+    EXPERIMENT_NAME = "langfuse.experiment.name"
+    EXPERIMENT_DESCRIPTION = "langfuse.experiment.description"
+    EXPERIMENT_METADATA = "langfuse.experiment.metadata"
+    EXPERIMENT_DATASET_ID = "langfuse.experiment.dataset.id"
+    EXPERIMENT_ITEM_ID = "langfuse.experiment.item.id"
+    EXPERIMENT_ITEM_EXPECTED_OUTPUT = "langfuse.experiment.item.expected_output"
+    EXPERIMENT_ITEM_METADATA = "langfuse.experiment.item.metadata"
+    EXPERIMENT_ITEM_ROOT_OBSERVATION_ID = "langfuse.experiment.item.root_observation_id"
+
     # Common attributes
     VERSION = "langfuse.version"
     RELEASE = "langfuse.release"
