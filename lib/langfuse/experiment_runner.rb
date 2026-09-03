@@ -153,6 +153,7 @@ module Langfuse
       response
     rescue StandardError => e
       @logger.warn("Dataset run item linking failed: #{e.message}")
+      nil
     end
 
     def prepare_experiment_context(item, span, trace_id)

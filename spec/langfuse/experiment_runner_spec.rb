@@ -848,6 +848,10 @@ RSpec.describe Langfuse::ExperimentRunner do
     end
 
     context "when dataset linking fails" do
+      before do
+        allow(logger).to receive(:warn).and_return(true)
+      end
+
       let(:dataset_item) do
         Langfuse::DatasetItemClient.new(
           { "id" => "item-1", "datasetId" => "ds-1",
