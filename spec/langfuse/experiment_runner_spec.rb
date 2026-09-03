@@ -875,6 +875,35 @@ RSpec.describe Langfuse::ExperimentRunner do
         expect(root_attributes["langfuse.experiment.id"]).to eq(result.experiment_id)
         expect(logger).to have_received(:warn).with(/Dataset run item linking failed/)
       end
+
+      it "reuses a known dataset run ID after a later link failure" do
+        second_item = Langfuse::DatasetItemClient.new(
+          { "id" => "item-2", "datasetId" => "ds-1",
+            "input" => { "q" => "second" }, "expectedOutput" => "a2" },
+          client: mock_client
+        )
+        call_count = 0
+        allow(mock_client).to receive(:create_dataset_run_item) do
+          call_count += 1
+          raise StandardError, "link error" if call_count == 2
+
+          { "datasetRunId" => "known-run-id" }
+        end
+        experiment_ids = []
+        runner = described_class.new(
+          client: mock_client, name: "test", items: [dataset_item, second_item],
+          task: lambda { |_item|
+            experiment_ids << OpenTelemetry::Trace.current_span.attributes["langfuse.experiment.id"]
+            "a"
+          }
+        )
+
+        result = runner.execute
+
+        expect(experiment_ids).to eq(%w[known-run-id known-run-id])
+        expect(result.experiment_id).to eq("known-run-id")
+        expect(logger).to have_received(:warn).with(/Dataset run item linking failed/)
+      end
     end
 
     context "with v4 experiment attributes" do

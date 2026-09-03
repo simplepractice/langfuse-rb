@@ -173,7 +173,7 @@ module Langfuse
 
     def propagated_experiment_attributes(item, observation_id, response)
       ExperimentAttributes.propagated(
-        experiment_id: response&.dig("datasetRunId") || @fallback_experiment_id,
+        experiment_id: response&.dig("datasetRunId") || @dataset_run_id || @fallback_experiment_id,
         run_name: @run_name,
         dataset_id: item_dataset_id(item),
         item_id: item_id(item),
