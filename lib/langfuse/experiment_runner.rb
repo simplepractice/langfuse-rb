@@ -34,6 +34,7 @@ module Langfuse
       @run_name = run_name || "#{name} - #{Time.now.utc.iso8601}"
       @logger = Langfuse.configuration.logger
       @fallback_experiment_id = ExperimentAttributes.generate_experiment_id
+      @resolved_experiment_id = nil
       @dataset_run_id = nil
       @dataset_id = nil
     end
@@ -54,7 +55,7 @@ module Langfuse
         run_evaluations: run_evals,
         run_name: @run_name,
         description: @description,
-        experiment_id: @dataset_run_id || @fallback_experiment_id,
+        experiment_id: resolved_experiment_id,
         dataset_run_id: @dataset_run_id,
         dataset_run_url: build_dataset_run_url
       )
@@ -146,14 +147,21 @@ module Langfuse
         trace_id: trace_id, observation_id: observation_id,
         metadata: @metadata, run_description: @description
       )
-      unless @dataset_run_id
-        @dataset_run_id = response&.dig("datasetRunId")
-        @dataset_id = item.dataset_id if @dataset_run_id
-      end
+      capture_dataset_run_identity(item, response)
       response
     rescue StandardError => e
       @logger.warn("Dataset run item linking failed: #{e.message}")
       nil
+    end
+
+    # Do not expose a server run ID that differs from the identity already attached to observations.
+    def capture_dataset_run_identity(item, response)
+      candidate_id = response&.dig("datasetRunId")
+      return unless candidate_id
+      return if @resolved_experiment_id && @resolved_experiment_id != candidate_id
+
+      @dataset_run_id = candidate_id if @dataset_run_id.nil?
+      @dataset_id = item.dataset_id if @dataset_id.nil?
     end
 
     def prepare_experiment_context(item, span, trace_id)
@@ -174,7 +182,7 @@ module Langfuse
 
     def propagated_experiment_attributes(item, observation_id, response)
       ExperimentAttributes.propagated(
-        experiment_id: response&.dig("datasetRunId") || @dataset_run_id || @fallback_experiment_id,
+        experiment_id: resolved_experiment_id(response),
         run_name: @run_name,
         dataset_id: item_dataset_id(item),
         item_id: item_id(item),
@@ -183,6 +191,11 @@ module Langfuse
         item_metadata: item_metadata(item),
         mask: Langfuse.configuration.mask
       )
+    end
+
+    # A run keeps its first resolved identity even if later dataset links have a different result.
+    def resolved_experiment_id(response = nil)
+      @resolved_experiment_id ||= response&.dig("datasetRunId") || @fallback_experiment_id
     end
 
     def observation_metadata(item)

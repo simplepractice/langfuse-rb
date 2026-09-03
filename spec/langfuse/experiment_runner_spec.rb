@@ -286,7 +286,7 @@ RSpec.describe Langfuse::ExperimentRunner do
         expect(result.dataset_run_url).to be_nil
       end
 
-      it "uses dataset_id from the first successfully linked item" do
+      it "uses dataset_id from the link that establishes the run identity" do
         items = [
           Langfuse::DatasetItemClient.new(
             { "id" => "item-1", "datasetId" => "ds-1",
@@ -300,13 +300,8 @@ RSpec.describe Langfuse::ExperimentRunner do
           )
         ]
 
-        call_count = 0
-        allow(mock_client).to receive(:create_dataset_run_item) do
-          call_count += 1
-          raise StandardError, "link error" if call_count == 1
-
-          { "datasetRunId" => "run-1" }
-        end
+        allow(mock_client).to receive(:create_dataset_run_item)
+          .and_return({ "datasetRunId" => "run-1" })
         allow(mock_client).to receive(:dataset_run_url)
           .with(dataset_id: "ds-1", dataset_run_id: "run-1")
           .and_return("https://example.com/datasets/ds-1/runs/run-1")
@@ -906,6 +901,39 @@ RSpec.describe Langfuse::ExperimentRunner do
 
         expect(experiment_ids).to eq(%w[known-run-id known-run-id])
         expect(result.experiment_id).to eq("known-run-id")
+        expect(logger).to have_received(:warn).with(/Dataset run item linking failed/)
+      end
+
+      it "keeps the fallback experiment ID after a later link succeeds" do
+        second_item = Langfuse::DatasetItemClient.new(
+          { "id" => "item-2", "datasetId" => "ds-1",
+            "input" => { "q" => "second" }, "expectedOutput" => "a2" },
+          client: mock_client
+        )
+        call_count = 0
+        allow(mock_client).to receive(:create_dataset_run_item) do
+          call_count += 1
+          raise StandardError, "link error" if call_count == 1
+
+          { "datasetRunId" => "later-run-id" }
+        end
+        experiment_ids = []
+        runner = described_class.new(
+          client: mock_client, name: "test", items: [dataset_item, second_item],
+          task: lambda { |_item|
+            experiment_ids << OpenTelemetry::Trace.current_span.attributes["langfuse.experiment.id"]
+            "a"
+          }
+        )
+
+        result = runner.execute
+
+        expect(experiment_ids).to all(eq(result.experiment_id))
+        expect(result.experiment_id).to match(/\A[0-9a-f]{16}\z/)
+        expect(result.dataset_run_id).to be_nil
+        expect(result.dataset_run_url).to be_nil
+        expect(mock_client).to have_received(:create_dataset_run_item).twice
+        expect(mock_client).not_to have_received(:dataset_run_url)
         expect(logger).to have_received(:warn).with(/Dataset run item linking failed/)
       end
     end

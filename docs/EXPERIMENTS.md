@@ -68,7 +68,7 @@ Each hash is wrapped into an `ExperimentItem` struct with `input`, `expected_out
 
 The run description and expected output stay on the item root observation. Item-level scores target both the trace and the item root observation.
 
-For a dataset-backed experiment, `result.experiment_id` is the server-provided dataset run ID. A local-data experiment receives one generated 16-character hexadecimal ID shared by all items in that run. Local item IDs are the first 16 hexadecimal characters of a SHA-256 digest over the SDK-serialized input.
+For a dataset-backed experiment, `result.experiment_id` is the server-provided dataset run ID when the first link succeeds. If the run selects a generated fallback ID after a link failure, all later items keep that ID, and `dataset_run_id` and `dataset_run_url` remain `nil`. A local-data experiment receives one generated 16-character hexadecimal ID shared by all items in that run. Local item IDs are the first 16 hexadecimal characters of a SHA-256 digest over the SDK-serialized input.
 
 ## Parameters
 
