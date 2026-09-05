@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-09-04
+
+### Fixed
+- Forward OTLP exporter metrics to the configured metrics reporter (#117).
+
 ## [0.12.1] - 2026-09-03
 
 ### Fixed
@@ -178,7 +183,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from legacy ingestion API to OTLP endpoint
 - Removed `tracing_enabled` configuration flag (#2)
 
-[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/simplepractice/langfuse-rb/compare/v0.10.1...v0.11.0
