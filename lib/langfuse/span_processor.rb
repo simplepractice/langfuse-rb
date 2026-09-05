@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "opentelemetry/sdk"
-require_relative "resilient_metrics_reporter"
 
 module Langfuse
   # Batch span processor that owns Langfuse's enrichment and export filtering.
@@ -10,7 +9,9 @@ module Langfuse
   class SpanProcessor < OpenTelemetry::SDK::Trace::Export::BatchSpanProcessor
     # @param config [Langfuse::Config] SDK configuration used for defaults and filtering
     # @param exporter [#export, #force_flush, #shutdown] Span exporter used by the batch processor
-    def initialize(config:, exporter:)
+    # @param metrics_reporter [#add_to_counter, #record_value, #observe_value, nil]
+    #   Resilient reporter shared with the OTLP exporter
+    def initialize(config:, exporter:, metrics_reporter:)
       @logger = config.logger
       @default_trace_attributes = build_default_trace_attributes(config).freeze
       @should_export_span = config.should_export_span || Langfuse.method(:default_export_span?)
@@ -21,7 +22,7 @@ module Langfuse
         max_queue_size: config.batch_size * 2,
         schedule_delay: schedule_delay_for(config),
         max_export_batch_size: config.batch_size,
-        metrics_reporter: ResilientMetricsReporter.wrap(config.metrics_reporter, logger: config.logger)
+        metrics_reporter: metrics_reporter
       )
     end
 

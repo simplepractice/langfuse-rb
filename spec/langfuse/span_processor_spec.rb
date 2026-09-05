@@ -18,7 +18,7 @@ RSpec.describe Langfuse::SpanProcessor do
       c.logger = logger
     end
   end
-  let(:processor) { described_class.new(config: config, exporter: exporter) }
+  let(:processor) { described_class.new(config: config, exporter: exporter, metrics_reporter: nil) }
   let(:tracer_provider) do
     OpenTelemetry::SDK::Trace::TracerProvider.new.tap do |provider|
       provider.add_span_processor(processor)
@@ -308,7 +308,7 @@ RSpec.describe Langfuse::SpanProcessor do
     it "marks an attribute-free known instrumentor span as the root" do
       config.environment = nil
       config.release = nil
-      custom_processor = described_class.new(config: config, exporter: exporter)
+      custom_processor = described_class.new(config: config, exporter: exporter, metrics_reporter: nil)
       custom_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
       custom_provider.add_span_processor(custom_processor)
 
@@ -321,7 +321,7 @@ RSpec.describe Langfuse::SpanProcessor do
 
     it "uses a custom should_export_span filter" do
       config.should_export_span = ->(span) { span.name.start_with?("keep") }
-      custom_processor = described_class.new(config: config, exporter: exporter)
+      custom_processor = described_class.new(config: config, exporter: exporter, metrics_reporter: nil)
       custom_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
       custom_provider.add_span_processor(custom_processor)
 
@@ -334,7 +334,7 @@ RSpec.describe Langfuse::SpanProcessor do
 
     it "promotes a child when a custom filter rejects its claimed local root" do
       config.should_export_span = ->(span) { span.name == "child" }
-      custom_processor = described_class.new(config: config, exporter: exporter)
+      custom_processor = described_class.new(config: config, exporter: exporter, metrics_reporter: nil)
       custom_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
       custom_provider.add_span_processor(custom_processor)
       tracer = custom_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME)
@@ -357,7 +357,7 @@ RSpec.describe Langfuse::SpanProcessor do
     it "calls a custom filter once with the finished span" do
       filter = instance_double(Proc, call: true)
       config.should_export_span = filter
-      custom_processor = described_class.new(config: config, exporter: exporter)
+      custom_processor = described_class.new(config: config, exporter: exporter, metrics_reporter: nil)
       custom_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
       custom_provider.add_span_processor(custom_processor)
 
@@ -369,7 +369,7 @@ RSpec.describe Langfuse::SpanProcessor do
 
     it "logs and drops spans when should_export_span raises" do
       config.should_export_span = ->(_span) { raise "boom" }
-      custom_processor = described_class.new(config: config, exporter: exporter)
+      custom_processor = described_class.new(config: config, exporter: exporter, metrics_reporter: nil)
       custom_provider = OpenTelemetry::SDK::Trace::TracerProvider.new
       custom_provider.add_span_processor(custom_processor)
 

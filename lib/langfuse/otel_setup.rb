@@ -5,6 +5,7 @@ require "opentelemetry/exporter/otlp"
 require "base64"
 require_relative "masking_exporter"
 require_relative "trace_export_guard"
+require_relative "resilient_metrics_reporter"
 
 module Langfuse
   # OpenTelemetry initialization and setup for Langfuse tracing.
@@ -112,31 +113,37 @@ module Langfuse
       end
 
       def build_tracer_provider(config)
-        provider = OpenTelemetry::SDK::Trace::TracerProvider.new(
-          sampler: build_sampler(config.sample_rate)
+        metrics_reporter = wrap_metrics_reporter(config)
+        exporter = build_exporter(config, metrics_reporter: metrics_reporter)
+        processor = SpanProcessor.new(
+          config: config,
+          exporter: TraceExportGuard.new(delegate: exporter, config: config),
+          metrics_reporter: metrics_reporter
         )
-        provider.add_span_processor(
-          SpanProcessor.new(
-            config: config,
-            exporter: TraceExportGuard.new(delegate: build_exporter(config), config: config)
-          )
-        )
-        provider
+
+        OpenTelemetry::SDK::Trace::TracerProvider
+          .new(sampler: build_sampler(config.sample_rate))
+          .tap { |provider| provider.add_span_processor(processor) }
       end
 
-      def build_exporter(config)
-        exporter = config.span_exporter || build_otlp_exporter(config)
+      def build_exporter(config, metrics_reporter:)
+        exporter = config.span_exporter || build_otlp_exporter(config, metrics_reporter: metrics_reporter)
         return exporter unless config.mask_otel_spans
 
         MaskingExporter.new(delegate: exporter, hook: config.mask_otel_spans, logger: config.logger)
       end
 
-      def build_otlp_exporter(config)
+      def build_otlp_exporter(config, metrics_reporter:)
         OpenTelemetry::Exporter::OTLP::Exporter.new(
           endpoint: "#{config.base_url}/api/public/otel/v1/traces",
           headers: build_headers(config.public_key, config.secret_key),
-          compression: "gzip"
+          compression: "gzip",
+          metrics_reporter: metrics_reporter
         )
+      end
+
+      def wrap_metrics_reporter(config)
+        ResilientMetricsReporter.wrap(config.metrics_reporter, logger: config.logger)
       end
 
       def log_initialized(config)

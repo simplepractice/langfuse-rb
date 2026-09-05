@@ -26,6 +26,11 @@ RSpec.describe Langfuse::OtelSetup do
     end
   end
 
+  def build_exporter(config)
+    metrics_reporter = described_class.send(:wrap_metrics_reporter, config)
+    described_class.send(:build_exporter, config, metrics_reporter: metrics_reporter)
+  end
+
   before do
     described_class.shutdown(timeout: 1) if described_class.initialized?
   end
@@ -93,6 +98,42 @@ RSpec.describe Langfuse::OtelSetup do
       expect(logger).to receive(:warn).with(/metrics_reporter.*require Langfuse.reset!/)
 
       expect(described_class.setup(config)).to equal(provider)
+    end
+
+    it "shares one resilient metrics reporter across the tracing pipeline" do
+      config.span_exporter = nil
+      config.metrics_reporter = metrics_reporter
+      wrapped_reporter = Langfuse::ResilientMetricsReporter.wrap(metrics_reporter, logger: logger)
+      expect(Langfuse::ResilientMetricsReporter).to receive(:wrap).once.with(
+        metrics_reporter, logger: logger
+      ).and_return(wrapped_reporter)
+      expect(OpenTelemetry::Exporter::OTLP::Exporter).to receive(:new).with(
+        hash_including(metrics_reporter: wrapped_reporter)
+      ).and_call_original
+      expect(Langfuse::SpanProcessor).to receive(:new).with(
+        config: config,
+        exporter: instance_of(Langfuse::TraceExportGuard),
+        metrics_reporter: wrapped_reporter
+      ).and_call_original
+
+      described_class.setup(config)
+    end
+
+    it "uses no metrics reporter when none is configured" do
+      config.span_exporter = nil
+      expect(Langfuse::ResilientMetricsReporter).to receive(:wrap).once.with(
+        nil, logger: logger
+      ).and_return(nil)
+      expect(OpenTelemetry::Exporter::OTLP::Exporter).to receive(:new).with(
+        hash_including(metrics_reporter: nil)
+      ).and_call_original
+      expect(Langfuse::SpanProcessor).to receive(:new).with(
+        config: config,
+        exporter: instance_of(Langfuse::TraceExportGuard),
+        metrics_reporter: nil
+      ).and_call_original
+
+      described_class.setup(config)
     end
 
     it "keeps an injected exporter live during concurrent setup" do
@@ -198,7 +239,7 @@ RSpec.describe Langfuse::OtelSetup do
     it "uses an injected exporter without constructing OTLP" do
       expect(OpenTelemetry::Exporter::OTLP::Exporter).not_to receive(:new)
 
-      expect(described_class.send(:build_exporter, config)).to equal(exporter)
+      expect(build_exporter(config)).to equal(exporter)
     end
 
     it "configures direct v4 OTLP ingestion without changing transport settings" do
@@ -215,16 +256,80 @@ RSpec.describe Langfuse::OtelSetup do
       expect(OpenTelemetry::Exporter::OTLP::Exporter).to receive(:new).with(
         endpoint: "https://api.langfuse.test/api/public/otel/v1/traces",
         headers: expected_headers,
-        compression: "gzip"
+        compression: "gzip",
+        metrics_reporter: nil
       ).and_return(exporter)
 
-      expect(described_class.send(:build_exporter, config)).to equal(exporter)
+      expect(build_exporter(config)).to equal(exporter)
+    end
+
+    it "wraps the configured metrics reporter for the OTLP exporter" do
+      config.span_exporter = nil
+      config.metrics_reporter = metrics_reporter
+
+      allow(described_class).to receive(:build_exporter).and_call_original
+      expect(OpenTelemetry::Exporter::OTLP::Exporter).to receive(:new)
+        .with(hash_including(metrics_reporter: instance_of(Langfuse::ResilientMetricsReporter)))
+        .and_return(exporter)
+
+      build_exporter(config)
+    end
+  end
+
+  describe "OTLP exporter metrics" do
+    before do
+      config.span_exporter = nil
+      config.metrics_reporter = metrics_reporter
+      stub_request(:post, "https://api.langfuse.test/api/public/otel/v1/traces")
+        .to_return(status: 400, body: "")
+    end
+
+    it "reports otlp_exporter.failure and message.compressed_size through the real exporter" do
+      described_class.setup(config)
+      described_class.tracer_provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span("otlp-span").finish
+      described_class.force_flush(timeout: 2)
+
+      expect(metrics_reporter).to have_received(:add_to_counter).with(
+        "otel.otlp_exporter.failure", increment: 1, labels: { "reason" => "400" }
+      )
+      expect(metrics_reporter).to have_received(:record_value).with(
+        "otel.otlp_exporter.message.compressed_size", value: kind_of(Integer), labels: {}
+      )
     end
   end
 
   describe ".shutdown" do
     it "is safe before initialization" do
       expect { described_class.shutdown(timeout: 1) }.not_to raise_error
+    end
+
+    it "delivers final batch metrics before returning" do
+      config.metrics_reporter = metrics_reporter
+      provider = described_class.setup(config)
+      provider.tracer(Langfuse::LANGFUSE_TRACER_NAME).start_span("shutdown-span").finish
+
+      described_class.shutdown(timeout: 1)
+
+      expect(metrics_reporter).to have_received(:add_to_counter).with(
+        "otel.bsp.exported_spans", increment: 1, labels: {}
+      )
+    end
+
+    it "shuts down the tracing pipeline once across concurrent callers" do
+      described_class.setup(config)
+      allow(exporter).to receive(:shutdown).and_call_original
+      start = Queue.new
+      threads = 2.times.map do
+        Thread.new do
+          start.pop
+          described_class.shutdown(timeout: 1)
+        end
+      end
+
+      2.times { start << true }
+      threads.each(&:value)
+
+      expect(exporter).to have_received(:shutdown).once
     end
   end
 
@@ -405,14 +510,14 @@ RSpec.describe Langfuse::OtelSetup do
 
     it "returns the plain OTLP exporter when mask_otel_spans is nil" do
       config.span_exporter = nil
-      expect(described_class.send(:build_exporter, config)).to be_a(OpenTelemetry::Exporter::OTLP::Exporter)
+      expect(build_exporter(config)).to be_a(OpenTelemetry::Exporter::OTLP::Exporter)
     end
 
     it "wraps an injected exporter in a MaskingExporter when mask_otel_spans is configured" do
       config.mask_otel_spans = ->(**) {}
       allow(exporter).to receive(:force_flush).and_call_original
 
-      masked_exporter = described_class.send(:build_exporter, config)
+      masked_exporter = build_exporter(config)
       masked_exporter.force_flush(timeout: 1)
 
       expect(masked_exporter).to be_a(Langfuse::MaskingExporter)

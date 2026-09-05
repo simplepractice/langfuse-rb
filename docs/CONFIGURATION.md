@@ -384,9 +384,10 @@ For in-memory RSpec and Minitest recipes, see [TESTING.md](TESTING.md).
 
 - **Type:** Object responding to `add_to_counter`, `record_value`, and `observe_value`, or `nil`
 - **Default:** `nil` (uses OpenTelemetry's no-op reporter)
-- **Description:** Receives operational metrics emitted by OpenTelemetry's `BatchSpanProcessor`
+- **Description:** Receives operational metrics from OpenTelemetry's `BatchSpanProcessor`
+  and OTLP exporter
 
-The reporter uses the complete
+The reporter implements the
 [OpenTelemetry metrics reporter interface](https://github.com/open-telemetry/opentelemetry-ruby/blob/main/sdk/lib/opentelemetry/sdk/trace/export/metrics_reporter.rb):
 
 ```ruby
@@ -402,7 +403,8 @@ warning and does not interrupt span completion or export.
 
 The reporter can run on application threads and the OpenTelemetry export thread. It
 must be thread-safe, fast, and nonblocking. Do not perform HTTP requests or create
-spans from reporter methods. The application owns the reporter lifecycle.
+spans from reporter methods. The application owns the reporter lifecycle. Langfuse
+does not flush, close, or shut down the reporter.
 
 This adapter sends the metrics to Datadog through an existing `Datadog::Statsd`
 instance without adding a Datadog dependency to Langfuse:
@@ -440,8 +442,14 @@ end
 ```
 
 Use one shared DogStatsD client. At application shutdown, call `Langfuse.shutdown`
-before `statsd.close` so the final batch processor metrics can leave the DogStatsD
-client's buffer.
+first. Then flush and close the client so the final batch processor and OTLP exporter
+metrics can leave the DogStatsD client's buffer:
+
+```ruby
+Langfuse.shutdown
+statsd.flush(sync: true)
+statsd.close
+```
 
 #### `job_queue` (Experimental)
 

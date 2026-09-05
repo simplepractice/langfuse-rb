@@ -254,6 +254,19 @@ RSpec.describe Langfuse do
       expect(described_class.instance_variable_get(:@configuration)).to be_nil
       expect(described_class.instance_variable_get(:@client)).to be_nil
     end
+
+    it "does not shut down an application-owned metrics reporter" do
+      reporter = double("reporter with shutdown",
+                        add_to_counter: nil, record_value: nil, observe_value: nil, shutdown: nil)
+      described_class.configuration.metrics_reporter = reporter
+      described_class.tracer_provider
+
+      described_class.reset!
+      reporter.add_to_counter("application.metric")
+
+      expect(reporter).not_to have_received(:shutdown)
+      expect(reporter).to have_received(:add_to_counter).with("application.metric")
+    end
   end
 
   describe ".shutdown" do
@@ -274,6 +287,27 @@ RSpec.describe Langfuse do
     it "accepts custom timeout" do
       expect(Langfuse::OtelSetup).to receive(:shutdown).with(timeout: 10)
       described_class.shutdown(timeout: 10)
+    end
+
+    it "does not shut down an application-owned metrics reporter" do
+      reporter = double("reporter with shutdown",
+                        add_to_counter: nil, record_value: nil, observe_value: nil, shutdown: nil)
+      described_class.configuration.metrics_reporter = reporter
+      described_class.tracer_provider
+
+      described_class.shutdown
+      reporter.add_to_counter("application.metric")
+
+      expect(reporter).not_to have_received(:shutdown)
+      expect(reporter).to have_received(:add_to_counter).with("application.metric")
+    end
+
+    it "does not recreate configuration after reset" do
+      described_class.reset!
+
+      expect { described_class.shutdown }.not_to change {
+        described_class.instance_variable_get(:@configuration)
+      }.from(nil)
     end
   end
 

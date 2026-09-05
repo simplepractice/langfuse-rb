@@ -14,6 +14,9 @@ RSpec.describe Langfuse::SpanProcessor do
     )
   end
   let(:exporter) { OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new }
+  let(:resilient_reporter) do
+    Langfuse::ResilientMetricsReporter.wrap(reporter, logger: logger)
+  end
   let(:config) do
     Langfuse::Config.new do |candidate|
       candidate.public_key = "pk_test"
@@ -27,7 +30,11 @@ RSpec.describe Langfuse::SpanProcessor do
   end
 
   def build_provider(span_exporter)
-    processor = described_class.new(config: config, exporter: span_exporter)
+    processor = described_class.new(
+      config: config,
+      exporter: span_exporter,
+      metrics_reporter: resilient_reporter
+    )
     OpenTelemetry::SDK::Trace::TracerProvider.new.tap do |provider|
       provider.add_span_processor(processor)
     end

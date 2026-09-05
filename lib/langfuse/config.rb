@@ -113,8 +113,9 @@ module Langfuse
     attr_accessor :mask_otel_spans
 
     # @return [#add_to_counter, #record_value, #observe_value, nil] Reporter for
-    #   OpenTelemetry batch span processor metrics. The reporter must be fast,
-    #   thread-safe, and nonblocking. The application owns its lifecycle.
+    #   OpenTelemetry batch processor and OTLP exporter metrics. The reporter
+    #   must be fast, thread-safe, and nonblocking. The application owns its
+    #   lifecycle.
     attr_accessor :metrics_reporter
 
     # @return [#export, #force_flush, #shutdown, nil] Span exporter used by

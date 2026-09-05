@@ -61,7 +61,7 @@ Block receives a `Langfuse::Config` object with these properties:
 | `should_export_span`           | `#call` | No       | `nil`                          | Span export filter callback        |
 | `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
 | `mask_otel_spans`              | `#call` | No       | `nil`                          | Export-stage span masking hook (receives `params:` keyword; see [CONFIGURATION.md](CONFIGURATION.md#mask_otel_spans)) |
-| `metrics_reporter`             | Object  | No       | `nil`                          | Best-effort OpenTelemetry batch processor metrics reporter; see [CONFIGURATION.md](CONFIGURATION.md#metrics_reporter) |
+| `metrics_reporter`             | Object  | No       | `nil`                          | Best-effort OpenTelemetry metrics reporter; see [CONFIGURATION.md](CONFIGURATION.md#metrics_reporter) |
 | `span_exporter`                | Object  | No       | `nil`                          | Application-supplied OpenTelemetry span exporter; see [CONFIGURATION.md](CONFIGURATION.md#span_exporter) |
 
 **Example:**
