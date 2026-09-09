@@ -652,14 +652,36 @@ module Langfuse
         #
         # An invalid current span makes the SDK generate a fresh trace_id
         # (`TracerProvider#internal_start_span` only inherits when the parent span
-        # context is valid). Nesting inside the observation is unaffected: once the
-        # span is started it becomes current again, so child observations keep
-        # attaching to it.
+        # context is valid).
+        #
+        # This only applies to *foreign* ambient spans. A Langfuse observation made
+        # current by `observe`/`run_in_context` is a legitimate parent: nested
+        # `Langfuse.observe` calls rely on the ambient context to attach to it, so
+        # detaching there would turn every nested observation into a disconnected
+        # root.
+        return otel_tracer.start_span(name, start_timestamp: start_time) if ambient_langfuse_span?
+
         root_context = OpenTelemetry::Trace.context_with_span(OpenTelemetry::Trace::Span::INVALID)
         OpenTelemetry::Context.with_current(root_context) do
           otel_tracer.start_span(name, start_timestamp: start_time)
         end
       end
+    end
+
+    # Whether the currently active span was created by Langfuse itself.
+    #
+    # Distinguishes "I am nested inside another Langfuse observation" (attach) from
+    # "the host application has an unrelated span open" (detach). Non-recording or
+    # remote spans carry no instrumentation scope and count as foreign, which is the
+    # safe answer: they belong to the caller's trace, not to ours.
+    #
+    # @return [Boolean]
+    def ambient_langfuse_span?
+      span = OpenTelemetry::Trace.current_span
+      return false unless span.context.valid?
+      return false unless span.respond_to?(:instrumentation_scope)
+
+      span.instrumentation_scope&.name == LANGFUSE_TRACER_NAME
     end
 
     # Wraps an OpenTelemetry span in the appropriate observation class

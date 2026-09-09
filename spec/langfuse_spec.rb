@@ -757,6 +757,21 @@ RSpec.describe Langfuse do
       # `SpanProcessor#on_start` reads from the parent context -- wiping the whole
       # context would silently strip identity from every root observation opened
       # inside the documented `propagate_attributes` pattern.
+      # Detaching must not apply to Langfuse's own spans: `observe` makes its
+      # observation the current span, and nested `Langfuse.observe` /
+      # `start_observation` calls rely on that ambient context to attach. Detaching
+      # there would export every nested observation as a disconnected root.
+      it "still attaches a nested observation to the enclosing Langfuse observation" do
+        with_ambient_span do
+          described_class.observe("parent") do |parent|
+            nested = described_class.start_observation("nested", {})
+
+            expect(nested.trace_id).to eq(parent.trace_id)
+            nested.end
+          end
+        end
+      end
+
       it "keeps propagated attributes on a root observation" do
         with_ambient_span do
           described_class.propagate_attributes(user_id: "user_123", session_id: "session_456") do
