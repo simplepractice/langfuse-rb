@@ -751,6 +751,24 @@ RSpec.describe Langfuse do
             .to eq(ambient.context.hex_span_id)
         end
       end
+
+      # Detaching must drop the ambient *span* only. `propagate_attributes` keeps
+      # user_id, session_id, tags and metadata as context values, which
+      # `SpanProcessor#on_start` reads from the parent context -- wiping the whole
+      # context would silently strip identity from every root observation opened
+      # inside the documented `propagate_attributes` pattern.
+      it "keeps propagated attributes on a root observation" do
+        with_ambient_span do
+          described_class.propagate_attributes(user_id: "user_123", session_id: "session_456") do
+            root = described_class.start_observation("root", {})
+            attrs = root.otel_span.attributes
+
+            expect(attrs["user.id"]).to eq("user_123")
+            expect(attrs["session.id"]).to eq("session_456")
+            root.end
+          end
+        end
+      end
     end
   end
 

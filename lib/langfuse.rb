@@ -643,11 +643,20 @@ module Langfuse
         # trace_id whose root it never received, and renders it under an empty,
         # unnamed trace.
         #
-        # Resetting to `Context::ROOT` for the duration of the span creation keeps
-        # root observations genuinely rooted. Nesting inside the observation is
-        # unaffected: once the span is started it becomes current again, so child
-        # observations keep attaching to it.
-        OpenTelemetry::Context.with_current(OpenTelemetry::Context::ROOT) do
+        # Detaching only the *span* -- rather than resetting to `Context::ROOT` --
+        # keeps root observations genuinely rooted without discarding the rest of
+        # the context. `propagate_attributes` stores user_id, session_id, tags and
+        # metadata as context values, and `SpanProcessor#on_start` reads them from
+        # the parent context; a full reset would silently drop them, so a root
+        # observation opened inside `propagate_attributes` would lose its identity.
+        #
+        # An invalid current span makes the SDK generate a fresh trace_id
+        # (`TracerProvider#internal_start_span` only inherits when the parent span
+        # context is valid). Nesting inside the observation is unaffected: once the
+        # span is started it becomes current again, so child observations keep
+        # attaching to it.
+        root_context = OpenTelemetry::Trace.context_with_span(OpenTelemetry::Trace::Span::INVALID)
+        OpenTelemetry::Context.with_current(root_context) do
           otel_tracer.start_span(name, start_timestamp: start_time)
         end
       end
