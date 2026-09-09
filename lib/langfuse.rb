@@ -631,8 +631,25 @@ module Langfuse
           otel_tracer.start_span(name, start_timestamp: start_time)
         end
       else
-        # Create root span
-        otel_tracer.start_span(name, start_timestamp: start_time)
+        # Create root span, detached from any ambient context.
+        #
+        # `Tracer#start_span` implicitly parents the new span to
+        # `OpenTelemetry::Context.current`, and that context is process-wide and
+        # provider-agnostic. When the host application runs its own instrumentation
+        # (Rack, ActiveJob, Sidekiq...), a root observation started inside an
+        # instrumented request or job would silently become a child of that ambient
+        # span -- even though it belongs to a different TracerProvider that exports
+        # elsewhere. Langfuse then only ingests an orphan child pointing at a
+        # trace_id whose root it never received, and renders it under an empty,
+        # unnamed trace.
+        #
+        # Resetting to `Context::ROOT` for the duration of the span creation keeps
+        # root observations genuinely rooted. Nesting inside the observation is
+        # unaffected: once the span is started it becomes current again, so child
+        # observations keep attaching to it.
+        OpenTelemetry::Context.with_current(OpenTelemetry::Context::ROOT) do
+          otel_tracer.start_span(name, start_timestamp: start_time)
+        end
       end
     end
 

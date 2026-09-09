@@ -712,6 +712,46 @@ RSpec.describe Langfuse do
         end.to raise_error(ArgumentError, /Invalid trace_id/)
       end
     end
+
+    context "when the host application has an ambient span from another provider" do
+      # Host apps commonly enable their own OpenTelemetry auto-instrumentation
+      # (Rack, ActiveJob...) on a separate TracerProvider exported elsewhere.
+      # `OpenTelemetry::Context` is process-wide and provider-agnostic, so a root
+      # observation must explicitly detach from it -- otherwise it silently becomes
+      # a child of a span Langfuse never ingests, and shows up under an empty trace.
+      def with_ambient_span(&block)
+        provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+        provider.tracer("host-app").in_span("GET /orders", &block)
+      ensure
+        provider&.shutdown(timeout: 1)
+      end
+
+      it "starts a root observation on its own trace, not the ambient one" do
+        with_ambient_span do |ambient|
+          observation = described_class.start_observation("root", {})
+
+          expect(observation.trace_id).not_to eq(ambient.context.hex_trace_id)
+        end
+      end
+
+      it "still nests child observations under the root observation" do
+        with_ambient_span do
+          root = described_class.start_observation("root", {})
+          child = root.start_observation("child")
+
+          expect(child.trace_id).to eq(root.trace_id)
+        end
+      end
+
+      it "restores the ambient context once the root observation is started" do
+        with_ambient_span do |ambient|
+          described_class.start_observation("root", {})
+
+          expect(OpenTelemetry::Trace.current_span.context.hex_span_id)
+            .to eq(ambient.context.hex_span_id)
+        end
+      end
+    end
   end
 
   describe ".observe" do
