@@ -712,6 +712,79 @@ RSpec.describe Langfuse do
         end.to raise_error(ArgumentError, /Invalid trace_id/)
       end
     end
+
+    context "when the host application has an ambient span from another provider" do
+      # Host apps commonly enable their own OpenTelemetry auto-instrumentation
+      # (Rack, ActiveJob...) on a separate TracerProvider exported elsewhere.
+      # `OpenTelemetry::Context` is process-wide and provider-agnostic, so a root
+      # observation must explicitly detach from it -- otherwise it silently becomes
+      # a child of a span Langfuse never ingests, and shows up under an empty trace.
+      def with_ambient_span(&block)
+        provider = OpenTelemetry::SDK::Trace::TracerProvider.new
+        provider.tracer("host-app").in_span("GET /orders", &block)
+      ensure
+        provider&.shutdown(timeout: 1)
+      end
+
+      it "starts a root observation on its own trace, not the ambient one" do
+        with_ambient_span do |ambient|
+          observation = described_class.start_observation("root", {})
+
+          expect(observation.trace_id).not_to eq(ambient.context.hex_trace_id)
+        end
+      end
+
+      it "still nests child observations under the root observation" do
+        with_ambient_span do
+          root = described_class.start_observation("root", {})
+          child = root.start_observation("child")
+
+          expect(child.trace_id).to eq(root.trace_id)
+        end
+      end
+
+      it "restores the ambient context once the root observation is started" do
+        with_ambient_span do |ambient|
+          described_class.start_observation("root", {})
+
+          expect(OpenTelemetry::Trace.current_span.context.hex_span_id)
+            .to eq(ambient.context.hex_span_id)
+        end
+      end
+
+      # Detaching must drop the ambient *span* only. `propagate_attributes` keeps
+      # user_id, session_id, tags and metadata as context values, which
+      # `SpanProcessor#on_start` reads from the parent context -- wiping the whole
+      # context would silently strip identity from every root observation opened
+      # inside the documented `propagate_attributes` pattern.
+      # Detaching must not apply to Langfuse's own spans: `observe` makes its
+      # observation the current span, and nested `Langfuse.observe` /
+      # `start_observation` calls rely on that ambient context to attach. Detaching
+      # there would export every nested observation as a disconnected root.
+      it "still attaches a nested observation to the enclosing Langfuse observation" do
+        with_ambient_span do
+          described_class.observe("parent") do |parent|
+            nested = described_class.start_observation("nested", {})
+
+            expect(nested.trace_id).to eq(parent.trace_id)
+            nested.end
+          end
+        end
+      end
+
+      it "keeps propagated attributes on a root observation" do
+        with_ambient_span do
+          described_class.propagate_attributes(user_id: "user_123", session_id: "session_456") do
+            root = described_class.start_observation("root", {})
+            attrs = root.otel_span.attributes
+
+            expect(attrs["user.id"]).to eq("user_123")
+            expect(attrs["session.id"]).to eq("session_456")
+            root.end
+          end
+        end
+      end
+    end
   end
 
   describe ".observe" do
