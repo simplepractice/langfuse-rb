@@ -37,7 +37,7 @@ Gem::Specification.new do |spec|
   # json is used directly at runtime (api_client, read_api, score_client) and was only
   # constrained transitively via faraday. Declared explicitly with a >= 2.19.9 floor so
   # consumers cannot resolve json affected by CVE-2026-54696.
-  spec.add_dependency "json", "~> 2.19", ">= 2.19.9"
+  spec.add_dependency "json", ">= 2.19.9", "< 4"
 
   # Runtime dependencies - Concurrency (for SWR caching)
   # concurrent-ruby floor raised to 1.3.7 to exclude CVE-2026-54904/54905/54906.
