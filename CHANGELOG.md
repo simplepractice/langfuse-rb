@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Allow json 3.x while keeping the CVE-2026-54696 floor.
+- Allow JSON 3.x and require Faraday 2.14.4 or newer for compatible response parsing (#123).
 
 ## [0.12.2] - 2026-09-04
 

@@ -29,9 +29,9 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   # Runtime dependencies - HTTP & Templating
-  # faraday floor raised to 2.14.3 to exclude CVE-2026-33637 and CVE-2026-54297.
+  # Faraday 2.14.4 adds JSON 3 compatibility and includes the fixes for CVE-2026-33637 and CVE-2026-54297.
   # This drops Faraday 1.x support; Faraday 2.x needs Ruby >= 3.0, satisfied by our >= 3.2.0 floor.
-  spec.add_dependency "faraday", ">= 2.14.3", "< 3"
+  spec.add_dependency "faraday", ">= 2.14.4", "< 3"
   spec.add_dependency "faraday-retry", ">= 1.0", "< 3.0"
   spec.add_dependency "mustache", "~> 1.1"
   # json is used directly at runtime (api_client, read_api, score_client) and was only

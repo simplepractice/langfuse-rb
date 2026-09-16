@@ -53,6 +53,30 @@ jobs:
           flags: unittests
           fail_ci_if_error: false
 
+  test-json3:
+    name: Test JSON 3 (Ruby ${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ['3.2', '3.3', '3.4']
+    env:
+      BUNDLE_GEMFILE: gemfiles/test.gemfile
+      JSON_VERSION: '~> 3.0'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Run tests
+        run: bundle exec rspec
+
   lint:
     name: Lint (Rubocop)
     runs-on: ubuntu-latest
@@ -72,13 +96,13 @@ jobs:
 
   ci-success:
     name: CI Success
-    needs: [test, lint]
+    needs: [test, test-json3, lint]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all jobs
         run: |
-          if [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.lint.result }}" != "success" ]; then
+          if [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.test-json3.result }}" != "success" ] || [ "${{ needs.lint.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             exit 1
           fi
