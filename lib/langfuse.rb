@@ -471,6 +471,7 @@ module Langfuse
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
     # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID to attach the observation to.
     #   Mutually exclusive with `parent_span_context`. Use {Langfuse.create_trace_id} to generate one.
+    #   Marks the observation as a root for legacy trace summaries without removing its placeholder parent.
     # @param parent_span_context [OpenTelemetry::Trace::SpanContext, nil] Parent span context for child observations
     # @param start_time [Time, Integer, nil] Optional start time (Time object or Unix timestamp in nanoseconds)
     # @param skip_validation [Boolean] Skip validation (for internal use). Defaults to false.
@@ -503,6 +504,8 @@ module Langfuse
         parent_span_context: parent_span_context,
         otel_tracer: otel_tracer
       )
+      # Match Python's explicit trace-context root mark for legacy trace input/output.
+      otel_span.set_attribute(OtelAttributes::AS_ROOT, true) if trace_id
       apply_observation_attributes(otel_span, type_str, attrs)
 
       observation = wrap_otel_span(otel_span, type_str, otel_tracer)
