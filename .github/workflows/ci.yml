@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
 
 # Set minimal permissions for security (Principle of Least Privilege)
 # Override with specific permissions in jobs as needed
