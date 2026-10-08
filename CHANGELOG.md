@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Mark explicit-ID observations as roots for legacy trace input/output.
+- Create parentless roots for explicit `trace_id:` values and apply root sampling (#125).
 
 ## [0.12.3] - 2026-09-15
 

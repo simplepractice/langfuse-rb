@@ -463,15 +463,15 @@ module Langfuse
     # Creates a new observation (root or child)
     #
     # This is the module-level factory method that creates observations of any type.
-    # It can create root observations (when parent_span_context is nil) or child
-    # observations (when parent_span_context is provided).
+    # An explicit trace_id creates a parentless root. Otherwise it inherits the
+    # active span, or the supplied parent_span_context for child observations.
     #
     # @param name [String] Descriptive name for the observation
     # @param attrs [Hash, Types::SpanAttributes, Types::GenerationAttributes, nil] Observation attributes
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
-    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID to attach the observation to.
+    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID for a new parentless root.
     #   Mutually exclusive with `parent_span_context`. Use {Langfuse.create_trace_id} to generate one.
-    #   Marks the observation as a root for legacy trace summaries without removing its placeholder parent.
+    #   Also marks the observation as a root for legacy trace summaries.
     # @param parent_span_context [OpenTelemetry::Trace::SpanContext, nil] Parent span context for child observations
     # @param start_time [Time, Integer, nil] Optional start time (Time object or Unix timestamp in nanoseconds)
     # @param skip_validation [Boolean] Skip validation (for internal use). Defaults to false.
@@ -497,12 +497,14 @@ module Langfuse
       type_str = as_type.to_s
       validate_observation_type!(as_type, type_str) unless skip_validation
 
-      otel_tracer = otel_tracer()
+      otel_tracer, id_generator = otel_tracer_and_id_generator
       otel_span = create_otel_span(
         name: name,
         start_time: start_time,
         parent_span_context: parent_span_context,
-        otel_tracer: otel_tracer
+        otel_tracer: otel_tracer,
+        trace_id: trace_id && parent_span_context.trace_id,
+        id_generator: id_generator
       )
       # Match Python's explicit trace-context root mark for legacy trace input/output.
       otel_span.set_attribute(OtelAttributes::AS_ROOT, true) if trace_id
@@ -520,7 +522,7 @@ module Langfuse
     # @param name [String] Descriptive name for the observation
     # @param attrs [Hash] Observation attributes (optional positional or keyword)
     # @param as_type [Symbol, String] Observation type (:span, :generation, :event, etc.)
-    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID to attach the observation to.
+    # @param trace_id [String, nil] Optional 32-char lowercase hex trace ID for a new parentless root.
     #   Use {Langfuse.create_trace_id} to generate one. Forwarded to {.start_observation}.
     # @param kwargs [Hash] Additional keyword arguments merged into observation attributes (e.g., input:, output:, metadata:)
     # @yield [observation] Optional block that receives the observation object
@@ -608,13 +610,19 @@ module Langfuse
       false
     end
 
-    # Gets the OpenTelemetry tracer for Langfuse
+    # Gets the OpenTelemetry tracer and its root ID generator for Langfuse
     #
-    # @return [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
-    def otel_tracer
-      return tracer_provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION) if ensure_tracing_started
+    # Capture the ID generator from the same provider as the returned tracer,
+    # so concurrent shutdown or reconfiguration cannot switch its root context key.
+    # @return [Array] The OTel tracer and optional root ID generator
+    # @api private
+    def otel_tracer_and_id_generator
+      return [noop_tracer, nil] unless ensure_tracing_started
 
-      noop_tracer
+      provider = tracer_provider
+      id_generator = provider.id_generator if provider.respond_to?(:id_generator)
+      id_generator = nil unless id_generator.is_a?(RootSpanIdGenerator)
+      [provider.tracer(LANGFUSE_TRACER_NAME, Langfuse::VERSION), id_generator]
     end
 
     # Creates an OpenTelemetry span (root or child)
@@ -623,8 +631,20 @@ module Langfuse
     # @param start_time [Time, Integer, nil] Optional start time
     # @param parent_span_context [OpenTelemetry::Trace::SpanContext, nil] Parent span context
     # @param otel_tracer [OpenTelemetry::SDK::Trace::Tracer] The OTel tracer
+    # @param trace_id [String, nil] Validated binary trace ID for an explicit root
+    # @param id_generator [RootSpanIdGenerator, nil] ID generator captured with the tracer
     # @return [OpenTelemetry::SDK::Trace::Span] The created span
-    def create_otel_span(name:, otel_tracer:, start_time: nil, parent_span_context: nil)
+    # @api private
+    def create_otel_span(name:, otel_tracer:, start_time: nil, parent_span_context: nil, trace_id: nil,
+                         id_generator: nil)
+      if trace_id && id_generator
+        # Start an actual root through the internal provider's ID generator, so
+        # native root sampling sees an invalid parent rather than a sampled placeholder.
+        return id_generator.with_trace_id(trace_id) do |context|
+          otel_tracer.start_span(name, with_parent: context, start_timestamp: start_time)
+        end
+      end
+
       if parent_span_context
         # Create child span with parent context
         # Create a non-recording span from the parent context to set in context

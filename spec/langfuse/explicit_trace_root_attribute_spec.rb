@@ -62,7 +62,7 @@ RSpec.describe "Explicit trace root attributes" do
     expect(exported_spans).to be_empty
   end
 
-  it "exports the legacy root attribute and root IO in the native OTLP payload" do
+  it "exports a parentless root, legacy root attribute, and root IO in the native OTLP payload" do
     Langfuse.configure { |config| config.span_exporter = nil }
     payloads = []
     endpoint = stub_request(:post, "https://cloud.langfuse.com/api/public/otel/v1/traces")
@@ -70,7 +70,8 @@ RSpec.describe "Explicit trace root attributes" do
       payloads << Zlib.gunzip(request.body)
       { status: 200, body: "" }
     end
-    root = Langfuse.start_observation("root", { input: "request" }, trace_id: trace_id)
+    started = Time.utc(2026, 1, 1)
+    root = Langfuse.start_observation("root", { input: "request" }, trace_id: trace_id, start_time: started)
     root.update(output: "result")
     root.start_observation("child").end
     root.end
@@ -80,6 +81,10 @@ RSpec.describe "Explicit trace root attributes" do
     message = Opentelemetry::Proto::Collector::Trace::V1::ExportTraceServiceRequest.decode(payloads.fetch(0))
     spans = message.resource_spans.flat_map(&:scope_spans).flat_map(&:spans).to_h { |span| [span.name, span] }
     attributes = spans.fetch("root").attributes.to_h { |attribute| [attribute.key, attribute.value] }
+    expect(spans.fetch("root").trace_id.unpack1("H*")).to eq(trace_id)
+    expect(spans.fetch("root").parent_span_id).to be_empty
+    expect(spans.fetch("root").start_time_unix_nano).to eq(started.to_i * 1_000_000_000)
+    expect(spans.fetch("child").parent_span_id).to eq(spans.fetch("root").span_id)
     expect(attributes.fetch(root_attribute).bool_value).to be(true)
     expect(attributes.fetch(Langfuse::OtelAttributes::OBSERVATION_INPUT).string_value).to eq("request".to_json)
     expect(attributes.fetch(Langfuse::OtelAttributes::OBSERVATION_OUTPUT).string_value).to eq("result".to_json)

@@ -242,7 +242,11 @@ Good use cases:
 
 Do not reuse a trace ID as a replacement for parent context. Each disjoint observation tree can become an application root.
 
-An explicit `trace_id:` marks the observation as a root for legacy trace input/output summaries. Its OpenTelemetry parent stays unchanged. Repeated calls with the same trace ID create separate observations. They do not update an earlier observation or guarantee one canonical root.
+An explicit `trace_id:` creates a parentless root, even when another span is active. Explicit roots use the provider's root sampler. Ordinary children inside the block inherit that root. The SDK restores the previous context when the block exits, including after an exception. Omit `trace_id:` to inherit an active span, or pass `parent_span_context:` to `start_observation` for a specific parent.
+
+Repeated calls with the same trace ID create separate roots. They do not update an earlier root. Each explicit root is also marked for legacy trace summaries. Do not rely on one canonical root for input/output.
+
+If the application replaces `Langfuse.tracer_provider.id_generator`, explicit observations keep a placeholder parent.
 
 Do not use secrets or raw PII as seeds.
 

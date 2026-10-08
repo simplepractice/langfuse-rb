@@ -6,6 +6,7 @@ require "base64"
 require_relative "masking_exporter"
 require_relative "trace_export_guard"
 require_relative "resilient_metrics_reporter"
+require_relative "root_span_id_generator"
 
 module Langfuse
   # OpenTelemetry initialization and setup for Langfuse tracing.
@@ -122,7 +123,7 @@ module Langfuse
         )
 
         OpenTelemetry::SDK::Trace::TracerProvider
-          .new(sampler: build_sampler(config.sample_rate))
+          .new(sampler: build_sampler(config.sample_rate), id_generator: RootSpanIdGenerator.new)
           .tap { |provider| provider.add_span_processor(processor) }
       end
 
