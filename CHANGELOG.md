@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Mark explicit-ID observations as roots for legacy trace input/output, matching Python while preserving OpenTelemetry parent context and sampling.
+- Mark explicit-ID observations as roots for legacy trace input/output.
 
 ## [0.12.3] - 2026-09-15
 
