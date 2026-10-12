@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-10-12
+
 ### Fixed
-- Mark explicit-ID observations as roots for legacy trace input/output.
-- Create parentless roots for explicit `trace_id:` values and apply root sampling (#125).
+- Mark explicit-ID observations as roots for legacy trace input/output (#129).
+- Create parentless roots for explicit `trace_id:` values and apply root sampling (#128).
 
 ## [0.12.3] - 2026-09-15
 
@@ -192,7 +194,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from legacy ingestion API to OTLP endpoint
 - Removed `tracing_enabled` configuration flag (#2)
 
-[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.3...HEAD
+[Unreleased]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.4...HEAD
+[0.12.4]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/simplepractice/langfuse-rb/compare/v0.12.0...v0.12.1
