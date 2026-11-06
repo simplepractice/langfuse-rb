@@ -87,7 +87,7 @@ module Langfuse
     #
     # @param kwargs [Hash] Variables to substitute in the template (as keyword arguments)
     # @return [String] The compiled prompt text
-    # @raise [ArgumentError] if variables cannot be rendered
+    # @raise [Mustache::Parser::SyntaxError] if a rendered template has invalid syntax
     #
     # @example
     #   text_prompt.compile(name: "Alice", greeting: "Hi")

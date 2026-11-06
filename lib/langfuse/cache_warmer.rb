@@ -65,20 +65,18 @@ module Langfuse
       results
     end
 
-    # Warm the cache with all prompts (auto-discovery)
+    # Discover one page of prompt names and warm their cache entries
     #
-    # Automatically discovers all prompts in your Langfuse project via
-    # the list_prompts API and warms the cache with all of them.
-    # By default, fetches prompts with the "production" label.
-    # Useful for deployment scenarios where you want to ensure all prompts
-    # are cached without manually specifying them.
+    # Uses one list_prompts response; it does not paginate. For a complete
+    # project warmup, paginate list_prompts and pass the names to #warm.
+    # Uses normal cached reads, with the "production" label by default.
     #
     # @param default_label [String, nil] Label to use for all prompts (default: "production")
     # @param versions [Hash<String, Integer>] Optional version numbers per prompt
     # @param labels [Hash<String, String>] Optional labels per specific prompts (overrides default_label)
     # @return [Hash] Results with :success and :failed arrays
     #
-    # @example Auto-discover and warm all prompts with "production" label
+    # @example Warm discovered prompts with the "production" label
     #   results = warmer.warm_all
     #   puts "Cached #{results[:success].size} prompts"
     #

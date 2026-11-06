@@ -1,1862 +1,338 @@
 # API Reference
 
-Complete method reference for the Langfuse Ruby SDK.
+Use `client = Langfuse.client`. Configuration defaults and lifecycle rules are in
+[Configuration](CONFIGURATION.md). API-returned hashes use string keys.
+Network methods can raise `Langfuse::ConfigurationError`, `UnauthorizedError`,
+`NotFoundError`, or `ApiError`; invalid arguments can raise `ArgumentError`.
+See [Error Handling](ERROR_HANDLING.md) for exceptions and retry behavior.
 
-## Table of Contents
+## Configuration and Lifecycle
 
-- [Global Configuration](#global-configuration)
-- [Client Access](#client-access)
-- [Prompt Management](#prompt-management)
-- [Trace ID Generation](#trace-id-generation)
-- [Tracing & Observability](#tracing--observability)
-- [Data Access](#data-access)
-- [Scoring](#scoring)
-- [Datasets](#datasets)
-- [Experiments](#experiments)
-- [Attribute Propagation](#attribute-propagation)
-- [Types](#types)
-- [Exceptions](#exceptions)
-- [Utilities](#utilities)
+| Method | Contract |
+| --- | --- |
+| `Langfuse.configure { |config| ... }` | Updates configuration; does not initialize tracing or replace the global provider. |
+| `Langfuse.configuration` | Returns the current `Config`, initialized from environment defaults on first access. |
+| `Langfuse.configuration = config` | Replaces configuration and resets existing SDK resources. |
+| `Langfuse.client` | Returns the lazy singleton `Client`. |
+| `Langfuse.configured?` | Local readiness check; no authentication request. |
+| `Langfuse.tracer_provider` | Returns the internal provider; raises `ConfigurationError` for invalid enabled tracing. |
+| `Langfuse.force_flush(timeout: 30)` | Attempts to export completed traces. |
+| `Langfuse.flush_scores` / `client.flush_scores` | Attempts delivery of queued scores. |
+| `Langfuse.shutdown(timeout: 30)` | Stops the client and provider; attempts final trace and score delivery. |
+| `client.shutdown` | Stops this client's score and prompt-cache workers. |
+| `Langfuse.reset!` | Shuts down resources and clears configuration; the next access rebuilds from environment defaults. |
 
-## Global Configuration
+`Langfuse::Config.new { |config| ... }` and `Langfuse::Client.new(config)` are
+available for explicitly owned clients. Module-level tracing still uses the global
+Langfuse configuration and provider. Config exposes `validate!`, `valid?`, and
+`validate_tracing!` for local validation.
 
-### `Langfuse.configure`
-
-Configure the SDK globally. Call once at application startup.
-
-**Signature:**
+## Prompts
 
 ```ruby
-Langfuse.configure { |config| ... }
+client.get_prompt(name, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
+client.get_prompt_result(name, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
+client.refresh_prompt(name, version: nil, label: nil, cache_ttl: nil)
+client.compile_prompt(name, variables: {}, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
+client.create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_message: nil)
+client.update_prompt(name:, version:, labels:)
+client.list_prompts(page: nil, limit: nil)
 ```
 
-**Parameters:**
+| Method | Return |
+| --- | --- |
+| `get_prompt`, `create_prompt`, `update_prompt` | `TextPromptClient` or `ChatPromptClient` |
+| `get_prompt_result`, `refresh_prompt` | `PromptFetchResult` containing a prompt client and fetch metadata |
+| `compile_prompt` | String for text, array of message hashes for chat |
+| `list_prompts` | One page of metadata as `Array<Hash>` |
 
-Block receives a `Langfuse::Config` object with these properties:
+Choose either `version:` or `label:`. A fallback requires `type: :text` or `:chat`.
+Per-call `cache_ttl:` must be a non-negative Integer; zero bypasses caching.
+`create_prompt` creates a version; `update_prompt` replaces labels on an existing
+version. See [Prompt Management](PROMPTS.md) for compilation and fallback semantics.
 
-| Property                       | Type    | Required | Default                        | Description                       |
-| ------------------------------ | ------- | -------- | ------------------------------ | --------------------------------- |
-| `public_key`                   | String  | Yes      | -                              | Langfuse public API key           |
-| `secret_key`                   | String  | Yes      | -                              | Langfuse secret API key           |
-| `base_url`                     | String  | No       | `"https://cloud.langfuse.com"` | API endpoint                      |
-| `timeout`                      | Integer | No       | `5`                            | HTTP timeout (seconds)            |
-| `cache_ttl`                    | Integer | No       | `60`                           | Prompt cache TTL (seconds)        |
-| `cache_max_size`               | Integer | No       | `1000`                         | Max cached prompts                |
-| `cache_backend`                | Symbol  | No       | `:memory`                      | `:memory`, `:rails`, or `:auto`   |
-| `cache_lock_timeout`           | Integer | No       | `10`                           | Lock timeout (seconds)            |
-| `cache_stale_while_revalidate` | Boolean | No       | `false`                        | Advisory SWR intent flag (effective activation depends on `cache_stale_ttl`) |
-| `cache_stale_ttl`              | Integer or `:indefinite` | No | `0`                  | Stale TTL (seconds, `>0` enables SWR) |
-| `cache_refresh_threads`        | Integer | No       | `5`                            | Background refresh threads        |
-| `prompt_cache_observer`        | Callable | No      | `nil`                          | Prompt cache event hook           |
-| `batch_size`                   | Integer | No       | `50`                           | Score + trace export batch size   |
-| `flush_interval`               | Integer | No       | `10`                           | Score + trace export interval (s) |
-| `score_queue_capacity`         | Integer | No       | `100000`                       | Maximum pending asynchronous scores |
-| `sample_rate`                  | Float   | No       | `1.0`                          | Trace + trace-linked score sampling rate (`0.0..1.0`) |
-| `logger`                       | Logger  | No       | Auto-detected                  | Logger instance                   |
-| `tracing_async`                | Boolean | No       | `true`                         | Experimental OTel batch scheduling |
-| `tracing_enabled`              | Boolean | No       | `true`                         | Langfuse tracing and scoring kill switch |
-| `job_queue`                    | Symbol  | No       | `:default`                     | Reserved/no-op for future job integration |
-| `environment`                  | String  | No       | `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]`) | Default trace, observation, and score environment |
-| `release`                      | String  | No       | `nil` (or `ENV["LANGFUSE_RELEASE"]` / common CI commit SHA env) | Default release identifier         |
-| `should_export_span`           | `#call` | No       | `nil`                          | Span export filter callback        |
-| `mask`                         | `#call` | No       | `nil`                          | Mask callable for input/output/metadata (receives `data:` keyword) |
-| `mask_otel_spans`              | `#call` | No       | `nil`                          | Export-stage span masking hook (receives `params:` keyword; see [CONFIGURATION.md](CONFIGURATION.md#mask_otel_spans)) |
-| `metrics_reporter`             | Object  | No       | `nil`                          | Best-effort OpenTelemetry metrics reporter; see [CONFIGURATION.md](CONFIGURATION.md#metrics_reporter) |
-| `span_exporter`                | Object  | No       | `nil`                          | Application-supplied OpenTelemetry span exporter; see [CONFIGURATION.md](CONFIGURATION.md#span_exporter) |
+Both prompt clients expose:
 
-**Example:**
+- `name`, `version`, `type`, `prompt`, `config`, `labels`, `tags`, `commit_message`,
+  `resolution_graph`, and `is_fallback`.
+- `compile(**variables)`: compiled text or chat messages. Malformed chat placeholders
+  raise `ArgumentError`.
+- `variables`: unique Mustache references in source order. Invalid template syntax
+  raises `Mustache::Parser::SyntaxError`.
+
+`PromptFetchResult` exposes `prompt`, `name`, `version`, `label`, `logical_key`,
+`storage_key`, `cache_status`, `source`, `fallback?`, and `to_h` (metadata only).
+Cache status is `:hit`, `:miss`, `:stale`, `:refresh`, `:bypass`, or `:disabled`;
+source is `:cache`, `:api`, or `:fallback`.
+
+### Cache Operations
 
 ```ruby
-Langfuse.configure do |config|
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-  config.cache_ttl = 300
-  config.cache_backend = :rails
-  config.cache_stale_while_revalidate = true  # Serve stale data while refreshing
-  config.cache_stale_ttl = 300
-end
-```
-
-See [CONFIGURATION.md](CONFIGURATION.md) for complete guide.
-
-### `Langfuse.configuration`
-
-Access current configuration.
-
-**Signature:**
-
-```ruby
-Langfuse.configuration # => Langfuse::Config
-```
-
-**Returns:** `Langfuse::Config` object with all settings
-
-**Example:**
-
-```ruby
-config = Langfuse.configuration
-puts config.cache_ttl  # => 60
-```
-
-### `Langfuse.reset!`
-
-Reset configuration, caches, and client instance. Primarily for testing.
-
-**Signature:**
-
-```ruby
-Langfuse.reset!
-```
-
-**Example:**
-
-```ruby
-RSpec.configure do |config|
-  config.before { Langfuse.reset! }
-end
-```
-
-### `Langfuse.configured?`
-
-Check whether the local configuration can construct `Langfuse.client`.
-
-```ruby
-Langfuse.configured? # => true or false
-```
-
-This method does not access the network. A `true` result does not prove that credentials are valid or that trace export works.
-
-Tracing does not require this guard. `Langfuse.observe` warns once and uses a no-op tracer when tracing configuration is invalid, so application code can use the same observation wrapper in every environment.
-
-### `Config#valid?`
-
-Check whether a configuration object can construct a client:
-
-```ruby
-config = Langfuse::Config.new do |candidate|
-  candidate.public_key = "pk-lf-..."
-  candidate.secret_key = "sk-lf-..."
-end
-
-config.valid? # => true or false
-```
-
-The check is local and does not raise an error.
-It does not validate credentials, network access, or backend ingestion.
-Use `Langfuse.configured?` for the global configuration.
-
-### `Langfuse.tracer_provider`
-
-Return Langfuse's internal tracer provider so you can explicitly install it as the global OpenTelemetry provider.
-
-**Signature:**
-
-```ruby
-Langfuse.tracer_provider # => OpenTelemetry::SDK::Trace::TracerProvider
-```
-
-**Raises:** `ConfigurationError` if `public_key`, `secret_key`, or `base_url` are not configured
-
-`Langfuse.configure` does not call this for you. This is the explicit global-install seam. If you also want another OpenTelemetry backend or custom propagation, that remains application-owned setup.
-
-**Example:**
-
-```ruby
-Langfuse.configure do |config|
-  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
-  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
-end
-
-OpenTelemetry.tracer_provider = Langfuse.tracer_provider
-```
-
-### Span Filter Helpers
-
-These public helpers are useful when composing `should_export_span` callbacks. The callback receives each finished span handled by Langfuse's provider.
-
-#### `Langfuse.default_export_span?`
-
-Return whether a span matches Langfuse's default export allowlist.
-
-**Signature:**
-
-```ruby
-Langfuse.default_export_span?(span) # => Boolean
-```
-
-**Returns:** `true` for Langfuse spans, spans with `gen_ai.*` attributes, and spans from known LLM-related instrumentation scopes
-
-#### `Langfuse.langfuse_span?`
-
-Return whether a span was created by Langfuse's tracer.
-
-**Signature:**
-
-```ruby
-Langfuse.langfuse_span?(span) # => Boolean
-```
-
-#### `Langfuse.genai_span?`
-
-Return whether a span contains `gen_ai.*` attributes.
-
-**Signature:**
-
-```ruby
-Langfuse.genai_span?(span) # => Boolean
-```
-
-#### `Langfuse.known_llm_instrumentor?`
-
-Return whether a span came from one of Langfuse's known LLM-related instrumentation scopes.
-
-**Signature:**
-
-```ruby
-Langfuse.known_llm_instrumentor?(span) # => Boolean
-```
-
-**Compatibility aliases:** `Langfuse.is_default_export_span`, `Langfuse.is_langfuse_span`, `Langfuse.is_genai_span`, `Langfuse.is_known_llm_instrumentor`
-
-## Client Access
-
-### `Langfuse.client`
-
-Get the global singleton client instance.
-
-**Signature:**
-
-```ruby
-Langfuse.client # => Langfuse::Client
-```
-
-**Returns:** `Langfuse::Client`
-
-**Raises:** `ConfigurationError` if not configured
-
-**Example:**
-
-```ruby
-client = Langfuse.client
-prompt = client.get_prompt("greeting")
-```
-
-## Prompt Management
-
-### `Client#get_prompt`
-
-Fetch a prompt from Langfuse (with caching).
-
-**Signature:**
-
-```ruby
-get_prompt(name, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
-```
-
-**Parameters:**
-
-| Parameter  | Type    | Required    | Description                                          |
-| ---------- | ------- | ----------- | ---------------------------------------------------- |
-| `name`     | String  | Yes         | Prompt name                                          |
-| `version`  | Integer | No          | Specific version (mutually exclusive with `label`)   |
-| `label`    | String  | No          | Version label (e.g., "production")                   |
-| `fallback` | String or Array<Hash> | No | Fallback prompt if not found (`String` for text, `Array<Hash>` for chat) |
-| `type`     | Symbol  | Conditional | `:text` or `:chat` (required if `fallback` provided) |
-| `cache_ttl` | Integer | No | Per-call cache TTL override. `0` bypasses cache read/write |
-
-**Returns:** `Langfuse::TextPromptClient` or `Langfuse::ChatPromptClient`
-
-**Raises:**
-
-- `NotFoundError` if the prompt does not exist and no `fallback` is present
-- `UnauthorizedError` if credentials invalid
-- `ApiError` on network/server errors
-
-**Examples:**
-
-```ruby
-# API default selection (no version/label sent)
-prompt = client.get_prompt("greeting")
-
-# Specific version
-prompt = client.get_prompt("greeting", version: 2)
-
-# By label
-prompt = client.get_prompt("greeting", label: "production")
-
-# With fallback
-prompt = client.get_prompt("new-prompt",
-  fallback: "Hello {{name}}!",
-  type: :text
-)
-```
-
-See [PROMPTS.md](PROMPTS.md) for complete guide.
-
-### `Client#get_prompt_result`
-
-Fetch a prompt and return cache metadata.
-
-**Signature:**
-
-```ruby
-get_prompt_result(name, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
-```
-
-**Returns:** `Langfuse::PromptFetchResult`
-
-| Attribute | Type | Description |
-| --------- | ---- | ----------- |
-| `prompt` | TextPromptClient or ChatPromptClient | Prompt client |
-| `logical_key` | String | Stable logical identity: name plus version or label/default production |
-| `storage_key` | String | Backend key for the current cache generation |
-| `cache_status` | Symbol | `:hit`, `:miss`, `:stale`, `:refresh`, `:bypass`, or `:disabled` |
-| `source` | Symbol | `:cache`, `:api`, or `:fallback` |
-| `fallback?` | Boolean | Whether fallback content was returned |
-
-```ruby
-result = client.get_prompt_result("greeting", label: "production")
-result.prompt.compile(name: "Ada")
-result.cache_status # => :miss
-```
-
-### Prompt Cache Operations
-
-Flat client APIs for operational prompt cache control:
-
-```ruby
-client.refresh_prompt("greeting", label: "production", cache_ttl: 60)
-client.invalidate_prompt_cache("greeting", label: "production")
-client.invalidate_prompt_cache_by_name("greeting")
+client.prompt_cache_key(name, version: nil, label: nil)
+client.invalidate_prompt_cache(name, version: nil, label: nil)
+client.invalidate_prompt_cache_by_name(name)
 client.clear_prompt_cache
 client.prompt_cache_stats
-client.prompt_cache_key("greeting")
 client.validate_prompt_cache_backend!
 ```
 
-`invalidate_prompt_cache_by_name` and `clear_prompt_cache` use generation counters. Rails.cache entries from old generations are not scanned; they become unreachable and expire by TTL.
+`prompt_cache_key` returns `PromptCacheKey` with `name`, `version`, `label`,
+`resolved_label`, `logical_key`, `storage_key`, and `to_h`. Stats return a hash;
+unsupported counts are `nil`. See [Caching](CACHING.md) for invalidation scope and
+backend validation.
 
-### `Client#compile_prompt`
-
-Convenience method: fetch and compile in one call.
-
-**Signature:**
-
-```ruby
-compile_prompt(name, variables: {}, version: nil, label: nil, fallback: nil, type: nil, cache_ttl: nil)
-```
-
-**Parameters:**
-
-Same as `get_prompt`, plus:
-
-| Parameter   | Type | Required | Description                                |
-| ----------- | ---- | -------- | ------------------------------------------ |
-| `variables` | Hash | No       | Template variables (symbol or string keys) |
-
-**Returns:** String (text prompts) or Array<Hash> (chat prompts)
-
-**Example:**
-
-```ruby
-# Text prompt
-message = client.compile_prompt("greeting",
-  variables: { name: "Alice" },
-  label: "production"
-)
-# => "Hello Alice!"
-
-# Chat prompt
-messages = client.compile_prompt("chat-assistant",
-  variables: { topic: "Ruby" }
-)
-# => [{ role: :system, content: "..." }, { role: :user, content: "..." }]
-```
-
-### `Client#create_prompt`
-
-Create a new prompt (or a new version if the name already exists).
-
-**Signature:**
-
-```ruby
-create_prompt(name:, prompt:, type:, config: {}, labels: [], tags: [], commit_message: nil)
-```
-
-**Parameters:**
-
-| Parameter        | Type               | Required | Description                                                              |
-| ---------------- | ------------------ | -------- | ------------------------------------------------------------------------ |
-| `name`           | String             | Yes      | Prompt name                                                              |
-| `prompt`         | String or Array<Hash> | Yes   | Prompt content (String for text, array of role/content hashes for chat) |
-| `type`           | Symbol             | Yes      | Prompt type (`:text` or `:chat`)                                         |
-| `config`         | Hash               | No       | Prompt config metadata (for example model parameters)                    |
-| `labels`         | Array<String>      | No       | Labels to assign (for example `["production"]`)                          |
-| `tags`           | Array<String>      | No       | Tags for categorization                                                  |
-| `commit_message` | String             | No       | Optional commit message                                                  |
-
-**Returns:** `Langfuse::TextPromptClient` or `Langfuse::ChatPromptClient`
-
-**Raises:**
-
-- `ArgumentError` for missing/invalid prompt type or content
-- `UnauthorizedError` if credentials invalid
-- `ApiError` on network/server errors
-
-**Example:**
-
-```ruby
-prompt = client.create_prompt(
-  name: "support-assistant",
-  prompt: [
-    { role: "system", content: "You are a helpful assistant for {{product}}" },
-    { role: "user", content: "{{question}}" }
-  ],
-  type: :chat,
-  labels: ["staging"],
-  tags: ["support"],
-  config: { model: "gpt-4o-mini" }
-)
-```
-
-### `Client#update_prompt`
-
-Update labels for an existing prompt version.
-
-**Signature:**
-
-```ruby
-update_prompt(name:, version:, labels:)
-```
-
-**Parameters:**
-
-| Parameter | Type          | Required | Description                               |
-| --------- | ------------- | -------- | ----------------------------------------- |
-| `name`    | String        | Yes      | Prompt name                               |
-| `version` | Integer       | Yes      | Prompt version to update                  |
-| `labels`  | Array<String> | Yes      | Replacement labels for that prompt version |
-
-**Returns:** `Langfuse::TextPromptClient` or `Langfuse::ChatPromptClient`
-
-**Raises:**
-
-- `ArgumentError` if `labels` is not an array
-- `NotFoundError` if prompt/version not found
-- `UnauthorizedError` if credentials invalid
-- `ApiError` on network/server errors
-
-**Example:**
-
-```ruby
-prompt = client.update_prompt(
-  name: "support-assistant",
-  version: 3,
-  labels: ["production"]
-)
-```
-
-### `Client#list_prompts`
-
-List all prompts in the project.
-
-**Signature:**
-
-```ruby
-list_prompts(page: nil, limit: nil)
-```
-
-**Parameters:**
-
-| Parameter | Type    | Required | Default | Description      |
-| --------- | ------- | -------- | ------- | ---------------- |
-| `page`    | Integer | No       | -       | Page number      |
-| `limit`   | Integer | No       | -       | Results per page |
-
-**Returns:** Array of prompt hashes
-
-**Example:**
-
-```ruby
-prompts = client.list_prompts
-prompts.each do |p|
-  puts "#{p['name']} v#{p['version']}"
-end
-```
-
-### Cache Warming
-
-Cache warming is handled by the `CacheWarmer` class, not directly on the Client.
-
-**Example:**
-
-```ruby
-warmer = Langfuse::CacheWarmer.new
-result = warmer.warm(['greeting', 'farewell'], labels: { 'greeting' => 'production' })
-puts "Warmed: #{result[:success].size}"
-puts "Failed: #{result[:failed].size}"
-```
-
-See [CACHING.md](CACHING.md#cache-warming) for complete cache warming strategies and the `CacheWarmer` API.
-
-### `TextPromptClient`
-
-Returned by `get_prompt` for text prompts.
-
-**Properties:**
-
-| Property  | Type          | Description            |
-| --------- | ------------- | ---------------------- |
-| `name`    | String        | Prompt name            |
-| `version` | Integer       | Version number         |
-| `labels`  | Array<String> | Version labels         |
-| `tags`    | Array<String> | Tags                   |
-| `config`  | Hash          | Prompt config hash returned by Langfuse |
-| `prompt`  | String        | Raw template           |
-| `type`    | String        | Prompt type (`"text"`) |
-| `commit_message` | String, nil | Commit message for the prompt version |
-| `resolution_graph` | Hash, nil | Dependency resolution graph for composed prompts when returned by Langfuse |
-| `is_fallback` | Boolean  | Whether the client uses caller-provided fallback content |
-| `variables` | Array<String> | Referenced Mustache variables in source order |
-
-**Methods:**
-
-#### `TextPromptClient#compile`
-
-```ruby
-compile(**variables) # => String
-```
-
-Compiles template with Mustache variables.
-
-**Example:**
-
-```ruby
-prompt = client.get_prompt("greeting")
-message = prompt.compile(name: "Alice", time: "morning")
-```
-
-#### `TextPromptClient#variables`
-
-```ruby
-variables # => Array<String>
-```
-
-Returns unique Mustache variable and section names in source order.
-Dotted paths do not change.
-Invalid Mustache syntax raises `Mustache::Parser::SyntaxError`.
-
-### `ChatPromptClient`
-
-Returned by `get_prompt` for chat prompts.
-
-**Properties:** Same as `TextPromptClient`, except `prompt` is an `Array<Hash>` and `type` is `"chat"`.
-
-**Methods:**
-
-#### `ChatPromptClient#compile`
-
-```ruby
-compile(**variables) # => Array<Hash>
-```
-
-Compiles template variables and message placeholders, returning an array of message hashes.
-
-For Langfuse message placeholders:
-
-- `placeholder_name: [{ role: :user, content: "..." }]` inserts those messages.
-- `placeholder_name: []` skips the placeholder.
-- Omitting a placeholder keeps `{ type: "placeholder", name: "..." }` in the output and logs a warning.
-- Malformed placeholder values raise `ArgumentError` during compile.
-- Extra message fields are preserved when placeholder messages are inserted.
-
-**Example:**
-
-```ruby
-prompt = client.get_prompt("chat-assistant")
-messages = prompt.compile(
-  topic: "Ruby",
-  level: "beginner",
-  history: [{ role: :user, content: "Explain {{topic}} simply." }]
-)
-# => [
-#   { role: :system, content: "..." },
-#   { role: :user, content: "Explain Ruby simply." },
-#   { role: :user, content: "..." }
-# ]
-```
-
-#### `ChatPromptClient#variables`
-
-```ruby
-variables # => Array<String>
-```
-
-Returns unique Mustache variables from message content in message order.
-The result does not include Langfuse message placeholders.
-
-## Trace ID Generation
-
-### `Langfuse.create_trace_id`
-
-Generate a deterministic or random trace ID.
-
-**Signature:**
-
-```ruby
-create_trace_id(seed: nil) # => String
-```
-
-**Parameters:**
-
-| Parameter | Type   | Required | Default | Description                                                                 |
-| --------- | ------ | -------- | ------- | --------------------------------------------------------------------------- |
-| `seed`    | String | No       | `nil`   | Deterministic seed. Same seed → same ID across Ruby, Python, JS SDKs.      |
-
-**Returns:** 32-character lowercase hex trace ID
-
-**Raises:** `ArgumentError` if seed is not nil and not a String
-
-**Example:**
-
-```ruby
-# Random
-trace_id = Langfuse.create_trace_id
-# => "a7f2b3c4d5e6f7a8b9c0d1e2f3a4b5c6"
-
-# Deterministic from seed
-trace_id = Langfuse.create_trace_id(seed: "order-42")
-# => "3bf8b157c4238eefe5ae4a66eca81c6b"
-
-# Cross-SDK: same result in Python and JS
-# Python: Langfuse.create_trace_id(seed="order-42")
-# JS:     await createTraceId("order-42")
-```
-
-See [TRACING.md](TRACING.md#custom-trace-ids) for usage patterns.
-
-## Tracing & Observability
-
-### `Langfuse.observe`
-
-Create a traced observation (block or stateful mode).
-
-**Signature:**
-
-```ruby
-# Block mode (auto-ends)
-observe(name, attributes = {}, as_type: :span, trace_id: nil) { |obs| ... }
-
-# Stateful mode (manual end)
-observe(name, attributes = {}, as_type: :span, trace_id: nil) # => Langfuse::BaseObservation
-```
-
-**Parameters:**
-
-| Parameter    | Type   | Required | Default | Description        |
-| ------------ | ------ | -------- | ------- | ------------------ |
-| `name`       | String | Yes      | -       | Operation name     |
-| `attributes` | Hash   | No       | `{}`    | Initial attributes |
-| `as_type`    | Symbol | No       | `:span` | Observation type   |
-| `trace_id`   | String | No       | `nil`   | Custom trace ID (32 lowercase hex chars). Use `Langfuse.create_trace_id(seed:)` to generate. |
-
-**Observation Types:**
-
-`:span`, `:generation`, `:event`, `:embedding`, `:agent`, `:tool`, `:chain`, `:retriever`, `:evaluator`, `:guardrail`
-
-**Returns:**
-
-- Block mode: block return value
-- Stateful mode: observation instance
-
-**Example:**
-
-```ruby
-# Block mode
-result = Langfuse.observe("operation", { input: "data" }) do |obs|
-  result = perform_work
-  obs.update(output: result)
-  result
-end
-
-# Stateful mode
-obs = Langfuse.observe("operation", { input: "data" })
-result = perform_work
-obs.update(output: result)
-obs.end
-```
-
-See [TRACING.md](TRACING.md) for complete guide.
-
-For payload-bearing standalone events, pass event attributes at creation time. `:event` observations auto-end immediately, so mutating payload inside a later block is too late.
-
-### `Langfuse.start_observation`
-
-Low-level factory for creating observations. Prefer `Langfuse.observe` for most use cases.
-
-**Signature:**
-
-```ruby
-start_observation(name, attrs = {}, as_type: :span, trace_id: nil,
-                  parent_span_context: nil, start_time: nil)
-```
-
-**Parameters:**
-
-| Parameter              | Type         | Required | Default | Description                                                                 |
-| ---------------------- | ------------ | -------- | ------- | --------------------------------------------------------------------------- |
-| `name`                 | String       | Yes      | -       | Operation name                                                              |
-| `attrs`                | Hash         | No       | `{}`    | Initial attributes                                                          |
-| `as_type`              | Symbol       | No       | `:span` | Observation type                                                            |
-| `trace_id`             | String       | No       | `nil`   | Custom trace ID (32 lowercase hex chars). Mutually exclusive with `parent_span_context`. |
-| `parent_span_context`  | SpanContext  | No       | `nil`   | Parent span context for child observations                                  |
-| `start_time`           | Time/Integer | No       | `nil`   | Custom start time                                                           |
-
-**Returns:** `Langfuse::BaseObservation` (or a subclass such as `Langfuse::Span`, `Langfuse::Generation`, or `Langfuse::Event`)
-
-**Raises:** `ArgumentError` if both `trace_id` and `parent_span_context` provided, or if `trace_id` is invalid
-
-**Example:**
-
-```ruby
-trace_id = Langfuse.create_trace_id(seed: "order-42")
-obs = Langfuse.start_observation("process", { input: "data" }, trace_id: trace_id)
-obs.update(output: { result: "done" })
-obs.end
-```
-
-### `BaseObservation`
-
-Returned by `observe` in stateful mode or passed to block.
-
-**Properties:**
-
-| Property    | Type                            | Description                  |
-| ----------- | ------------------------------- | ---------------------------- |
-| `id`        | String                          | Observation ID (hex span ID) |
-| `trace_id`  | String                          | Trace ID (hex trace ID)      |
-| `trace_url` | `String` or `nil`              | URL to Langfuse UI, if project lookup succeeds |
-| `otel_span` | OpenTelemetry::SDK::Trace::Span | Underlying OTel span         |
-| `type`      | String                          | Observation type             |
-
-**Methods:**
-
-#### `update`
-
-```ruby
-update(attributes) # => self
-update(**keyword_args) # => self
-```
-
-Update observation attributes. Accepts `Types::*Attributes` instance or keyword args.
-
-**Example:**
-
-```ruby
-obs.update(
-  output: { result: "success" },
-  metadata: { duration_ms: 150 },
-  level: "DEFAULT"
-)
-```
-
-#### `update_trace`
-
-```ruby
-update_trace(attributes) # => self
-update_trace(**keyword_args) # => self
-```
-
-Update trace-level attributes. Tags must be strings of ≤200 characters; oversized tags are dropped with a warning.
-
-**Example:**
-
-```ruby
-obs.update_trace(
-  user_id: "user_123",
-  session_id: "session_456",
-  tags: ["api", "v1"] # each tag must be ≤200 chars
-)
-```
-
-#### `end`
-
-```ruby
-end(end_time: Time.now)
-```
-
-End the observation (block mode calls this automatically).
-
-#### `start_observation`
-
-```ruby
-# Block mode
-start_observation(name, attributes = {}, as_type: :span) { |child| ... }
-
-# Stateful mode
-start_observation(name, attributes = {}, as_type: :span) # => Langfuse::BaseObservation
-```
-
-Create a child observation.
-
-**Example:**
-
-```ruby
-Langfuse.observe("parent") do |parent|
-  parent.start_observation("child", { step: 1 }) do |child|
-    child.update(output: "child result")
-  end
-end
-```
-
-#### `event`
-
-```ruby
-event(name:, input: nil, level: "default")
-```
-
-Add a point-in-time event to the observation's span.
-
-**Example:**
-
-```ruby
-obs.event(
-  name: "checkpoint",
-  input: { step: 2 },
-  level: "DEFAULT"
-)
-```
-
-#### Attribute Setters
-
-Direct setters for common attributes:
-
-```ruby
-obs.input = { data: "input" }
-obs.output = { data: "output" }
-obs.metadata = { key: "value" }
-obs.level = "ERROR"  # DEBUG, DEFAULT, WARNING, ERROR
-```
-
-#### Generation-Specific Methods
-
-Available on observations with `as_type: :generation`:
-
-```ruby
-obs.model = "gpt-4"
-obs.model_parameters = { temperature: 0.7, max_tokens: 100 }
-obs.usage_details = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
-obs.cost_details = { input: 0.02, output: 0.03, total: 0.05 }
-```
-
-`obs.usage = {...}` is still accepted for compatibility, but it is deprecated and forwards to `usage_details`.
-
-`usage_details` accepts either canonical Langfuse keys (`input`, `output`, `total`) or OpenAI-style keys
-(`prompt_tokens`, `completion_tokens`, `total_tokens`). For `cost_details`, prefer canonical Langfuse keys
-(`input`, `output`, `total`) if you want Langfuse aggregate cost metrics to populate reliably.
-
-Or via `update`:
-
-```ruby
-# Using setters (preferred)
-obs.model = "gpt-4"
-obs.model_parameters = { temperature: 0.7 }
-obs.usage_details = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
-obs.completion_start_time = Time.now
-obs.cost_details = { input: 0.02, output: 0.03, total: 0.05 }
-obs.prompt = { name: "greeting", version: 1, is_fallback: false }
-
-# Or using update() with usage_details keyword
-obs.update(
-  model: "gpt-4",
-  model_parameters: { temperature: 0.7 },
-  usage_details: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
-  completion_start_time: Time.now,
-  cost_details: { input: 0.02, output: 0.03, total: 0.05 },
-  prompt: { name: "greeting", version: 1, is_fallback: false }
-)
-```
-
-## Data Access
-
-Use [DATA_ACCESS.md](DATA_ACCESS.md) to select a read API.
-The guide also explains cursor pagination and SDK and CLI verification.
-
-### `Client#list_traces`
-
-List traces in the project.
-
-**Signature:**
-
-```ruby
-list_traces(page: nil, limit: nil, **filters)
-```
-
-**Parameters:**
-
-| Parameter        | Type          | Required | Description                                                                                                                   |
-| ---------------- | ------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `page`           | Integer       | No       | Page number                                                                                                                   |
-| `limit`          | Integer       | No       | Results per page                                                                                                              |
-| `user_id`        | String        | No       | Filter by user ID                                                                                                             |
-| `name`           | String        | No       | Filter by trace name                                                                                                          |
-| `session_id`     | String        | No       | Filter by session ID                                                                                                          |
-| `from_timestamp` | Time          | No       | Filter traces after this time                                                                                                 |
-| `to_timestamp`   | Time          | No       | Filter traces before this time                                                                                                |
-| `order_by`       | String        | No       | Order by field                                                                                                                |
-| `tags`           | Array<String> | No       | Filter by tags                                                                                                                |
-| `version`        | String        | No       | Filter by version                                                                                                             |
-| `release`        | String        | No       | Filter by release                                                                                                             |
-| `environment`    | String        | No       | Filter by environment                                                                                                         |
-| `fields`         | String        | No       | Comma-separated field groups to include (e.g. `"core,scores,metrics"`). Available: `core`, `io`, `scores`, `observations`, `metrics`. All fields returned if omitted. |
-| `filter`         | String        | No       | JSON string for advanced filtering                                                                                            |
-
-**Returns:** `Array<Hash>` of trace data
-
-**Raises:**
-
-- `UnauthorizedError` if authentication fails
-- `ApiError` for other API errors
-
-**Examples:**
-
-```ruby
-# Basic listing
-traces = client.list_traces(page: 1, limit: 20)
-
-# Filter by user and name
-traces = client.list_traces(user_id: "user-123", name: "my-trace")
-
-# Time range with field selection
-traces = client.list_traces(
-  from_timestamp: Time.utc(2025, 1, 1),
-  to_timestamp: Time.utc(2025, 1, 31),
-  fields: "core,scores"
-)
-```
-
-### `Client#get_trace`
-
-Fetch a single trace by ID.
-
-**Signature:**
-
-```ruby
-get_trace(id) # => Hash
-```
-
-**Parameters:**
-
-| Parameter | Type   | Required | Description |
-| --------- | ------ | -------- | ----------- |
-| `id`      | String | Yes      | Trace ID    |
-
-**Returns:** `Hash` of trace data
-
-**Raises:**
-
-- `NotFoundError` if the trace does not exist
-- `UnauthorizedError` if authentication fails
-- `ApiError` for other API errors
-
-**Example:**
-
-```ruby
-trace = client.get_trace("trace-uuid-123")
-puts trace["name"]
-```
-
-### `Client#list_observations`
-
-List observation rows with cursor-based pagination and field selection.
-
-> **Requires Langfuse v4.** Delegates to `GET /api/public/v2/observations` on
-> Langfuse Cloud projects in v4 write mode and self-hosted Langfuse v4. There is
-> no fallback to legacy endpoints because their response and pagination
-> semantics differ. Returns observation rows, not reconstructed trace objects.
-
-**Signature:**
-
-```ruby
-list_observations(from_start_time: nil, to_start_time: nil, trace_id: nil, **filters) # => Hash
-```
-
-**Parameters:**
-
-| Parameter               | Type                  | Required | Description                                                                                          |
-| ----------------------- | --------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
-| `from_start_time`       | Time, String          | Yes*     | Inclusive lower bound on observation start time. *Required unless `trace_id` is provided.            |
-| `to_start_time`         | Time, String          | Yes*     | Exclusive upper bound on observation start time. *Required unless `trace_id` is provided.            |
-| `trace_id`              | String                | No       | Filter by trace ID                                                                                   |
-| `fields`                | String                | No       | Comma-separated field groups: `core`, `basic`, `time`, `io`, `metadata`, `model`, `usage`, `prompt`, `metrics`, `trace_context` |
-| `cursor`                | String                | No       | Cursor from the previous response's `meta` for the next page                                         |
-| `limit`                 | Integer               | No       | Items per page (max 1000, default 50)                                                                |
-| `filter`                | String                | No       | JSON string with structured filter conditions (takes precedence over individual filters)             |
-| `name`                  | String                | No       | Filter by observation name                                                                           |
-| `user_id`               | String                | No       | Filter by user ID                                                                                    |
-| `type`                  | String                | No       | Filter by observation type (e.g. `"GENERATION"`, `"SPAN"`)                                           |
-| `level`                 | String                | No       | Filter by level (e.g. `"DEFAULT"`, `"ERROR"`)                                                        |
-| `parent_observation_id` | String                | No       | Filter by parent observation ID                                                                      |
-| `is_root_observation`   | Boolean               | No       | Filter by logical root status                                                                         |
-| `environment`           | Array<String>         | No       | Filter by one or more environments                                                                   |
-| `session_id`            | String                | No       | Filter by session ID                                                                                  |
-| `version`               | String                | No       | Filter by observation version                                                                        |
-| `expand_metadata`       | String                | No       | Comma-separated metadata keys to return non-truncated                                                |
-
-**Returns:** `Hash` with `"data"` (observation rows) and `"meta"` (pagination cursor)
-
-**Raises:**
-
-- `ArgumentError` if the read is unbounded (no `trace_id` and missing start-time bounds)
-- `UnauthorizedError` if authentication fails
-- `ApiError` for other API errors, including deployments without Langfuse v4
-
-**Examples:**
-
-```ruby
-# Bounded read of recent generations
-page = client.list_observations(
-  from_start_time: Time.now - 3600,
-  to_start_time: Time.now,
-  type: "GENERATION",
-  fields: "core,basic,usage"
-)
-page["data"].each { |obs| puts obs["id"] }
-
-# Next page via cursor
-next_page = client.list_observations(
-  from_start_time: Time.now - 3600,
-  to_start_time: Time.now,
-  cursor: page.dig("meta", "cursor")
-)
-
-# All observations for one trace
-rows = client.list_observations(trace_id: "trace-uuid-123")["data"]
-```
-
-### `Client#query_metrics`
-
-Query aggregate metrics.
-
-> **Requires Langfuse v4.** Delegates to `GET /api/public/v2/metrics`. Supports
-> the `observations`, `scores-numeric`, `scores-categorical`, and
-> `scores-boolean` views.
-
-**Signature:**
-
-```ruby
-query_metrics(query:) # => Hash
-```
-
-**Parameters:**
-
-| Parameter | Type         | Required | Description                                                                                |
-| --------- | ------------ | -------- | ------------------------------------------------------------------------------------------ |
-| `query`   | Hash, String | Yes      | Metrics query. A Hash is JSON-encoded; a pre-encoded JSON String is passed through as-is.  |
-
-**Returns:** `Hash` of metrics results
-
-**Raises:**
-
-- `ArgumentError` if query is neither a Hash nor a String
-- `UnauthorizedError` if authentication fails
-- `ApiError` for other API errors, including deployments without Langfuse v4
-
-**Example:**
-
-```ruby
-result = client.query_metrics(query: {
-  view: "observations",
-  metrics: [{ measure: "count", aggregation: "count" }],
-  dimensions: [{ field: "name" }],
-  fromTimestamp: "2026-07-01T00:00:00Z",
-  toTimestamp: "2026-07-02T00:00:00Z"
-})
-```
-
-## Scoring
-
-### `Client#create_score`
-
-Create a score for a trace or observation.
-
-**Signature:**
-
-```ruby
-create_score(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
-             comment: nil, metadata: nil, environment: nil, data_type: :numeric,
-             dataset_run_id: nil, config_id: nil)
-```
-
-When `environment` is omitted, the score uses the client-level environment from
-`Config#environment`. A score-level value overrides the configured environment.
-If neither value is set, Langfuse uses its `default` environment.
-
-**Parameters:**
-
-| Parameter        | Type                   | Required | Description                               |
-| ---------------- | ---------------------- | -------- | ----------------------------------------- |
-| `name`           | String                 | Yes      | Score name                                |
-| `value`          | Numeric/String/Boolean | Yes      | Score value                               |
-| `id`             | String                 | No       | Custom score ID                           |
-| `timestamp`      | Time, String           | No       | Score time; defaults to now. Reuse with `id` when retrying. |
-| `trace_id`       | String                 | No       | Trace ID to score                         |
-| `session_id`     | String                 | No       | Session ID to associate with the score    |
-| `observation_id` | String                 | No       | Observation ID to score                   |
-| `comment`        | String                 | No       | Score comment                             |
-| `metadata`       | Hash                   | No       | Additional metadata                       |
-| `environment`    | String                 | No       | Per-score override for the configured environment |
-| `data_type`      | Symbol                 | No       | `:numeric`, `:boolean`, `:categorical`, `:text`, or `:correction` |
-| `dataset_run_id` | String                 | No       | Dataset run ID to associate with          |
-| `config_id`      | String                 | No       | Score config ID                           |
-
-**Example:**
-
-```ruby
-client.create_score(
-  name: "quality",
-  value: 0.85,
-  trace_id: "abc123",
-  data_type: :numeric,
-  comment: "High quality response"
-)
-```
-
-### `Client#create_score!`
-
-Create a score through the Scores API with synchronous HTTP acceptance.
-
-The method returns the created score ID after Langfuse accepts the request.
-It bypasses the in-memory queue and trace-sampling gate. Use `create_score`
-for fire-and-forget batching.
-
-For retryable workflows, set `id` and `timestamp` before the first request and
-reuse both with the complete score payload. A network failure can occur after Langfuse
-accepts a request, so the failure alone does not prove that the score was rejected.
-
-**Signature:**
-
-```ruby
-create_score!(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
-              comment: nil, metadata: nil, environment: nil, data_type: :numeric,
-              dataset_run_id: nil, config_id: nil)
-```
-
-**Returns:** The created score ID as a String
-
-**Raises:** `ArgumentError` for invalid input; `UnauthorizedError` on a 401; `ApiError` for any other API failure
-
-**Example:**
-
-```ruby
-feedback = {
-  id: "user-thumbs-#{trace_id}",
-  timestamp: Time.now,
-  name: "user-thumbs",
-  value: true,
-  trace_id: trace_id,
-  data_type: :boolean
-}
-created_id = client.create_score!(**feedback) # Reuse feedback when retrying.
-```
-
-### `Client#score_active_observation`
-
-Score the currently active observation (from OTel context).
-
-**Signature:**
-
-```ruby
-score_active_observation(name:, value:, data_type: :numeric, comment: nil, metadata: nil)
-```
-
-**Example:**
-
-```ruby
-Langfuse.observe("operation", as_type: :generation) do
-  result = perform_llm_call
-  Langfuse.client.score_active_observation(name: "quality", value: 0.9, data_type: :numeric)
-  result
-end
-```
-
-### `Client#score_active_trace`
-
-Score the currently active trace.
-
-**Signature:**
-
-```ruby
-score_active_trace(name:, value:, data_type: :numeric, comment: nil, metadata: nil)
-```
-
-### `Client#flush_scores`
-
-Immediately flush all queued scores to API.
-
-**Signature:**
-
-```ruby
-flush_scores
-```
-
-**Example:**
-
-```ruby
-# Before an immediate verification read
-Langfuse.client.flush_scores
-```
-
-Normal process exit flushes pending scores automatically.
-
-### Module-Level Scoring
-
-Convenience methods delegating to `Langfuse.client`:
-
-```ruby
-Langfuse.create_score(name: "quality", value: 0.85, trace_id: "abc")
-score_id = Langfuse.create_score!(name: "quality", value: 0.85, trace_id: "abc")
-Langfuse.score_active_observation(name: "quality", value: 0.9, data_type: :numeric)
-Langfuse.score_active_trace(name: "overall", value: 5, data_type: :numeric)
-Langfuse.flush_scores
-```
-
-See [SCORING.md](SCORING.md) for complete guide.
-
-### `Client#list_scores`
-
-List scores with polymorphic values via the v3 scores API.
-
-**Signature:**
-
-```ruby
-list_scores(**filters) # => Hash
-```
-
-**Parameters:**
-
-| Parameter        | Type         | Required | Description                                                                                     |
-| ---------------- | ------------ | -------- | ------------------------------------------------------------------------------------------------ |
-| `limit`          | Integer      | No       | Items per page (max 100, default 50)                                                             |
-| `cursor`         | String       | No       | Cursor from the previous response's `meta` for the next page                                      |
-| `fields`         | String       | No       | Comma-separated field groups in addition to core: `details`, `subject`, `annotation`             |
-| `id`             | String       | No       | Comma-separated score IDs                                                                        |
-| `name`           | String       | No       | Comma-separated score names                                                                      |
-| `source`         | String       | No       | Comma-separated sources (e.g. `API`, `ANNOTATION`, `EVAL`)                                       |
-| `data_type`      | String       | No       | Comma-separated data types: `NUMERIC`, `BOOLEAN`, `CATEGORICAL`, `TEXT`, `CORRECTION`            |
-| `environment`    | String       | No       | Comma-separated environments                                                                     |
-| `config_id`      | String       | No       | Comma-separated score config IDs                                                                 |
-| `queue_id`       | String       | No       | Comma-separated annotation queue IDs                                                             |
-| `author_user_id` | String       | No       | Comma-separated author user IDs                                                                  |
-| `value`          | String       | No       | Comma-separated exact values (requires a single `NUMERIC`, `BOOLEAN`, or `CATEGORICAL` data type) |
-| `value_min`      | Numeric      | No       | Inclusive lower bound (requires `data_type: "NUMERIC"`)                                          |
-| `value_max`      | Numeric      | No       | Inclusive upper bound (requires `data_type: "NUMERIC"`)                                          |
-| `trace_id`       | String       | No       | Comma-separated trace IDs (mutually exclusive with `session_id`, `experiment_id`)                |
-| `session_id`     | String       | No       | Comma-separated session IDs                                                                      |
-| `observation_id` | String       | No       | Comma-separated observation IDs (requires `trace_id`)                                            |
-| `experiment_id`  | String       | No       | Comma-separated dataset run (experiment) IDs                                                     |
-| `from_timestamp` | Time, String | No       | Inclusive lower bound on score timestamp                                                         |
-| `to_timestamp`   | Time, String | No       | Exclusive upper bound on score timestamp                                                         |
-
-**Returns:** `Hash` with `"data"` (score rows) and `"meta"` (pagination cursor). Score
-values are polymorphic by `dataType`: `NUMERIC` scores return numbers, `BOOLEAN`
-scores return booleans, and `CATEGORICAL`, `TEXT`, and `CORRECTION` scores return
-strings.
-
-**Raises:**
-
-- `UnauthorizedError` if authentication fails
-- `ApiError` for other API errors
-
-**Examples:**
-
-```ruby
-# Scores for a trace
-page = client.list_scores(trace_id: "trace-uuid-123")
-
-# Corrections with subject details
-corrections = client.list_scores(data_type: "CORRECTION", fields: "subject,details")
-corrections["data"].each { |score| puts score["value"] }
-```
-
-## Datasets
-
-### `Client#create_dataset`
-
-Create a new dataset.
-
-**Signature:**
-
-```ruby
-create_dataset(name:, description: nil, metadata: nil)
-```
-
-**Parameters:**
-
-| Parameter     | Type   | Required | Description                |
-| ------------- | ------ | -------- | -------------------------- |
-| `name`        | String | Yes      | Dataset name               |
-| `description` | String | No       | Human-readable description |
-| `metadata`    | Hash   | No       | Arbitrary key-value pairs  |
-
-**Returns:** `DatasetClient`
-
-**Example:**
-
-```ruby
-dataset = client.create_dataset(
-  name: "qa-eval",
-  description: "QA evaluation set",
-  metadata: { domain: "support" }
-)
-```
-
-### `Client#get_dataset`
-
-Fetch a dataset by name.
-
-**Signature:**
-
-```ruby
-get_dataset(name) # => DatasetClient
-```
-
-**Parameters:**
-
-| Parameter | Type   | Required | Description                                              |
-| --------- | ------ | -------- | -------------------------------------------------------- |
-| `name`    | String | Yes      | Dataset name (supports folder paths like "eval/qa-set")  |
-
-**Returns:** `DatasetClient`
-
-**Raises:** `NotFoundError` if the dataset does not exist
-
-### `Client#list_datasets`
-
-List all datasets in the project.
-
-**Signature:**
-
-```ruby
-list_datasets(page: nil, limit: nil)
-```
-
-**Parameters:**
-
-| Parameter | Type    | Required | Description      |
-| --------- | ------- | -------- | ---------------- |
-| `page`    | Integer | No       | Page number      |
-| `limit`   | Integer | No       | Results per page |
-
-**Returns:** `Array<Hash>` of dataset metadata
-
-### `Client#create_dataset_item`
-
-Create a new dataset item.
-
-**Signature:**
-
-```ruby
-create_dataset_item(dataset_name:, input: nil, expected_output: nil,
-                    metadata: nil, id: nil, source_trace_id: nil,
-                    source_observation_id: nil, status: nil)
-```
-
-**Parameters:**
-
-| Parameter               | Type   | Required | Description                              |
-| ----------------------- | ------ | -------- | ---------------------------------------- |
-| `dataset_name`          | String | Yes      | Parent dataset name                      |
-| `input`                 | Object | No       | Input data                               |
-| `expected_output`       | Object | No       | Expected output for evaluation           |
-| `metadata`              | Hash   | No       | Arbitrary metadata                       |
-| `id`                    | String | No       | Explicit ID (enables upsert)             |
-| `source_trace_id`       | String | No       | Link to source trace                     |
-| `source_observation_id` | String | No       | Link to source observation               |
-| `status`                | Symbol | No       | `:active` or `:archived`                 |
-
-**Returns:** `DatasetItemClient`
-
-**Example:**
-
-```ruby
-item = client.create_dataset_item(
-  dataset_name: "qa-eval",
-  input: { question: "What is Ruby?" },
-  expected_output: { answer: "A programming language" }
-)
-```
-
-### `Client#get_dataset_item`
-
-Fetch a dataset item by ID.
-
-**Signature:**
-
-```ruby
-get_dataset_item(id) # => DatasetItemClient
-```
-
-**Raises:** `NotFoundError` if the item does not exist
-
-### `Client#list_dataset_items`
-
-List items in a dataset. Auto-paginates when `page` is nil.
-
-**Signature:**
-
-```ruby
-list_dataset_items(dataset_name:, page: nil, limit: nil,
-                   source_trace_id: nil, source_observation_id: nil)
-```
-
-**Parameters:**
-
-| Parameter               | Type    | Required | Description                              |
-| ----------------------- | ------- | -------- | ---------------------------------------- |
-| `dataset_name`          | String  | Yes      | Dataset name                             |
-| `page`                  | Integer | No       | Page number (nil = fetch all pages)      |
-| `limit`                 | Integer | No       | Results per page                         |
-| `source_trace_id`       | String  | No       | Filter by source trace                   |
-| `source_observation_id` | String  | No       | Filter by source observation             |
-
-**Returns:** `Array<DatasetItemClient>`
-
-### `Client#delete_dataset_item`
-
-Delete a dataset item by ID. Idempotent (404 treated as success).
-
-**Signature:**
-
 ```ruby
-delete_dataset_item(id) # => nil
+warmer = Langfuse::CacheWarmer.new(client: nil) # Defaults to Langfuse.client.
+warmer.warm(prompt_names, versions: {}, labels: {})
+warmer.warm!(prompt_names, versions: {}, labels: {})
+warmer.warm_all(default_label: "production", versions: {}, labels: {})
+warmer.cache_enabled?
+warmer.cache_stats
 ```
 
-### `Client#create_dataset_run_item`
+Warm methods return `{ success: [names], failed: [{ name:, error: }] }`; errors are
+strings. `warm!` raises `CacheWarmingError` on any failure. `warm_all` discovers one
+page of names only. Selectors are hashes keyed by prompt name.
 
-Link a trace to a dataset item within a named run.
+## Tracing
 
-**Signature:**
-
-```ruby
-create_dataset_run_item(dataset_item_id:, run_name:, trace_id: nil,
-                        observation_id: nil, metadata: nil, run_description: nil)
-```
-
-**Parameters:**
-
-| Parameter         | Type   | Required | Description         |
-| ----------------- | ------ | -------- | ------------------- |
-| `dataset_item_id` | String | Yes      | Dataset item ID     |
-| `run_name`        | String | Yes      | Run name            |
-| `trace_id`        | String | No       | Trace ID            |
-| `observation_id`  | String | No       | Observation ID      |
-| `metadata`        | Hash   | No       | Optional metadata   |
-| `run_description` | String | No       | Run description     |
-
-**Returns:** `Hash` (created dataset run item data)
-
-### `Client#get_dataset_run`
-
-Fetch a dataset run and its linked run items.
-
-**Signature:**
-
-```ruby
-get_dataset_run(dataset_name:, run_name:) # => Hash
-```
-
-**Parameters:**
-
-| Parameter      | Type   | Required | Description  |
-| -------------- | ------ | -------- | ------------ |
-| `dataset_name` | String | Yes      | Dataset name |
-| `run_name`     | String | Yes      | Run name     |
-
-**Returns:** `Hash`
-
-### `Client#list_dataset_runs`
-
-List runs for a dataset. Auto-paginates when `page` is omitted.
-
-**Signature:**
-
-```ruby
-list_dataset_runs(dataset_name:, page: nil, limit: nil) # => Array<Hash>
-```
-
-**Parameters:**
-
-| Parameter      | Type    | Required | Description                                |
-| -------------- | ------- | -------- | ------------------------------------------ |
-| `dataset_name` | String  | Yes      | Dataset name                               |
-| `page`         | Integer | No       | Page number (nil = fetch all pages)        |
-| `limit`        | Integer | No       | Results per page                           |
-
-**Returns:** `Array<Hash>`
-
-### `Client#delete_dataset_run`
-
-Delete a dataset run by dataset and run name.
-
-**Signature:**
-
-```ruby
-delete_dataset_run(dataset_name:, run_name:) # => nil
-```
-
-Unlike `delete_dataset_item`, this is strict: a missing run raises `Langfuse::NotFoundError`.
-
-**Parameters:**
-
-| Parameter      | Type   | Required | Description  |
-| -------------- | ------ | -------- | ------------ |
-| `dataset_name` | String | Yes      | Dataset name |
-| `run_name`     | String | Yes      | Run name     |
-
-**Returns:** `nil`
-
-See [DATASETS.md](DATASETS.md) for complete guide.
-
-## Experiments
-
-### `Client#run_experiment`
-
-Run an experiment against a named dataset or local data.
-
-**Signature:**
-
-```ruby
-run_experiment(name:, task:, data: nil, dataset_name: nil, description: nil,
-               evaluators: [], run_evaluators: [], metadata: nil, run_name: nil)
-```
-
-**Parameters:**
-
-| Parameter        | Type          | Required | Description                                     |
-| ---------------- | ------------- | -------- | ----------------------------------------------- |
-| `name`           | String        | Yes      | Experiment name                                 |
-| `task`           | Proc          | Yes      | Callable receiving item, returning output       |
-| `dataset_name`   | String        | No*      | Dataset to run against                          |
-| `data`           | Array         | No*      | Local data items (hashes or DatasetItemClients) |
-| `description`    | String        | No       | Run description                                 |
-| `evaluators`     | Array\<Proc\> | No       | Item-level evaluators                           |
-| `run_evaluators` | Array\<Proc\> | No       | Run-level evaluators                            |
-| `metadata`       | Hash          | No       | Metadata attached to each trace                 |
-| `run_name`       | String        | No       | Explicit run name (default: "name - timestamp") |
-
-\* Provide exactly one of `dataset_name` or `data`.
-
-**Returns:** `ExperimentResult`
-
-The result exposes `experiment_id`, which is the dataset run ID for a dataset-backed experiment or a generated run-scoped ID for local data. See [EXPERIMENTS.md](EXPERIMENTS.md#langfuse-v4-attribution) for the observation attributes and propagation behavior.
-
-**Raises:** `ArgumentError` if both or neither of `data`/`dataset_name` provided
-
-**Example:**
-
-```ruby
-result = client.run_experiment(
-  name: "qa-v1",
-  dataset_name: "qa-eval",
-  task: ->(item) { my_llm_call(item.input) },
-  evaluators: [my_evaluator],
-  metadata: { model: "gpt-4o" }
-)
-```
-
-### `DatasetClient#run_experiment`
-
-Run an experiment against this dataset's items.
-
-**Signature:**
-
 ```ruby
-dataset.run_experiment(name:, task:, description: nil, evaluators: [],
-                       run_evaluators: [], metadata: nil, run_name: nil)
+Langfuse.observe(name, attrs = {}, as_type: :span, trace_id: nil, **attribute_keywords, &block)
+Langfuse.start_observation(name, attrs = {}, as_type: :span, trace_id: nil,
+                          parent_span_context: nil, start_time: nil, skip_validation: false)
+Langfuse.create_trace_id(seed: nil)
 ```
-
-Same parameters as `Client#run_experiment` minus `dataset_name` and `data`.
-
-**Returns:** `ExperimentResult`
 
-See [EXPERIMENTS.md](EXPERIMENTS.md) for complete guide.
+The first two return an observation; `observe` with a block returns the block value
+and ends the observation. `start_observation` is stateful; it does not activate the
+span or run a block. `start_time` accepts a Time or Unix timestamp in nanoseconds.
+Use a positional attributes hash with this method. `skip_validation` is a type
+validation bypass used internally by child observations.
 
-## Attribute Propagation
+`trace_id` must be a nonzero lowercase 32-character hexadecimal String and cannot
+be combined with `parent_span_context`. Explicit trace IDs start new roots.
+`create_trace_id` returns a random ID or one derived deterministically from `seed`.
+Types and context behavior are described in [Tracing](TRACING.md).
 
-### `Langfuse.discover_skills`
+### Observation Objects
 
 ```ruby
-Langfuse.discover_skills(dir: ".agents/skills")
-# => [{ name: "summarize", version: 2 }, { name: "local-helper" }]
+observation.update(attrs)
+observation.update_trace(attrs)
+observation.start_observation(name, attrs = {}, as_type: :span, &block)
+observation.event(name:, input: nil, level: "default")
+observation.end(end_time: nil)
+observation.score_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
 ```
 
-Reads local immediate skill directories and optional `langfuse-skills.lock` installation records. Returns an array of hashes with `:name` and optional `:version`, without network calls. Missing directories return `[]`; read errors warn and fall back. See [Skill Availability](TRACING.md#skill-availability) for lock precedence and invalid-entry behavior.
+Readers are `id`, `trace_id`, `trace_url`, `type`, `otel_span`, `otel_tracer`, and
+`current_span` (the wrapped OpenTelemetry span). URL lookup can return `nil`.
+`update` and `update_trace` return the observation. Child creation returns the child
+or its block's value. `score_trace` queues a score asynchronously.
 
-### `Langfuse.propagate_attributes`
+| Attribute group | Fields |
+| --- | --- |
+| Observation | `input`, `output`, `metadata`, `level`, `status_message`, `version`, `environment` |
+| Model call | `model`, `model_parameters`, `usage_details`, `cost_details`, `completion_start_time`, `prompt` |
+| Trace via `update_trace` | `name`, `user_id`, `session_id`, `version`, `release`, `input`, `output`, `metadata`, `tags`, `public`, `environment` |
 
-Propagate attributes to all spans created within the block.
-
-**Signature:**
-
-```ruby
-propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
-                     tags: nil, trace_name: nil, release: nil, environment: nil,
-                     skills_available: nil, attach_skills: nil, as_baggage: false) { ... }
-```
+Set fields with `update(...)`. All observations also have `input=`, `output=`,
+`metadata=`, and `level=`. Generations and embeddings add `model=`,
+`model_parameters=`, and `usage_details=`; `usage=` is deprecated. Generations
+add `cost_details=`. These setters do not imply corresponding readers.
 
-**Parameters:**
+Use `input`, `output`, and `total` keys for aggregate usage/cost details. `prompt`
+accepts a prompt client or a hash with `name`, `version`, and `is_fallback`.
+Levels are `DEBUG`, `DEFAULT`, `WARNING`, and `ERROR`. `end_time` accepts a Time or
+Unix timestamp in nanoseconds. Standalone event observations end at creation.
 
-| Parameter    | Type                 | Required | Description                                |
-| ------------ | -------------------- | -------- | ------------------------------------------ |
-| `user_id`    | String               | No       | User identifier (≤200 chars)               |
-| `session_id` | String               | No       | Session identifier (≤200 chars)            |
-| `metadata`   | Hash<String, String> | No       | Metadata hash                              |
-| `version`    | String               | No       | Version (≤200 chars)                       |
-| `tags`       | Array<String>        | No       | Tags array (each ≤200 chars)               |
-| `trace_name` | String               | No       | Trace name (≤200 chars)                    |
-| `release`    | String               | No       | Release identifier (≤200 chars)            |
-| `environment` | String              | No       | Lowercase environment identifier (≤40 chars) |
-| `skills_available` | Array<Hash>     | No       | Replace active and inherited skill references; `[]` clears, `nil` inherits; never baggage |
-| `attach_skills` | Boolean           | No       | Attach the configured catalog to new spans; `nil` inherits, `false` disables attachment; never baggage |
-| `as_baggage` | Boolean              | No       | Propagate across services via OTel baggage |
+Attribute objects can replace hashes: `Langfuse::Types::SpanAttributes`,
+`GenerationAttributes` (adds model-call fields), and `TraceAttributes`. Their
+constructors accept the corresponding keywords, default to nil, and expose `to_h`.
 
-**Example:**
+### Propagation and Filtering
 
 ```ruby
 Langfuse.propagate_attributes(
-  user_id: "user_123",
-  session_id: "session_456",
-  metadata: { env: "production" },
-  version: "v1.0",
-  tags: ["api", "v2"],
-  trace_name: "api-request",
-  release: "release-123",
-  environment: "production"
-) do
-  # All observations here inherit these attributes
-  Langfuse.observe("operation") { ... }
-end
+  user_id: nil, session_id: nil, metadata: nil, version: nil, tags: nil,
+  trace_name: nil, release: nil, environment: nil, skills_available: nil,
+  attach_skills: nil, as_baggage: false
+) { perform_work }
+
+Langfuse.discover_skills(dir:)
+Langfuse.default_export_span?(span)
+Langfuse.langfuse_span?(span)
+Langfuse.genai_span?(span)
+Langfuse.known_llm_instrumentor?(span)
 ```
 
-## Types
+Propagation requires a block and returns its value. See [Tracing](TRACING.md#propagate-trace-attributes)
+for value constraints, merging, and baggage setup, and
+[Skill Availability](TRACING.md#skill-availability) for discovery and scope rules.
+Filter predicates return Booleans and retain `is_default_export_span`,
+`is_langfuse_span`, `is_genai_span`, and `is_known_llm_instrumentor` aliases.
 
-### `Types::SpanAttributes`
+Export masking uses `MaskOtelSpansParams`, `OtelSpanIdentifier`, `OtelSpanData`,
+`OtelSpanPatch`, and `MaskOtelSpansResult`. See the
+[masking contract](TRACING.md#export-stage-masking) for fields and failure behavior.
+
+## Scoring
+
+`client.create_score` and `client.create_score!` accept the same keywords:
 
 ```ruby
-Types::SpanAttributes.new(
-  input: {},
-  output: {},
-  metadata: {},
-  level: "DEFAULT",           # DEBUG, DEFAULT, WARNING, ERROR
-  status_message: "",
-  version: "",
-  environment: ""
+client.create_score(
+  name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil,
+  observation_id: nil, comment: nil, metadata: nil, environment: nil,
+  data_type: :numeric, dataset_run_id: nil, config_id: nil
+)
+
+client.score_active_observation(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+client.score_active_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
+client.flush_scores
+```
+
+All four score-creation methods and `flush_scores` also exist on `Langfuse`.
+`timestamp` accepts a Time or String and defaults to now; `id` defaults to a UUID.
+`create_score` and the active-context helpers return `nil`. With telemetry enabled,
+the active-context helpers raise `ArgumentError` if no valid span is active. `create_score!` returns
+the accepted score ID or nil when telemetry is disabled. Invalid values raise
+`ArgumentError`; synchronous transport or rejection failures raise an `ApiError`
+subclass. See [Scoring](SCORING.md) for types, associations, sampling, retry identity,
+and batch delivery limits.
+
+## Data Access
+
+These calls return parsed response hashes, including `data` and any pagination
+`meta`. List calls return one page; callers advance the cursor themselves.
+Observation `input` and `output` remain JSON-encoded strings inside that response.
+
+```ruby
+client.list_observations(
+  from_start_time: nil, to_start_time: nil, trace_id: nil,
+  fields: nil, cursor: nil, limit: nil, filter: nil,
+  name: nil, user_id: nil, type: nil, level: nil,
+  parent_observation_id: nil, is_root_observation: nil,
+  environment: nil, session_id: nil, version: nil, expand_metadata: nil
+)
+
+client.query_metrics(query:)
+
+client.list_scores(
+  limit: nil, cursor: nil, fields: nil, id: nil, name: nil, source: nil,
+  data_type: nil, environment: nil, config_id: nil, queue_id: nil,
+  author_user_id: nil, value: nil, value_min: nil, value_max: nil,
+  trace_id: nil, session_id: nil, observation_id: nil, experiment_id: nil,
+  from_timestamp: nil, to_timestamp: nil
 )
 ```
 
-### `Types::GenerationAttributes`
+Observation reads require either a nonempty `trace_id` or both start-time bounds;
+otherwise they raise `ArgumentError`. Time bounds accept Time objects or ISO 8601
+strings. `environment` is an array of strings. `type` uses uppercase names such as
+`GENERATION`; `fields` is a comma-separated selection from `core`, `basic`, `time`,
+`io`, `metadata`, `model`, `usage`, `prompt`, `metrics`, and `trace_context`.
+`filter` is a JSON string of structured filters and takes precedence over individual
+filters at the backend. `expand_metadata` is a comma-separated list of metadata keys.
 
-Extends `SpanAttributes` with:
+Metrics `query` accepts a Hash (JSON-encoded by the SDK) or a pre-encoded JSON String.
+Other types raise `ArgumentError`. The server validates the query schema.
+
+Score filters use comma-separated strings for IDs, names, types, sources, and
+environments. `fields` adds `details`, `subject`, or `annotation` to core fields.
+Choose one subject family: trace, session, or experiment. `observation_id` requires
+`trace_id`. `value` requires a single numeric, boolean, or categorical `data_type`;
+`value_min` and `value_max` require `NUMERIC`. These are backend constraints.
+
+See [Data Access](DATA_ACCESS.md) for pagination, metrics queries, and verification.
+
+### Legacy Trace Reads
 
 ```ruby
-Types::GenerationAttributes.new(
-  # SpanAttributes fields +
-  completion_start_time: Time.now,
-  model: "gpt-4",
-  model_parameters: { temperature: 0.7 },
-  usage_details: { prompt_tokens: 100, completion_tokens: 50 },
-  cost_details: { input: 0.02, output: 0.03, total: 0.05 },
-  prompt: { name: "greeting", version: 1, is_fallback: false }
+client.list_traces(
+  page: nil, limit: nil, user_id: nil, name: nil, session_id: nil,
+  from_timestamp: nil, to_timestamp: nil, order_by: nil,
+  tags: nil, version: nil, release: nil, environment: nil, fields: nil, filter: nil
+)
+client.get_trace(id)
+```
+
+`list_traces` returns one page as `Array<Hash>`; `get_trace` returns a Hash.
+Use observation reads for current trace traversal.
+
+## Datasets
+
+```ruby
+client.create_dataset(name:, description: nil, metadata: nil)
+client.get_dataset(name)
+client.list_datasets(page: nil, limit: nil)
+
+client.create_dataset_item(
+  dataset_name:, input: nil, expected_output: nil, metadata: nil, id: nil,
+  source_trace_id: nil, source_observation_id: nil, status: nil
+)
+client.get_dataset_item(id)
+client.list_dataset_items(
+  dataset_name:, page: nil, limit: nil, source_trace_id: nil, source_observation_id: nil
+)
+client.delete_dataset_item(id)
+
+client.create_dataset_run_item(
+  dataset_item_id:, run_name:, trace_id: nil, observation_id: nil,
+  metadata: nil, run_description: nil
+)
+client.get_dataset_run(dataset_name:, run_name:)
+client.list_dataset_runs(dataset_name:, page: nil, limit: nil)
+client.delete_dataset_run(dataset_name:, run_name:)
+```
+
+Create/get dataset methods return `DatasetClient`; create/get item methods return
+`DatasetItemClient`. Dataset lists return one page of metadata hashes. Item and run
+lists fetch all pages unless `page:` is supplied; `limit:` is the page size.
+Item lists return wrappers, run lists return hashes. Run-item creation and run reads
+return hashes. Deletes return nil; only item deletion treats 404 as success.
+
+```ruby
+item.link(trace_id:, run_name:, observation_id: nil, metadata: nil, run_description: nil)
+item.run(run_name:, run_description: nil, run_metadata: nil) { |observation| observation.update(output: "Done") }
+```
+
+`link` returns the created run-item hash; `run` returns the block value after tracing
+and linking. See [Datasets](DATASETS.md) for object readers and error behavior.
+
+## Experiments
+
+```ruby
+client.run_experiment(
+  name:, task:, data: nil, dataset_name: nil, description: nil,
+  evaluators: [], run_evaluators: [], metadata: nil, run_name: nil
+)
+
+dataset.run_experiment(
+  name:, task:, description: nil, evaluators: [], run_evaluators: [],
+  metadata: nil, run_name: nil
+)
+
+Langfuse::Evaluation.new(
+  name:, value:, comment: nil, data_type: :numeric, config_id: nil, metadata: nil
 )
 ```
 
-### `Types::TraceAttributes`
+Provide exactly one of `data` or `dataset_name` to the client method. The dataset
+method uses its current items. Both return `ExperimentResult`. Evaluations expose
+their constructor fields and `to_h`; only numeric, boolean, and categorical types
+are accepted. See [Experiments](EXPERIMENTS.md) for callable contracts, result
+objects, persistence limits, and v4 attribution.
+
+## URLs
 
 ```ruby
-Types::TraceAttributes.new(
-  name: "trace-name",
-  user_id: "user_123",
-  session_id: "session_456",
-  version: "v1.0",
-  release: "2024.1",
-  input: {},
-  output: {},
-  metadata: {},
-  tags: ["api", "v1"],
-  public: false,
-  environment: "production"
-)
+client.project_id
+client.trace_url(trace_id)
+client.dataset_url(dataset_id)
+client.dataset_run_url(dataset_id:, dataset_run_id:)
 ```
 
-### Other Attribute Types
-
-- `Types::EmbeddingAttributes` - Extends `GenerationAttributes`
-- `Types::EventAttributes` - Alias for `SpanAttributes`
-- `Types::AgentAttributes` - Alias for `SpanAttributes`
-- `Types::ToolAttributes` - Alias for `SpanAttributes`
-- `Types::ChainAttributes` - Alias for `SpanAttributes`
-- `Types::RetrieverAttributes` - Alias for `SpanAttributes`
-- `Types::EvaluatorAttributes` - Alias for `SpanAttributes`
-- `Types::GuardrailAttributes` - Alias for `SpanAttributes`
-
-## Exceptions
-
-All exceptions inherit from `Langfuse::Error < StandardError`.
-
-### `Langfuse::ConfigurationError`
-
-Configuration validation errors.
-
-**Raised when:**
-
-- Missing `public_key` or `secret_key`
-- Invalid configuration values
-
-### `Langfuse::ApiError`
-
-Base class for API HTTP errors.
-
-**Raised when:**
-
-- Network issues
-- Server errors (500, 503)
-- Timeouts
-
-### `Langfuse::UnauthorizedError`
-
-Extends `ApiError`. Authentication failures (401).
-
-**Raised when:**
-
-- Invalid API credentials
-- Expired keys
-
-### `Langfuse::NotFoundError`
-
-Extends `ApiError`. Resource not found (404).
-
-**Raised when:**
-
-- Prompt does not exist
-- Invalid version/label
-
-### `Langfuse::CacheWarmingError`
-
-Cache warming operation failed.
-
-**Raised when:**
-
-- One or more prompts failed to warm
-
-See [ERROR_HANDLING.md](ERROR_HANDLING.md) for complete guide.
-
-## Utilities
-
-### `Client#trace_url`
-
-Generate a project-scoped Langfuse UI URL for a trace.
-
-**Signature:**
-
-```ruby
-trace_url(trace_id) # => String | nil
-```
-
-**Example:**
-
-```ruby
-url = client.trace_url("abc123")
-# => "https://cloud.langfuse.com/project/{project_id}/traces/abc123"
-```
-
-Returns `nil` if the project ID cannot be fetched.
-
-### `Client#dataset_url`
-
-Generate a project-scoped Langfuse UI URL for a dataset.
-
-**Signature:**
-
-```ruby
-dataset_url(dataset_id) # => String | nil
-```
-
-**Example:**
-
-```ruby
-url = client.dataset_url("dataset-uuid")
-# => "https://cloud.langfuse.com/project/{project_id}/datasets/dataset-uuid"
-```
-
-### `Client#dataset_run_url`
-
-Generate a project-scoped Langfuse UI URL for a dataset run.
-
-**Signature:**
-
-```ruby
-dataset_run_url(dataset_id:, dataset_run_id:) # => String | nil
-```
-
-**Example:**
-
-```ruby
-url = client.dataset_run_url(
-  dataset_id: "dataset-uuid",
-  dataset_run_id: "run-uuid"
-)
-# => "https://cloud.langfuse.com/project/{project_id}/datasets/dataset-uuid/runs/run-uuid"
-```
-
-### `Langfuse.shutdown`
-
-Shutdown the SDK gracefully (flush buffers).
-
-**Signature:**
-
-```ruby
-Langfuse.shutdown(timeout: 30)
-```
-
-**Parameters:**
-
-| Parameter | Type    | Required | Default | Description                |
-| --------- | ------- | -------- | ------- | -------------------------- |
-| `timeout` | Integer | No       | `30`    | Shutdown timeout (seconds) |
-
-**Example:**
-
-```ruby
-# At an earlier application-owned shutdown boundary
-Langfuse.shutdown
-```
-
-The SDK invokes shutdown automatically during normal process exit.
-
-### `Langfuse.force_flush`
-
-Force flush all pending data.
-
-**Signature:**
-
-```ruby
-Langfuse.force_flush(timeout: 30)
-```
-
-**Example:**
-
-```ruby
-Langfuse.force_flush(timeout: 10)
-```
-
-## See Also
-
-- [GETTING_STARTED.md](GETTING_STARTED.md) - Quick start guide
-- [CONFIGURATION.md](CONFIGURATION.md) - Configuration details
-- [PROMPTS.md](PROMPTS.md) - Prompt management
-- [TRACING.md](TRACING.md) - Tracing patterns
-- [SCORING.md](SCORING.md) - Scoring guide
-- [DATASETS.md](DATASETS.md) - Dataset management
-- [EXPERIMENTS.md](EXPERIMENTS.md) - Experiment runner
-- [ERROR_HANDLING.md](ERROR_HANDLING.md) - Exception handling
+These return strings or nil if project lookup fails. The client attempts project
+lookup once and caches the outcome; creating an observation alone does not require
+this request.

@@ -89,10 +89,9 @@ module Langfuse
       end
     end
 
-    # List all prompts in the Langfuse project
+    # List one page of prompt metadata in the Langfuse project
     #
-    # Fetches a list of all prompt names available in your project.
-    # Note: This returns metadata only, not full prompt content.
+    # Returns metadata for the requested page, not full prompt content.
     #
     # @param page [Integer, nil] Optional page number for pagination
     # @param limit [Integer, nil] Optional limit per page (default: API default)

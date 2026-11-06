@@ -19,4 +19,4 @@ gem "langfuse-rb"
 
 ## Docs
 
-Please [see our docs](docs/README.md) for detailed information on this SDK.
+Start with the [SDK guides and API reference](docs/README.md).

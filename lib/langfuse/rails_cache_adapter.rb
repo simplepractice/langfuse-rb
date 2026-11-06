@@ -213,9 +213,9 @@ module Langfuse
 
     # Fetch a value from cache with lock for stampede protection
     #
-    # This method prevents cache stampedes (thundering herd) by ensuring only one
-    # process/thread fetches from the source when the cache is empty. Others wait
-    # for the first one to populate the cache.
+    # A cache-store lock coordinates misses while other callers wait briefly
+    # for the cached result. Lock expiry or an exhausted wait can permit
+    # independent source fetches, so this does not guarantee a single request.
     #
     # Uses exponential backoff: 50ms, 100ms, 200ms (3 retries max, ~350ms total).
     # If cache is still empty after waiting, falls back to fetching from source.

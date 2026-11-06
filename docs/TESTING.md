@@ -9,8 +9,8 @@ send trace data over HTTP.
 
 Create one exporter for the test process. Configure it before tracing starts.
 Dummy API keys are still required because tracing validates all connection settings.
-Ensure the test process does not inherit `LANGFUSE_TRACING_ENABLED=false` or
-`OTEL_SDK_DISABLED=true`; either setting prevents the exporter from receiving spans.
+Ensure the test process does not inherit `OTEL_SDK_DISABLED=true`, which prevents
+the exporter from receiving spans. Enable tracing and full sampling explicitly:
 
 ```ruby
 # spec/support/langfuse.rb
@@ -21,6 +21,8 @@ LANGFUSE_TEST_EXPORTER = OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter
 Langfuse.configure do |config|
   config.public_key = "pk-test"
   config.secret_key = "sk-test"
+  config.tracing_enabled = true
+  config.sample_rate = 1.0
   config.span_exporter = LANGFUSE_TEST_EXPORTER
 end
 
@@ -67,6 +69,8 @@ LANGFUSE_TEST_EXPORTER = OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter
 Langfuse.configure do |config|
   config.public_key = "pk-test"
   config.secret_key = "sk-test"
+  config.tracing_enabled = true
+  config.sample_rate = 1.0
   config.span_exporter = LANGFUSE_TEST_EXPORTER
 end
 
