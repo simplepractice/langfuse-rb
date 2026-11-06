@@ -464,6 +464,18 @@ config.job_queue = :langfuse  # Reserved/no-op today
 
 **Current Behavior:** No ActiveJob integration yet. Reserved for future implementation.
 
+#### `skills`
+
+- **Type:** Hash with an `:available` array of skill references
+- **Default:** `nil`
+- **Description:** Optional catalog, serialized when tracing starts. Each reference has a `:name` and optional integer `:version`.
+
+```ruby
+config.skills = { available: Langfuse.discover_skills(dir: ".agents/skills") }
+```
+
+The catalog is attached only to new spans inside `Langfuse.propagate_attributes(attach_skills: true)`. Explicit `skills_available` lists override it, including an empty list. See [Skill Availability](TRACING.md#skill-availability) for discovery and scope rules.
+
 #### `environment`
 
 - **Type:** String

@@ -85,6 +85,10 @@ module Langfuse
     # @return [String, nil] Default release identifier applied to new traces/observations
     attr_accessor :release
 
+    # @return [Hash, nil] Skill catalog as { available: [{ name: "skill", version: 1 }] }.
+    #   Serialized when tracing starts; only attached within an attach_skills: true scope.
+    attr_accessor :skills
+
     # @return [Float] Trace sampling rate from 0.0 to 1.0
     attr_reader :sample_rate
 
@@ -352,6 +356,7 @@ module Langfuse
       @otel_sdk_disabled = otel_sdk_disabled?
       @environment = env_value("LANGFUSE_TRACING_ENVIRONMENT")
       @release = env_value("LANGFUSE_RELEASE") || detect_release_from_ci_env
+      @skills = nil
       self.sample_rate = env_value("LANGFUSE_SAMPLE_RATE") || DEFAULT_SAMPLE_RATE
       @should_export_span = nil
       @mask = nil

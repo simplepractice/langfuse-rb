@@ -67,6 +67,8 @@ module Langfuse
     # @param trace_name [String, nil] Trace name (≤200 characters)
     # @param release [String, nil] Release identifier (≤200 characters)
     # @param environment [String, nil] Lowercase environment identifier (≤40 characters)
+    # @param skills_available [Array<Hash>, nil] Skill references; replaces inherited skills, including when empty
+    # @param attach_skills [Boolean, nil] Attach the configured catalog to new spans in this scope; nil inherits
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
     # @yield Block within which attributes are propagated
     # @return [Object] The result of the block
@@ -88,7 +90,8 @@ module Langfuse
     #
     # rubocop:disable Metrics/ParameterLists
     def self.propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil, tags: nil,
-                                  trace_name: nil, release: nil, environment: nil, as_baggage: false, &block)
+                                  trace_name: nil, release: nil, environment: nil, skills_available: nil,
+                                  attach_skills: nil, as_baggage: false, &block)
       raise ArgumentError, "Block required" unless block
 
       attributes = {
@@ -96,7 +99,9 @@ module Langfuse
         "version" => version, "tags" => tags, "trace_name" => trace_name,
         "release" => release, "environment" => environment
       }
-      _propagate_attributes(attributes, as_baggage: as_baggage, &block)
+      _propagate_attributes(
+        attributes, as_baggage: as_baggage, skills_available: skills_available, attach_skills: attach_skills, &block
+      )
     end
 
     # Internal implementation of propagate_attributes
@@ -104,8 +109,9 @@ module Langfuse
     # @param attributes [Hash<String, Object>] Propagated attribute values
     # @param as_baggage [Boolean] Whether to add the values to OpenTelemetry baggage
     # @api private
-    def self._propagate_attributes(attributes, as_baggage:, &)
-      current_context = OpenTelemetry::Context.current
+    def self._propagate_attributes(attributes, as_baggage:, skills_available: nil, attach_skills: nil, &)
+      current_context = Skills.propagate(OpenTelemetry::Context.current,
+                                         skills_available: skills_available, attach_skills: attach_skills)
       current_span = OpenTelemetry::Trace.current_span
 
       attributes.each do |key, value|

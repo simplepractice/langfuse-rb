@@ -1582,6 +1582,15 @@ See [EXPERIMENTS.md](EXPERIMENTS.md) for complete guide.
 
 ## Attribute Propagation
 
+### `Langfuse.discover_skills`
+
+```ruby
+Langfuse.discover_skills(dir: ".agents/skills")
+# => [{ name: "summarize", version: 2 }, { name: "local-helper" }]
+```
+
+Reads local immediate skill directories and optional `langfuse-skills.lock` installation records. Returns an array of hashes with `:name` and optional `:version`, without network calls. Missing directories return `[]`; read errors warn and fall back. See [Skill Availability](TRACING.md#skill-availability) for lock precedence and invalid-entry behavior.
+
 ### `Langfuse.propagate_attributes`
 
 Propagate attributes to all spans created within the block.
@@ -1591,7 +1600,7 @@ Propagate attributes to all spans created within the block.
 ```ruby
 propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
                      tags: nil, trace_name: nil, release: nil, environment: nil,
-                     as_baggage: false) { ... }
+                     skills_available: nil, attach_skills: nil, as_baggage: false) { ... }
 ```
 
 **Parameters:**
@@ -1606,6 +1615,8 @@ propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil,
 | `trace_name` | String               | No       | Trace name (≤200 chars)                    |
 | `release`    | String               | No       | Release identifier (≤200 chars)            |
 | `environment` | String              | No       | Lowercase environment identifier (≤40 chars) |
+| `skills_available` | Array<Hash>     | No       | Replace active and inherited skill references; `[]` clears, `nil` inherits; never baggage |
+| `attach_skills` | Boolean           | No       | Attach the configured catalog to new spans; `nil` inherits, `false` disables attachment; never baggage |
 | `as_baggage` | Boolean              | No       | Propagate across services via OTel baggage |
 
 **Example:**
