@@ -31,12 +31,15 @@ module Langfuse
       context
     end
 
-    def self.attributes(context, catalog: nil)
+    # Explicit span attributes win over scoped values, which win over an opted-in catalog.
+    def self.apply(span, context, catalog:)
+      return if span.attributes&.key?(OtelAttributes::OBSERVATION_SKILLS_AVAILABLE)
+
       value = context.value(AVAILABLE_CONTEXT_KEY)
       value = catalog if value.nil? && context.value(ATTACH_CONTEXT_KEY) == true
-      return {} if value.nil?
+      return if value.nil?
 
-      { OtelAttributes::OBSERVATION_SKILLS_AVAILABLE => value }
+      span.set_attribute(OtelAttributes::OBSERVATION_SKILLS_AVAILABLE, value)
     end
   end
 end

@@ -169,7 +169,7 @@ module Langfuse
     #
     # @api private
     # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
-    def self.get_propagated_attributes_from_context(context, available_skills: nil)
+    def self.get_propagated_attributes_from_context(context)
       propagated_attributes = _extract_baggage_attributes(context)
 
       # Handle OTEL context values
@@ -198,7 +198,7 @@ module Langfuse
       # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
       experiment_attributes = context.value(EXPERIMENT_ATTRIBUTES_CONTEXT_KEY) || {}
-      propagated_attributes.merge(experiment_attributes).merge(Skills.attributes(context, catalog: available_skills))
+      propagated_attributes.merge(experiment_attributes)
     end
 
     # Apply SDK-owned experiment attributes to the current span and future children.

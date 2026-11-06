@@ -10,7 +10,7 @@ module Langfuse
     private_constant :LOCK_FILE
 
     def initialize(dir:, logger:)
-      @root = File.expand_path(dir)
+      @root = File.absolute_path(dir)
       @logger = logger
     end
 
@@ -89,7 +89,7 @@ module Langfuse
           @logger.warn("Skipping invalid skill entry in #{file}.")
           next
         end
-        path = File.expand_path(skill["path"], File.dirname(file))
+        path = File.absolute_path(skill["path"], File.dirname(file))
         locked[path] = { name: skill["name"], version: skill["version"] }
       end
     end
@@ -102,8 +102,12 @@ module Langfuse
       return false unless skill.is_a?(Hash)
 
       path, name, version = skill.values_at("path", "name", "version")
-      path.is_a?(String) && !path.empty? && name.is_a?(String) && (1..128).cover?(name.length) &&
+      valid_skill_path?(path) && name.is_a?(String) && (1..128).cover?(name.length) &&
         version.is_a?(Integer) && (1..2_147_483_647).cover?(version)
+    end
+
+    def valid_skill_path?(path)
+      path.is_a?(String) && !path.empty? && !path.include?("\0")
     end
   end
 end

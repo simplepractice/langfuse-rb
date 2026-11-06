@@ -98,6 +98,14 @@ RSpec.describe "Langfuse.discover_skills" do
     expect(Langfuse.discover_skills(dir: root)).to eq([{ name: "locked-name", version: 2 }])
   end
 
+  it "treats tildes in directory and lock paths as literal directory names" do
+    install_skill("~helper")
+    write_lock(root, [{ path: "~helper", name: "locked-name", version: 2 }])
+    FileUtils.mv(root, File.join(workspace, "~skills"))
+
+    expect(Langfuse.discover_skills(dir: "~skills")).to eq([{ name: "locked-name", version: 2 }])
+  end
+
   ["{", "[]", '{"lockVersion":true,"skills":[]}', '{"lockVersion":1,"skills":{}}'].each do |contents|
     it "falls back to directory names for malformed lock #{contents.inspect}" do
       install_skill("local")
@@ -140,7 +148,8 @@ RSpec.describe "Langfuse.discover_skills" do
   it "skips invalid lock records while retaining valid records and unknown fields" do
     install_skill("local")
     valid = { path: "local", name: "locked", version: 2, source: "ignored" }
-    invalid = [nil, [], {}, valid.merge(path: ""), valid.merge(name: ""), valid.merge(name: "x" * 129),
+    invalid = [nil, [], {}, valid.merge(path: ""), valid.merge(path: "bad\0path"),
+               valid.merge(name: ""), valid.merge(name: "x" * 129),
                valid.merge(version: true), valid.merge(version: 1.5), valid.merge(version: 0),
                valid.merge(version: 2_147_483_648)]
     write_lock(root, [valid, *invalid])

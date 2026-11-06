@@ -36,7 +36,10 @@ module Langfuse
       return unless span.recording?
 
       apply_attributes(span, @default_trace_attributes)
-      apply_attributes(span, propagated_attributes(parent_context))
+      if parent_context
+        apply_attributes(span, Propagation.get_propagated_attributes_from_context(parent_context))
+        Skills.apply(span, parent_context, catalog: @available_skills)
+      end
       remember_app_root_state(span, parent_context)
     end
 
@@ -83,18 +86,8 @@ module Langfuse
       )
     end
 
-    def propagated_attributes(parent_context)
-      return {} unless parent_context
-
-      Propagation.get_propagated_attributes_from_context(parent_context, available_skills: @available_skills)
-    end
-
     def apply_attributes(span, attributes)
-      attributes.each do |key, value|
-        next if key == OtelAttributes::OBSERVATION_SKILLS_AVAILABLE && span.attributes&.key?(key)
-
-        span.set_attribute(key, value)
-      end
+      attributes.each { |key, value| span.set_attribute(key, value) }
     end
 
     def remember_app_root_state(span, parent_context)
