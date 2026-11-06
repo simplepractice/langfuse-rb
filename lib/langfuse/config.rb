@@ -48,11 +48,11 @@ module Langfuse
     # @return [Integer] Lock timeout in seconds for distributed cache stampede protection
     attr_accessor :cache_lock_timeout
 
-    # @return [Boolean] Enable stale-while-revalidate caching (requires cache_stale_ttl > 0 to activate)
+    # @return [Boolean] Compatibility setting; cache_stale_ttl alone controls background refresh
     attr_accessor :cache_stale_while_revalidate
 
     # @return [Integer, Symbol] Stale TTL in seconds (grace period for serving stale data, default: 0)
-    #   Accepts :indefinite which is automatically normalized to 1000 years (31,536,000,000 seconds) for practical "never expire" behavior.
+    #   Accepts :indefinite, normalized on use to about 1000 years. Backend eviction can still remove entries.
     attr_accessor :cache_stale_ttl
 
     # @return [Integer] Number of background threads for cache refresh
@@ -61,7 +61,7 @@ module Langfuse
     # @return [#call, nil] Observer called for prompt cache events
     attr_accessor :prompt_cache_observer
 
-    # @return [Boolean] Use OpenTelemetry batch scheduling for trace export
+    # @return [Boolean] Use flush_interval for trace scheduling; false uses a 60-second batch schedule
     attr_accessor :tracing_async
 
     # @return [Boolean] Enable Langfuse tracing and scoring
@@ -166,7 +166,7 @@ module Langfuse
     # @return [Integer] Default maximum number of queued asynchronous scores
     DEFAULT_SCORE_QUEUE_CAPACITY = 100_000
 
-    # @return [Symbol] Default ActiveJob queue name
+    # @return [Symbol] Default reserved queue name (no runtime effect)
     DEFAULT_JOB_QUEUE = :default
 
     # @return [Float] Default trace sampling rate (sample all traces)

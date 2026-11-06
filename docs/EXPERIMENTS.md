@@ -1,269 +1,101 @@
 # Experiments
 
-Systematic evaluation of tasks against datasets. Run your LLM pipeline over a set of inputs, score the outputs, and compare runs in the Langfuse UI.
+`run_experiment` executes a task sequentially over dataset or local items, records
+traces, runs evaluators, and attempts to deliver their scores.
 
-## Quick Start
+## Run an Experiment
 
 ```ruby
-client = Langfuse.client
+accuracy = lambda do |input:, output:, expected_output:, item:|
+  Langfuse::Evaluation.new(name: "correct", value: output == expected_output, data_type: :boolean)
+end
 
-result = client.run_experiment(
-  name: "qa-v1",
-  dataset_name: "qa-eval",
-  task: ->(item) { my_llm_call(item.input) }
+result = Langfuse.client.run_experiment(
+  name: "uppercase", data: [{ input: "ruby", expected_output: "RUBY" }],
+  task: ->(item) { item.input.upcase }, evaluators: [accuracy]
 )
 
 puts result.format
-puts "#{result.successes.size} passed, #{result.failures.size} failed"
-puts result.experiment_id    # => experiment identifier shared by the run
-puts result.dataset_run_url  # => link to Langfuse UI
 ```
 
-## Entry Points
+Provide exactly one of `data:` or `dataset_name:`. Local hashes accept symbol or
+string keys and become `ExperimentItem` objects with `input`, `expected_output`,
+and `metadata`. Nested local data keeps its original keys. Server-fetched JSON
+uses string keys. `data:` can also contain `DatasetItemClient` objects.
 
-### From Client (fetches dataset automatically)
+For a managed dataset:
 
 ```ruby
-result = client.run_experiment(
-  name: "qa-v1",
-  dataset_name: "qa-eval",
-  task: ->(item) { my_llm_call(item.input) },
-  evaluators: [accuracy_evaluator],
-  metadata: { model: "gpt-4o" }
+result = Langfuse.client.run_experiment(
+  name: "qa-v1", dataset_name: "qa-eval",
+  task: ->(item) { answer_question(item.input.fetch("question")) }
 )
 ```
 
-### From DatasetClient (uses existing items)
+`answer_question` is an application method. If a dataset is already loaded, use
+`dataset.run_experiment(name:, task:, ...)` to run its current `items`.
+The runner does not filter archived items; pass `data: dataset.items.select(&:active?)`
+when only active items should run.
+
+Optional arguments are `description:`, `metadata:`, `run_name:`, `evaluators:`, and
+`run_evaluators:`. The default run name is `"name - timestamp"`.
+
+## Evaluators
+
+Item evaluators receive `input:`, `output:`, `expected_output:`, and `item:`. An
+explicit `metadata:` keyword parameter receives item metadata as well. They may
+return an `Evaluation`, a hash of evaluation arguments, an array of either, or
+`nil` to omit a result.
 
 ```ruby
-dataset = client.get_dataset("qa-eval")
-
-result = dataset.run_experiment(
-  name: "qa-v1",
-  task: ->(item) { my_llm_call(item.input) },
-  evaluators: [accuracy_evaluator]
+Langfuse::Evaluation.new(
+  name: "quality", value: 0.85, comment: "Mostly correct",
+  data_type: :numeric, config_id: nil, metadata: { evaluator: "rules-v1" }
 )
 ```
 
-### Local Data Mode
+Evaluation types are `:numeric`, `:boolean`, and `:categorical`. Text notes and
+corrections belong to the general [Scoring](SCORING.md) API.
 
-Run experiments without a server-side dataset:
+Run evaluators receive all results through `item_results:`:
 
 ```ruby
-result = client.run_experiment(
-  name: "qa-local",
-  data: [
-    { input: "What is Ruby?", expected_output: "A programming language" },
-    { input: "What is Python?", expected_output: "A programming language" }
-  ],
-  task: ->(item) { my_llm_call(item.input) }
-)
+completion_rate = lambda do |item_results:|
+  completed = item_results.count(&:success?)
+  rate = item_results.empty? ? 0.0 : completed.fdiv(item_results.size)
+  Langfuse::Evaluation.new(name: "completion_rate", value: rate)
+end
 ```
 
-Each hash is wrapped into an `ExperimentItem` struct with `input`, `expected_output`, and `metadata` fields. Both symbol and string keys are accepted.
+Pass this callable in `run_evaluators: [completion_rate]`. Run-level scores are
+persisted only when a dataset run ID is available. Local-data run evaluations are
+returned but are not persisted as dataset-run scores.
+
+## Results and Failures
+
+| Object | Fields and methods |
+| --- | --- |
+| `ExperimentResult` | `name`, `run_name`, `description`, `item_results`, `run_evaluations`, `experiment_id`, `dataset_run_id`, `dataset_run_url` |
+| `ItemResult` | `item`, `output`, `trace_id`, `observation_id`, `evaluations`, `error`, `success?`, `failed?` |
+
+`result.successes` and `result.failures` group items by task error, not by evaluation
+score or confirmed persistence. `result.format(include_item_results: true)` adds
+per-item detail to the summary.
+
+A task exception is recorded on its `ItemResult`; later items continue. Exceptions
+raised by evaluator calls, score delivery failures, and dataset-link failures are
+logged. They do not by themselves mark a task result as failed. Invalid evaluation
+hashes returned by item evaluators can raise during normalization. Validate evaluator
+return values and inspect API readback when persistence is required.
 
 ## Langfuse v4 Attribution
 
-`run_experiment` adds the attributes that Langfuse v4 uses to discover experiments. The item root observation and every child observation share the experiment ID, run name, item ID, item root observation ID, experiment metadata, item metadata, and `sdk-experiment` environment.
+The item root and its children share the experiment ID, run name, item ID, item
+root observation ID, experiment and item metadata, and `sdk-experiment` environment.
+Expected output and run description stay on the root. Item scores target both the
+trace and item root observation.
 
-The run description and expected output stay on the item root observation. Item-level scores target both the trace and the item root observation.
-
-For a dataset-backed experiment, `result.experiment_id` is the server-provided dataset run ID when the first link succeeds. If the run selects a generated fallback ID after a link failure, all later items keep that ID, and `dataset_run_id` and `dataset_run_url` remain `nil`. A local-data experiment receives one generated 16-character hexadecimal ID shared by all items in that run. Local item IDs are the first 16 hexadecimal characters of a SHA-256 digest over the SDK-serialized input.
-
-## Parameters
-
-### `Client#run_experiment`
-
-| Parameter       | Type             | Required | Description                                    |
-| --------------- | ---------------- | -------- | ---------------------------------------------- |
-| `name`          | String           | Yes      | Experiment name                                |
-| `task`          | Proc             | Yes      | Callable receiving item, returning output      |
-| `dataset_name`  | String           | No*      | Dataset to run against                         |
-| `data`          | Array            | No*      | Local data items (hashes or DatasetItemClients) |
-| `description`   | String           | No       | Run description                                |
-| `evaluators`    | Array\<Proc\>    | No       | Item-level evaluators                          |
-| `run_evaluators`| Array\<Proc\>    | No       | Run-level evaluators                           |
-| `metadata`      | Hash             | No       | Metadata attached to each trace                |
-| `run_name`      | String           | No       | Explicit run name (default: "name - timestamp")|
-
-\* Provide exactly one of `dataset_name` or `data`.
-
-### `DatasetClient#run_experiment`
-
-Same parameters minus `dataset_name` and `data` (items come from the dataset).
-
-## Writing Evaluators
-
-### Item-Level Evaluators
-
-An evaluator is any callable (Proc, lambda, method) that receives keyword arguments and returns an `Evaluation`, an Array of them, or a Hash:
-
-```ruby
-accuracy = ->(input:, output:, expected_output:, item:, **) {
-  score = output.to_s.downcase.include?(expected_output.to_s.downcase) ? 1.0 : 0.0
-  Langfuse::Evaluation.new(name: "accuracy", value: score)
-}
-
-result = client.run_experiment(
-  name: "qa-v1",
-  dataset_name: "qa-eval",
-  task: ->(item) { my_llm_call(item.input) },
-  evaluators: [accuracy]
-)
-```
-
-**Evaluator keyword arguments:**
-
-| Keyword           | Type                              | Description                 |
-| ----------------- | --------------------------------- | --------------------------- |
-| `input`           | Object                            | The item's input            |
-| `output`          | Object                            | The task's return value     |
-| `expected_output` | Object                            | The item's expected output  |
-| `item`            | DatasetItemClient / ExperimentItem| The original item           |
-| `metadata`        | Hash (optional)                   | Item metadata (only passed if evaluator accepts it) |
-
-**Return types:**
-
-- `Evaluation` — single score
-- `Array<Evaluation>` — multiple scores
-- `Hash` — converted to `Evaluation` (keys: `name`, `value`, `comment`, `data_type`)
-
-### Evaluation Value Types
-
-```ruby
-# Numeric (default)
-Langfuse::Evaluation.new(name: "relevance", value: 0.85)
-
-# Boolean
-Langfuse::Evaluation.new(name: "is_correct", value: true, data_type: :boolean)
-
-# Categorical
-Langfuse::Evaluation.new(name: "quality_tier", value: "high", data_type: :categorical)
-
-# With comment and metadata
-Langfuse::Evaluation.new(
-  name: "relevance",
-  value: 0.85,
-  comment: "Mostly relevant, minor tangent",
-  metadata: { model: "gpt-4o" }
-)
-```
-
-### Run-Level Evaluators
-
-Run-level evaluators receive all item results at once, for aggregate metrics:
-
-```ruby
-avg_length = ->(item_results:) {
-  lengths = item_results.select(&:success?).map { |r| r.output.to_s.length }
-  avg = lengths.sum.to_f / lengths.size
-  Langfuse::Evaluation.new(name: "avg_output_length", value: avg)
-}
-
-result = client.run_experiment(
-  name: "qa-v1",
-  dataset_name: "qa-eval",
-  task: ->(item) { my_llm_call(item.input) },
-  run_evaluators: [avg_length]
-)
-```
-
-Run-level evaluators receive `item_results:` — an `Array<ItemResult>`.
-
-## Result Objects
-
-### ExperimentResult
-
-Returned by `run_experiment`.
-
-| Property           | Type                | Description                                |
-| ------------------ | ------------------- | ------------------------------------------ |
-| `name`             | String              | Experiment name                            |
-| `run_name`         | String, nil         | Auto-generated run name (name + timestamp) |
-| `description`      | String, nil         | Run description                            |
-| `item_results`     | Array\<ItemResult\> | All per-item results                       |
-| `run_evaluations`  | Array\<Evaluation\> | Run-level evaluation results               |
-| `experiment_id`    | String, nil         | Experiment ID shared by the run            |
-| `dataset_run_id`   | String, nil         | Dataset run ID from the server             |
-| `dataset_run_url`  | String, nil         | URL to the run in Langfuse UI              |
-
-**Methods:**
-
-```ruby
-result.successes                          # => Array<ItemResult> (no errors)
-result.failures                           # => Array<ItemResult> (had errors)
-result.format                             # => summary string
-result.format(include_item_results: true) # => detailed per-item report
-```
-
-### ItemResult
-
-One per item processed.
-
-| Property         | Type                              | Description                |
-| ---------------- | --------------------------------- | -------------------------- |
-| `item`           | DatasetItemClient / ExperimentItem| Original input item        |
-| `output`         | Object, nil                       | Task output (nil on error) |
-| `trace_id`       | String, nil                       | Trace ID                   |
-| `observation_id` | String, nil                       | Observation/span ID        |
-| `evaluations`    | Array\<Evaluation\>               | Item-level scores          |
-| `error`          | StandardError, nil                | Error if task failed       |
-
-**Methods:**
-
-```ruby
-result.success?  # => true if no error
-result.failed?   # => true if error present
-```
-
-## End-to-End Example
-
-```ruby
-client = Langfuse.client
-
-# 1. Create a dataset
-dataset = client.create_dataset(name: "support-qa")
-
-# 2. Add items
-[
-  { q: "How do I reset my password?", a: "Go to Settings > Security > Reset Password" },
-  { q: "What are your hours?", a: "Monday-Friday, 9am-5pm EST" }
-].each do |pair|
-  client.create_dataset_item(
-    dataset_name: "support-qa",
-    input: { question: pair[:q] },
-    expected_output: { answer: pair[:a] }
-  )
-end
-
-# 3. Define evaluators
-accuracy = ->(input:, output:, expected_output:, item:, **) {
-  match = output.to_s.downcase.include?(expected_output[:answer].to_s.downcase)
-  Langfuse::Evaluation.new(name: "contains_answer", value: match, data_type: :boolean)
-}
-
-pass_rate = ->(item_results:) {
-  passed = item_results.count(&:success?)
-  Langfuse::Evaluation.new(name: "pass_rate", value: passed.to_f / item_results.size)
-}
-
-# 4. Run experiment
-result = client.run_experiment(
-  name: "support-bot-v1",
-  dataset_name: "support-qa",
-  task: ->(item) { generate_support_response(item.input[:question]) },
-  evaluators: [accuracy],
-  run_evaluators: [pass_rate],
-  metadata: { model: "gpt-4o", temperature: 0.3 }
-)
-
-# 5. Inspect results
-puts result.format(include_item_results: true)
-puts "URL: #{result.dataset_run_url}"
-```
-
-## See Also
-
-- [DATASETS.md](DATASETS.md) - Dataset CRUD operations
-- [SCORING.md](SCORING.md) - Scoring guide
-- [API_REFERENCE.md](API_REFERENCE.md) - Complete method reference
+A dataset-backed run uses the first resolved server run ID. If its first link fails,
+it keeps a generated fallback experiment ID; `dataset_run_id` and `dataset_run_url`
+remain `nil`. Local-data runs use one generated experiment ID and input-derived item
+IDs. Use [Data Access](DATA_ACCESS.md) to verify stored observations and scores.

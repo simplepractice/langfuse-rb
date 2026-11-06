@@ -50,8 +50,9 @@ RSpec.describe Langfuse do
         config.public_key = "replacement_pk"
         config.secret_key = "replacement_sk"
       end
-      request = stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
-                .to_return(status: 200, body: "", headers: {})
+      request = stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+                .to_return(status: 202, body: { message: "Accepted" }.to_json,
+                           headers: { "Content-Type" => "application/json" })
 
       described_class.configuration = replacement
       replacement_client = described_class.client
@@ -370,15 +371,16 @@ RSpec.describe Langfuse do
         config.public_key = "pk_test"
         config.secret_key = "sk_test"
       end
-      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
-        .to_return(status: 200, body: { successes: [], errors: [] }.to_json)
+      stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+        .to_return(status: 202, body: { message: "Accepted" }.to_json,
+                   headers: { "Content-Type" => "application/json" })
 
       observation = described_class.observe("otel-disabled")
       described_class.create_score(name: "quality", value: 1)
       described_class.flush_scores
 
       expect(observation.otel_span).not_to be_recording
-      expect(a_request(:post, "https://cloud.langfuse.com/api/public/ingestion")).to have_been_made.once
+      expect(a_request(:post, "https://cloud.langfuse.com/api/public/scores")).to have_been_made.once
     ensure
       ENV.delete("OTEL_SDK_DISABLED")
       described_class.reset!
@@ -447,43 +449,6 @@ RSpec.describe Langfuse do
     end
   end
 
-  describe ".create_score" do
-    it "forwards the full score kwarg set to client" do
-      client = instance_double(Langfuse::Client)
-      allow(described_class).to receive(:client).and_return(client)
-
-      expect(client).to receive(:create_score).with(
-        name: "quality",
-        value: 0.85,
-        id: "score-123",
-        trace_id: "trace-123",
-        session_id: "session-123",
-        observation_id: "observation-123",
-        comment: "High quality",
-        metadata: { source: "manual" },
-        environment: "production",
-        data_type: :numeric,
-        dataset_run_id: "run-123",
-        config_id: "cfg-123"
-      )
-
-      described_class.create_score(
-        name: "quality",
-        value: 0.85,
-        id: "score-123",
-        trace_id: "trace-123",
-        session_id: "session-123",
-        observation_id: "observation-123",
-        comment: "High quality",
-        metadata: { source: "manual" },
-        environment: "production",
-        data_type: :numeric,
-        dataset_run_id: "run-123",
-        config_id: "cfg-123"
-      )
-    end
-  end
-
   describe ".create_score!" do
     it "forwards the full score kwarg set to client" do
       client = instance_double(Langfuse::Client)
@@ -492,7 +457,7 @@ RSpec.describe Langfuse do
       expect(client).to receive(:create_score!).with(
         name: "quality",
         value: 0.85,
-        id: "score-123",
+        id: "score-123", timestamp: nil,
         trace_id: "trace-123",
         session_id: "session-123",
         observation_id: "observation-123",
@@ -507,7 +472,7 @@ RSpec.describe Langfuse do
       result = described_class.create_score!(
         name: "quality",
         value: 0.85,
-        id: "score-123",
+        id: "score-123", timestamp: nil,
         trace_id: "trace-123",
         session_id: "session-123",
         observation_id: "observation-123",

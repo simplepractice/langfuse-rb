@@ -9,8 +9,8 @@ require_relative "pending_score_queue"
 module Langfuse
   # Client for creating and batching Langfuse scores
   #
-  # Handles thread-safe queuing, batching, and sending of score events
-  # to the Langfuse ingestion API. Scores are batched and sent automatically
+  # Handles thread-safe queuing, batching, and sending of scores
+  # to the Langfuse Scores API. Scores are batched and sent automatically
   # based on batch_size and flush_interval configuration.
   #
   # @example Basic usage
@@ -35,9 +35,10 @@ module Langfuse
     attr_reader :logger
 
     HEX_TRACE_ID_PATTERN = /\A[0-9a-f]{32}\z/
-    MAX_BATCH_PAYLOAD_BYTES = 2_500_000
-    EMPTY_BATCH_PAYLOAD_BYTES = JSON.generate(batch: []).bytesize
-    private_constant :MAX_BATCH_PAYLOAD_BYTES, :EMPTY_BATCH_PAYLOAD_BYTES
+    MAX_BATCH_PAYLOAD_BYTES = 1_000_000
+    MAX_BATCH_SIZE = 100
+    EMPTY_BATCH_PAYLOAD_BYTES = JSON.generate([]).bytesize
+    private_constant :MAX_BATCH_PAYLOAD_BYTES, :MAX_BATCH_SIZE, :EMPTY_BATCH_PAYLOAD_BYTES
 
     # Initialize a new ScoreClient
     #
@@ -64,7 +65,8 @@ module Langfuse
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
-    # @param id [String, nil] Score ID; use a stable value as an idempotency key
+    # @param id [String, nil] Score ID; reuse with timestamp when retrying
+    # @param timestamp [Time, String, nil] Score time; defaults to now. Reuse with id when retrying.
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
@@ -93,14 +95,15 @@ module Langfuse
     #   create(name: "output", value: "The corrected output", trace_id: "abc123",
     #          observation_id: "def456", data_type: :correction)
     # rubocop:disable Metrics/ParameterLists
-    def create(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
-               metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+    def create(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
+               comment: nil, metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       return unless config.telemetry_enabled?
 
       score = build_score_body(
         name: name,
         value: value,
         id: id,
+        timestamp: timestamp,
         trace_id: trace_id,
         session_id: session_id,
         observation_id: observation_id,
@@ -114,7 +117,7 @@ module Langfuse
 
       return unless enqueue_trace_linked_score?(trace_id)
 
-      enqueue_score_event(build_score_event(score))
+      enqueue_score(score)
     rescue StandardError => e
       logger.error("Langfuse score creation failed: #{e.message}")
       raise
@@ -128,12 +131,13 @@ module Langfuse
     # tracing already works. That fits scoring inline from a still-open span
     # (see {#score_active_observation}/{#score_active_trace}), but not a
     # standalone verdict arriving out-of-band (e.g. user feedback landing in
-    # a request unrelated to the turn it's scoring). Pass a stable +id+ when
-    # the caller may retry after an ambiguous network failure.
+    # a request unrelated to the turn it's scoring). Pass a stable +id+ and
+    # +timestamp+ when retrying after an ambiguous network failure.
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
-    # @param id [String, nil] Score ID; use a stable value as an idempotency key
+    # @param id [String, nil] Score ID; reuse with timestamp when retrying
+    # @param timestamp [Time, String, nil] Score time; defaults to now. Reuse with id when retrying.
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
@@ -148,17 +152,19 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] if the API request fails
     #
-    # @example Create a score with an idempotency key
-    #   score_client.create!(id: "feedback-abc123", name: "quality", value: 0.85, trace_id: "abc123")
+    # @example Reuse score identity when retrying
+    #   feedback = { id: "feedback-abc123", timestamp: Time.now, name: "quality", value: 0.85, trace_id: "abc123" }
+    #   score_client.create!(**feedback) # Reuse feedback when retrying.
     # rubocop:disable Metrics/ParameterLists
-    def create!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
-                metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+    def create!(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
+                comment: nil, metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
       return unless config.telemetry_enabled?
 
       score = build_score_body(
         name: name,
         value: value,
         id: id,
+        timestamp: timestamp,
         trace_id: trace_id,
         session_id: session_id,
         observation_id: observation_id,
@@ -277,8 +283,13 @@ module Langfuse
       start_flush_timer unless @shutdown
     end
 
-    def enqueue_score_event(event)
-      unless @queue.push(event)
+    def enqueue_score(score)
+      if JSON.generate([score]).bytesize > MAX_BATCH_PAYLOAD_BYTES
+        logger.error("Langfuse score exceeds the #{MAX_BATCH_PAYLOAD_BYTES} byte payload limit; dropping score")
+        return
+      end
+
+      unless @queue.push(score)
         logger.error(
           "Langfuse score queue is full (capacity=#{@queue.capacity}); dropping new asynchronous score"
         )
@@ -304,12 +315,11 @@ module Langfuse
       batch = []
       payload_bytes = EMPTY_BATCH_PAYLOAD_BYTES
 
-      @queue.first(config.batch_size).each do |event|
-        event_json = JSON.generate(event)
-        additional_bytes = event_json.bytesize + (batch.empty? ? 0 : 1)
-        break if batch.any? && payload_bytes + additional_bytes > MAX_BATCH_PAYLOAD_BYTES
+      @queue.first([config.batch_size, MAX_BATCH_SIZE].min).each do |score|
+        additional_bytes = JSON.generate(score).bytesize + (batch.empty? ? 0 : 1)
+        break if payload_bytes + additional_bytes > MAX_BATCH_PAYLOAD_BYTES
 
-        batch << event
+        batch << score
         payload_bytes += additional_bytes
       end
 
@@ -321,6 +331,7 @@ module Langfuse
     # @param name [String] Score name
     # @param value [Numeric, Integer, String] Raw score value (type depends on data_type)
     # @param id [String, nil] Score ID
+    # @param timestamp [Time, String, nil] Stable score time for retries
     # @param trace_id [String, nil] Trace ID
     # @param session_id [String, nil] Session ID
     # @param observation_id [String, nil] Observation ID
@@ -333,7 +344,7 @@ module Langfuse
     # @return [Hash] Score attributes in API format
     # @raise [ArgumentError] if validation fails
     # rubocop:disable Metrics/ParameterLists
-    def build_score_body(name:, value:, id:, trace_id:, session_id:, observation_id:, comment:, metadata:,
+    def build_score_body(name:, value:, id:, timestamp:, trace_id:, session_id:, observation_id:, comment:, metadata:,
                          environment:, data_type:, dataset_run_id: nil, config_id: nil)
       validate_name(name)
       normalized_value = ScoreValue.normalize(value, data_type)
@@ -342,6 +353,7 @@ module Langfuse
 
       snapshot_score_body(
         id: id || SecureRandom.uuid,
+        timestamp: timestamp.is_a?(Time) ? timestamp.getutc.iso8601(3) : timestamp || Time.now.utc.iso8601(3),
         name: name,
         value: normalized_value,
         dataType: data_type_str,
@@ -362,10 +374,6 @@ module Langfuse
       JSON.parse(JSON.generate(attributes.compact), symbolize_names: true)
     rescue JSON::JSONError => e
       raise ArgumentError, "Score data must be JSON-serializable: #{e.message}"
-    end
-
-    def build_score_event(score)
-      { id: SecureRandom.uuid, type: "score-create", timestamp: Time.now.utc.iso8601(3), body: score }
     end
 
     def validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
@@ -428,34 +436,29 @@ module Langfuse
     # contract and to keep each client's sampling scoped to its own config.
     attr_reader :score_sampler
 
-    # Send a batch of events to the API
+    # Send a batch of scores to the API
     #
-    # @param events [Array<Hash>] Array of event hashes
-    # @return [Symbol] :delivered, :discarded, or :retry
-    def send_batch(events)
-      api_client.send_batch(events)
-      :delivered
+    # @param scores [Array<Hash>] Array of score bodies
+    # @return [Symbol] :complete or :retry
+    def send_batch(scores)
+      response = api_client.send_score_batch(scores)
+      if response.fetch("rejected", 0).positive?
+        logger.error("Langfuse accepted #{response['accepted']} and rejected #{response['rejected']} scores: " \
+                     "#{response.fetch('errors').map { |error| error.fetch('message') }.join('; ')}")
+      end
+      :complete
     rescue BatchDeliveryError => e
       return retry_batch(e) if e.retryable?
 
-      discard_batch(events, e)
-    rescue UnauthorizedError => e
-      retry_batch(e)
+      logger.error("Langfuse dropped #{scores.length} score event(s) after a permanent batch failure: #{e.message}")
+      :complete
     rescue StandardError => e
-      logger.error("Langfuse score batch send failed: #{e.message}")
-      :retry
+      retry_batch(e)
     end
 
     def retry_batch(error)
       logger.error("Langfuse score batch send failed and will retry: #{error.message}")
       :retry
-    end
-
-    def discard_batch(events, error)
-      logger.error(
-        "Langfuse dropped #{events.length} score event(s) after a permanent batch failure: #{error.message}"
-      )
-      :discarded
     end
 
     # Start the background flush timer thread

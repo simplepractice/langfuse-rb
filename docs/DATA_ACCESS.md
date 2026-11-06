@@ -1,220 +1,140 @@
 # Data Access and Verification
 
-Use the read APIs to examine stored Langfuse data.
-You can also use them for bounded exports and ingestion verification.
-These methods return a Langfuse response envelope, not model objects.
+Use current read APIs for stored observations, aggregates, and typed scores. They
+return string-keyed response hashes with `data` and pagination metadata.
 
-## Choose the Right Read
-
-| Need | SDK method | Langfuse endpoint |
+| Need | Method | Endpoint |
 | --- | --- | --- |
-| Individual spans, generations, or events | `client.list_observations` | `GET /api/public/v2/observations` |
-| Aggregated volume, latency, token, cost, or score data | `client.query_metrics` | `GET /api/public/v2/metrics` |
-| Individual typed scores | `client.list_scores` | `GET /api/public/v3/scores` |
-| Legacy trace objects | `client.list_traces` / `client.get_trace` | Legacy trace API |
+| Spans, generations, events, or a trace's observation tree | `list_observations` | `/api/public/v2/observations` |
+| Aggregate volume, latency, usage, cost, or scores | `query_metrics` | `/api/public/v2/metrics` |
+| Typed scores | `list_scores` | `/api/public/v3/scores` |
 
-Use observations to traverse current traces.
-Use metrics to calculate an aggregate on the server.
-Do not download raw rows to calculate an aggregate.
-
-The v2 observations and metrics APIs require Langfuse Cloud or self-hosted Langfuse v4.
-The SDK sends the v4 ingestion header.
-Thus, new SDK traces do not have the legacy ingestion delay.
+The v2 endpoints require Langfuse Cloud or self-hosted v4. Prefer observations for
+current trace traversal; `list_traces` and `get_trace` remain legacy APIs.
 
 ## Read Observations
 
-Broad observation reads must include both time bounds. A trace-specific read is already bounded:
+Provide a trace ID or both time bounds. Start bounds are inclusive; end bounds
+are exclusive.
 
 ```ruby
 page = Langfuse.client.list_observations(
-  trace_id: trace_id,
-  fields: "core,basic,io,model,usage,prompt"
+  trace_id: trace_id, fields: "core,basic,io,model,usage,prompt", limit: 100
 )
-
-page.fetch("data").each do |observation|
-  puts "#{observation['type']} #{observation['name']}"
-end
+page.fetch("data").each { |row| puts "#{row['type']} #{row['name']}" }
 ```
 
-For project-level queries, pass an inclusive start and exclusive end:
-
-```ruby
-page = Langfuse.client.list_observations(
-  from_start_time: Time.now.utc - 3600,
-  to_start_time: Time.now.utc,
-  type: "GENERATION",
-  environment: ["production"],
-  fields: "core,basic,model,usage",
-  limit: 100
-)
-```
-
-Without `fields`, Langfuse returns only `core` and `basic`.
-Request other field groups only when they are necessary.
+Without `fields`, the backend returns `core` and `basic`. Request additional fields
+only when needed. Observation `input` and `output` are JSON-encoded strings;
+use `JSON.parse` to recover the SDK-written value. The SDK does not decode these
+fields automatically. `is_root_observation: true` selects logical application roots;
+`parent_observation_id` filters physical parent relationships. A logical root can
+have a physical parent when upstream spans were filtered.
 
 ### Cursor Pagination
 
-Pass the cursor from `meta.cursor` into the same query:
+Keep filters and bounds unchanged between pages:
 
 ```ruby
-rows = []
+window_end = Time.now.utc
+window_start = window_end - 3600
 cursor = nil
 
 loop do
   page = Langfuse.client.list_observations(
-    from_start_time: window_start,
-    to_start_time: window_end,
-    fields: "core,basic",
-    limit: 1_000,
-    cursor: cursor
+    from_start_time: window_start, to_start_time: window_end,
+    type: "GENERATION", fields: "core,basic,usage", limit: 1000, cursor: cursor
   )
-
-  rows.concat(page.fetch("data"))
+  page.fetch("data").each { |row| puts row.fetch("id") }
   cursor = page.dig("meta", "cursor")
   break unless cursor
 end
 ```
 
-Keep the filters and time bounds unchanged between pages.
-
-### Logical Roots
-
-Use `is_root_observation: true` to select application entry points.
-A logical root can have a physical parent.
-This condition occurs when an upstream or filtered OpenTelemetry span exists.
-Use `parent_observation_id` only when you need the physical tree relationship.
-
 ## Query Metrics
 
-Metrics queries aggregate server-side. This example counts observations for one trace:
+Use server-side metrics when you need an aggregate rather than individual records:
 
 ```ruby
 result = Langfuse.client.query_metrics(
   query: {
     view: "observations",
     metrics: [{ measure: "count", aggregation: "count" }],
-    filters: [
-      { column: "traceId", operator: "=", value: trace_id, type: "string" }
-    ],
+    filters: [{ column: "traceId", operator: "=", value: trace_id, type: "string" }],
     fromTimestamp: (Time.now.utc - 3600).iso8601,
     toTimestamp: (Time.now.utc + 60).iso8601
   }
 )
-
 count = result.dig("data", 0, "count_count")
 ```
 
-The supported views are `observations`, `scores-numeric`, `scores-boolean`, and `scores-categorical`.
-Use high-cardinality values such as trace IDs as filters.
-Do not use them as grouping dimensions.
+Views are `observations`, `scores-numeric`, `scores-boolean`, and `scores-categorical`.
+The SDK accepts a Hash or JSON String; the backend validates the query. See the
+[Metrics API](https://langfuse.com/docs/metrics/features/metrics-api) for available
+measures and dimensions.
 
 ## Read Scores
 
-The scores v3 API returns one polymorphic `value` field:
-
-| `dataType` | Ruby value |
-| --- | --- |
-| `NUMERIC` | Numeric |
-| `BOOLEAN` | `true` or `false` |
-| `CATEGORICAL` | String |
-| `TEXT` | String |
-| `CORRECTION` | String |
-
 ```ruby
 page = Langfuse.client.list_scores(
-  trace_id: trace_id,
-  data_type: "BOOLEAN,CORRECTION",
-  fields: "details,subject",
-  limit: 100
+  trace_id: trace_id, fields: "details,subject", limit: 100
 )
-
-page.fetch("data").each do |score|
-  case score.fetch("dataType")
-  when "BOOLEAN"
-    puts score.fetch("value") ? "passed" : "failed"
-  when "CORRECTION"
-    puts score.fetch("value")
-  end
-end
+page.fetch("data").each { |score| puts "#{score['dataType']}: #{score['value'].inspect}" }
 ```
 
-Score pages also use `meta.cursor`. Keep the original filters when requesting the next page.
+The v3 `value` is a number for `NUMERIC`, a Boolean for `BOOLEAN`, and a String for
+`CATEGORICAL`, `TEXT`, or `CORRECTION`. Score pages also use `meta.cursor`; keep the
+original filters when requesting subsequent pages. See
+[API Reference](API_REFERENCE.md#data-access) for filters and subject constraints.
 
 ## Verify an SDK Write End to End
 
-A reliable verification separates three claims:
-
-1. The SDK accepted the operation.
-2. The SDK exporter or HTTP client completed delivery.
-3. An independent API read found the persisted backend record.
-
-Use unique names or IDs so a previous run cannot satisfy the assertion:
+SDK acceptance, HTTP delivery, and backend persistence are separate outcomes. Use
+a unique identifier, flush, then poll a bounded read for the expected content:
 
 ```ruby
 require "securerandom"
+require "json"
 
 run_id = SecureRandom.hex(6)
 trace_id = nil
-
 Langfuse.observe("sdk-e2e-#{run_id}", input: { run_id: run_id }) do |root|
   trace_id = root.trace_id
   root.update(output: { status: "passed" })
 end
-
 Langfuse.force_flush
 
 deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 30
-
 loop do
   rows = Langfuse.client.list_observations(
-    trace_id: trace_id,
-    fields: "core,basic,io"
+    trace_id: trace_id, fields: "core,basic,io"
   ).fetch("data")
-
-  break if rows.any? { |row| row["name"] == "sdk-e2e-#{run_id}" }
+  found = rows.any? do |row|
+    row["name"] == "sdk-e2e-#{run_id}" && JSON.parse(row.fetch("output"))["status"] == "passed"
+  end
+  break if found
   raise "Langfuse ingestion timed out" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
 
   sleep 1
 end
 ```
 
-For asynchronous scores, call `Langfuse.flush_scores` before readback.
-`create_score!` is synchronous.
-An independent read verifies that the backend stored the expected typed value.
+For asynchronous scores, call `Langfuse.flush_scores` before readback. A synchronous
+`create_score!` confirms HTTP acceptance but can still precede read visibility.
 
 ## Verify Through the Langfuse CLI
 
-The CLI provides an independent client path through the same public APIs:
+The CLI uses an independent client path. Supply credentials through the environment,
+not command arguments:
 
 ```bash
-export LANGFUSE_HOST="${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}"
-
-npx --yes langfuse-cli@latest api observations list \
-  --trace-id "$TRACE_ID" \
-  --fields core,basic,io \
-  --json
-
-npx --yes langfuse-cli@latest api scores list \
-  --trace-id "$TRACE_ID" \
-  --fields details,subject \
-  --json
+langfuse api observations list --trace-id "$TRACE_ID" --fields core,basic,io --json
+langfuse api scores list --trace-id "$TRACE_ID" --fields details,subject --json
 ```
 
-Use `npx --yes langfuse-cli@latest api __schema` to list resources.
-Use `<resource> <action> --help` to examine the current contract.
-
-With `--json`, the CLI returns an envelope with `status`, `headers`, and `body`.
-Read observations and scores from `body.data`.
-For HTTP `429`, wait for the returned retry interval.
-
-Do not print API keys or include them in command arguments. Supply them through the environment.
-
-## See Also
-
-- [TRACING.md](TRACING.md) — create well-structured observations
-- [SCORING.md](SCORING.md) — create scores and choose delivery semantics
-- [API_REFERENCE.md](API_REFERENCE.md#data-access) — complete read signatures and filters
-- [Langfuse Observations API](https://langfuse.com/docs/api-and-data-platform/features/observations-api)
-- [Langfuse Metrics API](https://langfuse.com/docs/metrics/features/metrics-api)
-- [Langfuse Scores API](https://langfuse.com/docs/api-and-data-platform/features/scores-api)
-- [Langfuse CLI](https://langfuse.com/docs/api-and-data-platform/features/cli)
+If the CLI is not installed, replace `langfuse` with `npx --yes langfuse-cli@latest`.
+It reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL`.
+JSON output wraps the API response in `status`, `headers`, and `body`; rows are in
+`body.data`. Use `langfuse api __schema` and each action's `--help` for the installed
+CLI contract. See the [CLI guide](https://langfuse.com/docs/api-and-data-platform/features/cli)
+and [Public API](https://langfuse.com/docs/api-and-data-platform/features/public-api).

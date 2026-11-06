@@ -55,14 +55,15 @@ RSpec.describe Langfuse::Client do
       config.public_key = "pk_test"
       config.secret_key = "sk_test"
       client = described_class.new(config)
-      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
-        .to_return(status: 200, body: { successes: [], errors: [] }.to_json)
+      stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+        .to_return(status: 202, body: { message: "Accepted" }.to_json,
+                   headers: { "Content-Type" => "application/json" })
 
       config.tracing_enabled = true
       client.create_score(name: "quality", value: 1)
       client.flush_scores
 
-      expect(a_request(:post, "https://cloud.langfuse.com/api/public/ingestion")).to have_been_made.once
+      expect(a_request(:post, "https://cloud.langfuse.com/api/public/scores")).to have_been_made.once
     end
 
     it "fails closed when a live telemetry value is not Boolean" do
@@ -83,14 +84,15 @@ RSpec.describe Langfuse::Client do
       config.public_key = "pk_test"
       config.secret_key = "sk_test"
       config.tracing_enabled = true
-      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
-        .to_return(status: 200, body: { successes: [], errors: [] }.to_json)
+      stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+        .to_return(status: 202, body: { message: "Accepted" }.to_json,
+                   headers: { "Content-Type" => "application/json" })
       client = described_class.new(config)
 
       client.create_score(name: "quality", value: 1)
       client.flush_scores
 
-      expect(a_request(:post, "https://cloud.langfuse.com/api/public/ingestion")).to have_been_made.once
+      expect(a_request(:post, "https://cloud.langfuse.com/api/public/scores")).to have_been_made.once
     ensure
       ENV.delete("OTEL_SDK_DISABLED")
     end

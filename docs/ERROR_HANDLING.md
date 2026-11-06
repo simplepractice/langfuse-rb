@@ -1,472 +1,74 @@
-# Error Handling Guide
+# Error Handling
 
-Complete guide to handling exceptions and troubleshooting the Langfuse Ruby SDK.
+## Exceptions
 
-## Exception Hierarchy
+| Exception | Meaning |
+| --- | --- |
+| `Langfuse::ConfigurationError` | Invalid local configuration. |
+| `Langfuse::UnauthorizedError` | HTTP 401; verify the credential pair and host. |
+| `Langfuse::NotFoundError` | Requested resource, prompt version, or label was not found. |
+| `Langfuse::ApiError` | API, transport, or synchronous score-acceptance failure. Parent of `UnauthorizedError` and `NotFoundError`. |
+| `Langfuse::CacheWarmingError` | One or more fetches failed during `CacheWarmer#warm!`. |
+| `ArgumentError` | Invalid method arguments, chat placeholder values, or score values; missing active context for score helpers. |
+| `Mustache::Parser::SyntaxError` | Invalid template syntax during variable inspection or rendering. |
 
-All SDK exceptions inherit from `Langfuse::Error`:
+SDK-defined errors inherit from `Langfuse::Error`. Ruby argument errors do not.
+Catch the error that your application can recover from rather than suppressing all
+exceptions.
 
-```
-StandardError
-  └── Langfuse::Error
-        ├── Langfuse::ConfigurationError
-        ├── Langfuse::CacheWarmingError
-        └── Langfuse::ApiError
-              ├── Langfuse::NotFoundError
-              └── Langfuse::UnauthorizedError
-```
-
-## Common Exceptions
-
-### `Langfuse::ConfigurationError`
-
-**Cause:** Invalid or missing configuration
-
-**Common scenarios:**
-- Missing `public_key` or `secret_key`
-- Invalid `cache_backend` value
-- Using `:rails` cache backend without Rails
-
-**Example:**
+## Prompt Fallbacks
 
 ```ruby
-Langfuse.configure do |config|
-  # Oops, forgot to set keys
-end
-
-Langfuse.client
-# => Langfuse::ConfigurationError: public_key is required
-```
-
-**Solution:**
-
-```ruby
-Langfuse.configure do |config|
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-end
-```
-
-**Validation checklist:**
-- `public_key` and `secret_key` are non-empty Strings
-- `base_url` is an absolute HTTP or HTTPS URL
-- `batch_size` is a positive Integer
-- `flush_interval` and other numeric settings are in their documented ranges
-- `cache_backend` is `:memory`, `:rails`, or `:auto`
-- If `:rails` is selected while caching is enabled, Rails and `Rails.cache` are available
-
-### `Langfuse::UnauthorizedError`
-
-**Cause:** Invalid API credentials (401 response)
-
-**Common scenarios:**
-- Wrong `public_key` or `secret_key`
-- Keys from different project
-- Expired or revoked keys
-
-**Example:**
-
-```ruby
-Langfuse.configure do |config|
-  config.public_key = "pk-lf-wrong"
-  config.secret_key = "sk-lf-wrong"
-end
-
-client.get_prompt("greeting")
-# => Langfuse::UnauthorizedError: 401 Unauthorized
-```
-
-**Solution:**
-
-1. Verify keys in Langfuse UI (Project Settings → API Keys)
-2. Check that you use keys from the correct project
-3. Regenerate keys if compromised
-
-Do not print, inspect, or log any part of an API key. Compare the configured project and environment-variable names instead. Use a bounded authenticated read to validate the complete credential pair.
-
-### `Langfuse::NotFoundError`
-
-**Cause:** The requested resource does not exist (404 response)
-
-**Common scenarios:**
-- Prompt name misspelled
-- Prompt not deployed in Langfuse UI
-- The requested version does not exist
-- The label does not exist
-
-**Example:**
-
-```ruby
-client.get_prompt("greting")  # Typo!
-# => Langfuse::NotFoundError: Prompt 'greting' not found
-```
-
-**Solutions:**
-
-**Option 1:** Fix the name
-
-```ruby
-client.get_prompt("greeting")  # Correct spelling
-```
-
-**Option 2:** Use fallback for development
-
-```ruby
-prompt = client.get_prompt(
-  "new-feature",
+prompt = Langfuse.client.get_prompt(
+  "greeting",
+  label: "production",
   fallback: "Hello {{name}}!",
   type: :text
 )
-# If the prompt does not exist, use the fallback without an error
+message = prompt.compile(name: "Ada")
 ```
 
-**Option 3:** Graceful degradation
+A fallback requires `type: :text` or `:chat`. It catches API errors, including
+not-found and authentication failures, but not invalid local configuration or
+compilation errors. Fallback content is not cached. `prompt.is_fallback` reports
+whether it was used. See [Prompt Management](PROMPTS.md).
+
+## Delivery and Retries
+
+Score requests retry connection failures, timeouts, HTTP 429, and HTTP 5xx responses
+up to twice with exponential backoff. Automatic retries reuse the score ID and
+timestamp. Asynchronous failures follow the retention and rejection rules in
+[Scoring](SCORING.md#batching-behavior); `create_score!` raises if acceptance fails.
+For a retry across separate calls, reuse the same `id`, `timestamp`, and score data.
+
+Other API requests retry connection failures and timeouts up to twice. Do not rely
+on automatic HTTP-status retries outside the score transport. Prompt creation can
+create another version when repeated, so retry it only when duplicate creation is
+acceptable or the previous outcome is known.
+
+Tracing and asynchronous score export log delivery failures. A successful flush
+call does not prove backend persistence. Normal exit attempts a flush but cannot
+guarantee delivery during an outage. Use [bounded readback](DATA_ACCESS.md) when
+verification is required.
+
+## Diagnose Failures
+
+- Use `Langfuse.configured?` to check local client readiness. It does not authenticate.
+- Use `Langfuse.client.list_prompts(limit: 1)` for a bounded authenticated request.
+- Inspect `Langfuse.client.prompt_cache_stats` or use a cache observer for cache behavior.
+- Set `LANGFUSE_DEBUG=true` before initialization for SDK debug logs.
+
+Do not log `Langfuse.configuration.inspect`; it contains credentials.
+
+Cache warming returns failure messages as strings:
 
 ```ruby
-begin
-  prompt = client.get_prompt("personalized-greeting")
-  message = prompt.compile(name: user.name)
-rescue Langfuse::NotFoundError => e
-  Rails.logger.warn("Prompt not found: #{e.message}")
-  message = "Hello #{user.name}!"  # Simple fallback
+result = Langfuse::CacheWarmer.new.warm(["greeting", "summary"])
+result[:failed].each do |failure|
+  warn "#{failure[:name]}: #{failure[:error]}"
 end
 ```
 
-**Option 4:** Check available prompts
-
-```ruby
-prompts = client.list_prompts
-puts "Available prompts:"
-prompts.each { |p| puts "  - #{p['name']}" }
-```
-
-### `Langfuse::ApiError`
-
-**Cause:** Generic API error (base class for HTTP errors)
-
-**Common scenarios:**
-- Network issues
-- Langfuse service downtime
-- Rate limiting (429)
-- Server errors (500, 503)
-
-**Example:**
-
-```ruby
-client.get_prompt("greeting")
-# => Langfuse::ApiError: 503 Service Unavailable
-```
-
-**Solutions:**
-
-**Increase timeout:**
-
-```ruby
-Langfuse.configure do |config|
-  config.timeout = 10  # Default is 5 seconds
-end
-```
-
-**Retry with exponential backoff:**
-
-```ruby
-def fetch_prompt_with_retry(name, max_retries: 3)
-  retries = 0
-
-  begin
-    Langfuse.client.get_prompt(name)
-  rescue Langfuse::ApiError => e
-    retries += 1
-    if retries < max_retries
-      sleep(2 ** retries)  # 2s, 4s, 8s
-      retry
-    else
-      raise
-    end
-  end
-end
-```
-
-**Note:** The SDK already has built-in retry logic for certain errors (429, 503, 504) with exponential backoff. The above is for additional application-level retry logic.
-
-### `Langfuse::CacheWarmingError`
-
-**Cause:** Error during cache warming operation
-
-**Common scenarios:**
-- Prompt fetch fails during cache warming
-- Network issues during bulk warming
-
-**Example:**
-
-```ruby
-warmer = Langfuse::CacheWarmer.new
-warmer.warm!(["prompt1", "prompt2", "nonexistent"])
-# => Langfuse::CacheWarmingError: Failed to cache prompts: nonexistent
-```
-
-**Solutions:**
-
-**Check individual failures:**
-
-```ruby
-warmer = Langfuse::CacheWarmer.new
-result = warmer.warm(["prompt1", "prompt2"])
-
-if result[:failed].any?
-  puts "Failed prompts:"
-  result[:failed].each do |failure|
-    puts "  #{failure[:name]}: #{failure[:error].class} - #{failure[:error].message}"
-  end
-end
-```
-
-**Graceful warming:**
-
-```ruby
-prompts_to_warm = ["critical-prompt", "optional-prompt"]
-warmer = Langfuse::CacheWarmer.new
-
-begin
-  warmer.warm!(prompts_to_warm)
-rescue Langfuse::CacheWarmingError => e
-  Rails.logger.warn("Some prompts failed to warm: #{e.message}")
-  # Continue - cache will be populated on-demand
-end
-```
-
-See [CACHING.md](CACHING.md#cache-warming) for warming strategies.
-
-## Retry Strategies
-
-### Built-in Retries
-
-The SDK automatically retries certain operations:
-
-**Prompt fetching (GET requests):**
-- Max 2 retries (3 total attempts)
-- Retries on: 429, 503, 504, `TimeoutError`, `ConnectionFailed`
-- Exponential backoff: `0.05 * 2^retry_count` seconds
-
-**Batch ingestion (POST requests):**
-- Max 2 retries (3 total attempts)
-- Same error conditions and backoff
-
-You do not need to implement retries for these operations.
-
-### Application-Level Retries
-
-For custom retry logic:
-
-```ruby
-class PromptFetcher
-  MAX_RETRIES = 3
-  BASE_DELAY = 1
-
-  def self.fetch_with_retry(name, version: nil)
-    retries = 0
-
-    begin
-      Langfuse.client.get_prompt(name, version: version)
-    rescue Langfuse::ApiError => e
-      retries += 1
-
-      if retries < MAX_RETRIES && retryable?(e)
-        delay = BASE_DELAY * (2 ** (retries - 1))
-        Rails.logger.info("Retrying prompt fetch (#{retries}/#{MAX_RETRIES}) after #{delay}s: #{e.message}")
-        sleep(delay)
-        retry
-      else
-        raise
-      end
-    end
-  end
-
-  def self.retryable?(error)
-    error.is_a?(Langfuse::ApiError) &&
-      !error.is_a?(Langfuse::UnauthorizedError) &&
-      !error.is_a?(Langfuse::NotFoundError)
-  end
-end
-```
-
-**Don't retry:**
-- `UnauthorizedError` (a retry does not correct invalid credentials)
-- `NotFoundError` (the resource does not exist)
-- `ConfigurationError` (code issue, not transient)
-
-## Fallback Patterns
-
-### Prompt Fallbacks
-
-**Pattern 1: Inline fallback**
-
-```ruby
-prompt = client.get_prompt("dynamic-prompt",
-  fallback: "Static template with {{variable}}",
-  type: :text
-)
-```
-
-**Pattern 2: Exception-based fallback**
-
-```ruby
-begin
-  prompt = client.get_prompt("optimized-prompt", label: "production")
-  message = prompt.compile(user: user.name)
-rescue Langfuse::NotFoundError
-  message = "Hello #{user.name}!"
-end
-```
-
-**Pattern 3: Fallback chain**
-
-```ruby
-def get_prompt_with_fallback(primary, fallback_name, default_template)
-  client = Langfuse.client
-
-  begin
-    client.get_prompt(primary, label: "production")
-  rescue Langfuse::NotFoundError
-    begin
-      client.get_prompt(fallback_name)
-    rescue Langfuse::NotFoundError
-      client.get_prompt("default", fallback: default_template, type: :text)
-    end
-  end
-end
-
-prompt = get_prompt_with_fallback(
-  "new-feature-prompt",
-  "standard-prompt",
-  "Hello {{name}}!"
-)
-```
-
-### Circuit Breaker Pattern
-
-Prevent cascading failures:
-
-```ruby
-class LangfuseCircuitBreaker
-  FAILURE_THRESHOLD = 5
-  TIMEOUT = 60  # seconds
-
-  def initialize
-    @failures = 0
-    @last_failure_time = nil
-    @state = :closed  # :closed, :open, :half_open
-  end
-
-  def call
-    case @state
-    when :open
-      if Time.now - @last_failure_time > TIMEOUT
-        @state = :half_open
-      else
-        raise Langfuse::ApiError, "Circuit breaker open"
-      end
-    end
-
-    begin
-      result = yield
-      on_success
-      result
-    rescue Langfuse::ApiError => e
-      on_failure
-      raise
-    end
-  end
-
-  private
-
-  def on_success
-    @failures = 0
-    @state = :closed
-  end
-
-  def on_failure
-    @failures += 1
-    @last_failure_time = Time.now
-    @state = :open if @failures >= FAILURE_THRESHOLD
-  end
-end
-
-# Usage
-circuit_breaker = LangfuseCircuitBreaker.new
-
-begin
-  prompt = circuit_breaker.call do
-    Langfuse.client.get_prompt("greeting")
-  end
-rescue Langfuse::ApiError => e
-  prompt = nil  # Use cached or default
-end
-```
-
-## Debugging Tips
-
-### Enable Debug Logging
-
-```ruby
-Langfuse.configure do |config|
-  config.logger.level = Logger::DEBUG
-end
-```
-
-This logs:
-- HTTP requests and responses
-- Cache hits/misses
-- Retry attempts
-
-### Inspect Configuration
-
-```ruby
-config = Langfuse.configuration
-puts "Langfuse host: #{config.base_url}"
-puts "Langfuse environment: #{config.environment || 'default'}"
-puts "Langfuse locally configured: #{Langfuse.configured?}"
-```
-
-Do not call `config.inspect` in logs. The configuration object contains the secret key.
-
-### Check Cache State
-
-```ruby
-stats = Langfuse.client.prompt_cache_stats
-puts "Cache backend: #{stats[:backend]}"
-puts "Cache enabled: #{stats[:enabled]}"
-```
-
-### Test Credentials
-
-```ruby
-begin
-  prompts = Langfuse.client.list_prompts(limit: 1)
-  puts "OK: Credentials are valid. Found #{prompts.size} prompt(s)."
-rescue Langfuse::UnauthorizedError
-  puts "ERROR: Credentials are invalid."
-rescue Langfuse::ApiError => e
-  puts "ERROR: API request failed: #{e.message}"
-end
-```
-
-### Validate Environment Variables
-
-```ruby
-required_vars = ['LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']
-missing = required_vars.reject { |var| ENV[var] }
-
-if missing.any?
-  puts "Missing environment variables: #{missing.join(', ')}"
-else
-  puts "All required environment variables present"
-end
-```
-
-## See Also
-
-- [CONFIGURATION.md](CONFIGURATION.md) - Configuration options
-- [PROMPTS.md](PROMPTS.md) - Fallback strategies for prompts
-- [CACHING.md](CACHING.md) - Cache warming errors
-- [API_REFERENCE.md](API_REFERENCE.md) - Exception class reference
+For missing traces, check the host, telemetry switches, sampling, export filters,
+and masking errors before investigating ingestion. See [Tracing](TRACING.md) and
+[Configuration](CONFIGURATION.md).

@@ -101,6 +101,7 @@ module Langfuse
     # @param kwargs [Hash] Variables and placeholder values to compile
     # @return [Array<Hash>] Array of compiled messages and unresolved placeholders
     # @raise [ArgumentError] if a placeholder value is malformed
+    # @raise [Mustache::Parser::SyntaxError] if a rendered message has invalid syntax
     #
     # @example
     #   chat_prompt.compile(name: "Alice", topic: "Ruby")
