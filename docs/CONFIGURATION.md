@@ -294,7 +294,8 @@ config.score_queue_capacity = 20_000
 A full queue does not wait for capacity.
 The SDK logs an error and drops only the new asynchronous score.
 Synchronous `create_score!` calls do not use this queue.
-A multi-score flush request stays below 2.5 MB.
+Each request contains at most 100 scores and 1,000,000 JSON bytes, even when
+`batch_size` is larger. The SDK logs and drops a single oversized asynchronous score.
 Retryable failures keep the batch at the front of the queue.
 The SDK logs and discards permanent batch failures.
 Thus, the SDK can send later valid scores.

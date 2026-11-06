@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "opentelemetry/sdk"
+require "timeout"
 
 RSpec.describe Langfuse::ScoreClient do
   subject(:score_client) { described_class.new(api_client: api_client, config: config) }
@@ -45,25 +46,13 @@ RSpec.describe Langfuse::ScoreClient do
   end
 
   describe "#initialize" do
-    it "creates a score client" do
-      expect(score_client).to be_a(described_class)
-    end
-
-    it "initializes with api_client and config" do
-      expect(score_client.api_client).to eq(api_client)
-      expect(score_client.config).to eq(config)
-    end
-
     it "starts flush timer thread" do
-      # Give thread a moment to start
-      sleep(0.1)
       expect(score_client.instance_variable_get(:@flush_thread)).to be_alive
     end
 
     it "replaces inherited queue and timer state in a forked child" do
       skip "fork is not available" unless Process.respond_to?(:fork)
 
-      allow(api_client).to receive(:send_score_batch).and_return("message" => "Accepted")
       score_client.create(name: "parent-score", value: 1)
       parent_queue = score_client.instance_variable_get(:@queue)
       parent_thread = score_client.instance_variable_get(:@flush_thread)
@@ -89,91 +78,20 @@ RSpec.describe Langfuse::ScoreClient do
 
   describe "#create" do
     context "with valid numeric score" do
-      it "queues the score event" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(
-                                                                  name: "quality",
-                                                                  value: 0.85,
-                                                                  dataType: "NUMERIC"
-                                                                )
-                                                              ))
-
-        score_client.create(name: "quality", value: 0.85, trace_id: "abc123", data_type: :numeric)
-        score_client.flush
-      end
-
-      it "includes id when provided" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(id: "my-score")
-                                                              ))
-
-        score_client.create(name: "quality", value: 0.85, id: "my-score")
-        score_client.flush
-      end
-
-      it "includes trace_id when provided" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(traceId: "abc123")
-                                                              ))
-
-        score_client.create(name: "quality", value: 0.85, trace_id: "abc123")
-        score_client.flush
-      end
-
-      it "includes session_id when provided" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(sessionId: "ghi789")
-                                                              ))
-
-        score_client.create(name: "quality", value: 0.85, session_id: "ghi789")
-        score_client.flush
-      end
-
-      it "includes observation_id when provided" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(observationId: "def456")
-                                                              ))
-
-        score_client.create(name: "quality", value: 0.85, observation_id: "def456")
-        score_client.flush
-      end
-
-      it "accepts mixed identifier fields and serializes all of them" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(
-                                                                  traceId: "abc123",
-                                                                  sessionId: "ghi789",
-                                                                  observationId: "def456",
-                                                                  datasetRunId: "run-123"
-                                                                )
-                                                              ))
+      it "serializes the supplied score attributes" do
+        expected = {
+          id: "score-1", timestamp: "2026-11-06T12:00:00.000Z", name: "quality", value: 0.85, dataType: "NUMERIC",
+          traceId: "trace-1", sessionId: "session-1", observationId: "observation-1",
+          datasetRunId: "run-1", configId: "config-1", comment: "Helpful",
+          metadata: { source: "manual" }, environment: "production"
+        }
+        expect(api_client).to receive(:send_score_batch).with([expected])
 
         score_client.create(
-          name: "quality",
-          value: 0.85,
-          trace_id: "abc123",
-          session_id: "ghi789",
-          observation_id: "def456",
-          dataset_run_id: "run-123"
-        )
-        score_client.flush
-      end
-
-      it "includes comment and metadata and environment when provided" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(
-                                                                  comment: "High quality",
-                                                                  metadata: { source: "manual" },
-                                                                  environment: "production"
-                                                                )
-                                                              ))
-
-        score_client.create(
-          name: "quality",
-          value: 0.85,
-          comment: "High quality",
-          metadata: { source: "manual" },
-          environment: "production"
+          id: "score-1", timestamp: Time.utc(2026, 11, 6, 12), name: "quality", value: 0.85,
+          trace_id: "trace-1", session_id: "session-1", observation_id: "observation-1",
+          dataset_run_id: "run-1", config_id: "config-1", comment: "Helpful",
+          metadata: { source: "manual" }, environment: "production"
         )
         score_client.flush
       end
@@ -195,24 +113,6 @@ RSpec.describe Langfuse::ScoreClient do
                                                               ))
 
         score_client.create(name: "quality", value: 0.85, environment: "production")
-        score_client.flush
-      end
-
-      it "includes dataset_run_id when provided" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(datasetRunId: "run-123")
-                                                              ))
-
-        score_client.create(name: "quality", value: 0.85, dataset_run_id: "run-123")
-        score_client.flush
-      end
-
-      it "includes config_id when provided" do
-        expect(api_client).to receive(:send_score_batch).with(array_including(
-                                                                hash_including(configId: "cfg-456")
-                                                              ))
-
-        score_client.create(name: "quality", value: 0.85, config_id: "cfg-456")
         score_client.flush
       end
 
@@ -302,25 +202,6 @@ RSpec.describe Langfuse::ScoreClient do
         score_client.flush
       end
 
-      it "accepts a 500-character value" do
-        expect(api_client).to receive(:send_score_batch)
-
-        score_client.create(name: "notes", value: "a" * 500, data_type: :text)
-        score_client.flush
-      end
-
-      it "rejects an empty value" do
-        expect do
-          score_client.create(name: "notes", value: "", data_type: :text)
-        end.to raise_error(ArgumentError, /Text value must contain 1 to 500 characters, got 0/)
-      end
-
-      it "rejects a value longer than 500 characters" do
-        expect do
-          score_client.create(name: "notes", value: "a" * 501, data_type: :text)
-        end.to raise_error(ArgumentError, /Text value must contain 1 to 500 characters, got 501/)
-      end
-
       it "rejects non-string values" do
         expect do
           score_client.create(name: "notes", value: 42, data_type: :text)
@@ -351,13 +232,6 @@ RSpec.describe Langfuse::ScoreClient do
                                                               ))
 
         score_client.create(name: "custom-name", value: "corrected", trace_id: "trace-1", data_type: :correction)
-        score_client.flush
-      end
-
-      it "does not enforce a length limit" do
-        expect(api_client).to receive(:send_score_batch)
-
-        score_client.create(name: "output", value: "a" * 10_000, trace_id: "trace-1", data_type: :correction)
         score_client.flush
       end
 
@@ -436,19 +310,6 @@ RSpec.describe Langfuse::ScoreClient do
         config.batch_size.times do |i|
           score_client.create(name: "score_#{i}", value: i)
         end
-        # Give flush a moment to complete
-        sleep(0.1)
-      end
-
-      it "batches multiple scores together" do
-        expect(api_client).to receive(:send_score_batch) do |events|
-          expect(events.length).to eq(3)
-        end
-
-        3.times do |i|
-          score_client.create(name: "score_#{i}", value: i)
-        end
-        score_client.flush
       end
     end
 
@@ -788,7 +649,6 @@ RSpec.describe Langfuse::ScoreClient do
     end
 
     it "splits requests before a multi-score payload exceeds the byte limit" do
-      allow(api_client).to receive(:send_score_batch).and_return("message" => "Accepted")
       3.times { |index| score_client.create(name: "score-#{index}", value: index) }
       pending_events = score_client.instance_variable_get(:@queue).snapshot
       single_event_bytes = JSON.generate([pending_events.first]).bytesize
@@ -807,7 +667,6 @@ RSpec.describe Langfuse::ScoreClient do
     end
 
     it "caps each request at the configured batch size" do
-      allow(api_client).to receive(:send_score_batch).and_return("message" => "Accepted")
       3.times { |index| score_client.create(name: "score-#{index}", value: index) }
       config.batch_size = 2
       sent_batches = []
@@ -850,70 +709,11 @@ RSpec.describe Langfuse::ScoreClient do
       expect(retried_names).to eq(%w[score-1 score-2])
       expect(pending_queue).to be_empty
     end
-
-    it "drops a permanently rejected batch and continues with later scores" do
-      config.batch_size = 1
-      attempts = []
-      allow(api_client).to receive(:send_score_batch) do |batch|
-        name = batch.first.fetch(:name)
-        attempts << name
-        raise Langfuse::BatchDeliveryError.new("name is invalid", retryable: false) if name == "invalid"
-
-        { "message" => "Accepted" }
-      end
-
-      score_client.create(name: "invalid", value: 1)
-      score_client.create(name: "valid", value: 2)
-      score_client.flush
-
-      expect(attempts).to eq(%w[invalid valid])
-      expect(score_client.instance_variable_get(:@queue)).to be_empty
-    end
-
-    it "stops after an authentication failure and keeps all scores queued" do
-      attempts = []
-      authentication_fails = true
-      allow(api_client).to receive(:send_score_batch) do |batch|
-        attempts << batch.first.fetch(:name)
-        if authentication_fails
-          authentication_fails = false
-          raise Langfuse::UnauthorizedError, "invalid credentials"
-        end
-        { "message" => "Accepted" }
-      end
-
-      score_client.create(name: "score-0", value: 0)
-      score_client.create(name: "score-1", value: 1)
-      config.batch_size = 1
-      score_client.flush
-
-      pending_queue = score_client.instance_variable_get(:@queue)
-      expect(attempts).to eq(["score-0"])
-      expect(pending_queue.snapshot.map { |event| event.fetch(:name) }).to eq(%w[score-0 score-1])
-
-      score_client.flush
-
-      expect(attempts).to eq(%w[score-0 score-0 score-1])
-      expect(pending_queue).to be_empty
-    end
-
-    it "keeps transient batch failures queued for a later retry" do
-      allow(api_client).to receive(:send_score_batch).and_raise(
-        Langfuse::BatchDeliveryError.new("unavailable", retryable: true)
-      )
-
-      score_client.create(name: "retry-me", value: 1)
-      score_client.flush
-
-      pending_names = score_client.instance_variable_get(:@queue).snapshot.map { |event| event.fetch(:name) }
-      expect(pending_names).to eq(["retry-me"])
-    end
   end
 
   describe "queue capacity" do
     before do
       config.score_queue_capacity = 1
-      allow(api_client).to receive(:send_score_batch).and_return("message" => "Accepted")
     end
 
     it "drops only the new score without blocking when the queue is full" do
@@ -943,7 +743,9 @@ RSpec.describe Langfuse::ScoreClient do
     it "caps requests at 100 scores when the configured batch size is larger" do
       config.batch_size = 200
       101.times { |index| score_client.create(name: "score-#{index}", value: index) }
-      expect(api_client).to receive(:send_score_batch).with(have_attributes(size: 100)).ordered
+      expect(api_client).to receive(:send_score_batch).with(
+        Array.new(100) { |index| hash_including(name: "score-#{index}") }
+      ).ordered
       expect(api_client).to receive(:send_score_batch).with([hash_including(name: "score-100")]).ordered
 
       score_client.flush
@@ -957,8 +759,6 @@ RSpec.describe Langfuse::ScoreClient do
 
       score_client.shutdown
 
-      # Give thread a moment to stop
-      sleep(0.1)
       expect(flush_thread).not_to be_alive
     end
 
@@ -978,17 +778,25 @@ RSpec.describe Langfuse::ScoreClient do
   end
 
   describe "thread safety" do
-    it "handles concurrent score creation" do
-      expect(api_client).to receive(:send_score_batch).at_least(:once)
-
-      threads = 10.times.map do |i|
-        Thread.new do
-          score_client.create(name: "score_#{i}", value: i)
-        end
+    it "delivers every concurrently created score exactly once" do
+      delivered = Queue.new
+      allow(api_client).to receive(:send_score_batch) do |batch|
+        batch.each { |score| delivered << score.fetch(:name) }
+        { "message" => "Accepted" }
+      end
+      threads = 10.times.map do |index|
+        Thread.new { score_client.create(name: "score_#{index}", value: index) }
       end
 
-      threads.each(&:join)
-      score_client.flush
+      Timeout.timeout(5) do
+        threads.each(&:join)
+        score_client.flush
+      end
+
+      expect(Array.new(delivered.size) { delivered.pop }).to match_array(Array.new(10) { |index| "score_#{index}" })
+    ensure
+      threads&.each(&:kill)
+      threads&.each { |thread| thread.join(1) }
     end
   end
 

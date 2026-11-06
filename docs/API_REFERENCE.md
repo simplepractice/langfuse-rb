@@ -1083,7 +1083,7 @@ Create a score for a trace or observation.
 **Signature:**
 
 ```ruby
-create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil,
+create_score(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
              comment: nil, metadata: nil, environment: nil, data_type: :numeric,
              dataset_run_id: nil, config_id: nil)
 ```
@@ -1099,6 +1099,7 @@ If neither value is set, Langfuse uses its `default` environment.
 | `name`           | String                 | Yes      | Score name                                |
 | `value`          | Numeric/String/Boolean | Yes      | Score value                               |
 | `id`             | String                 | No       | Custom score ID                           |
+| `timestamp`      | Time, String           | No       | Score time; defaults to now. Reuse with `id` when retrying. |
 | `trace_id`       | String                 | No       | Trace ID to score                         |
 | `session_id`     | String                 | No       | Session ID to associate with the score    |
 | `observation_id` | String                 | No       | Observation ID to score                   |
@@ -1123,20 +1124,20 @@ client.create_score(
 
 ### `Client#create_score!`
 
-Create a score through the synchronous Scores API instead of the ingestion queue.
+Create a score through the Scores API with synchronous HTTP acceptance.
 
 The method returns the created score ID after Langfuse accepts the request.
 It bypasses the in-memory queue and trace-sampling gate. Use `create_score`
 for fire-and-forget batching.
 
-For retryable workflows, generate a stable `id` before the first request and
-reuse the complete score payload. A network failure can occur after Langfuse
+For retryable workflows, set `id` and `timestamp` before the first request and
+reuse both with the complete score payload. A network failure can occur after Langfuse
 accepts a request, so the failure alone does not prove that the score was rejected.
 
 **Signature:**
 
 ```ruby
-create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil,
+create_score!(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
               comment: nil, metadata: nil, environment: nil, data_type: :numeric,
               dataset_run_id: nil, config_id: nil)
 ```
@@ -1148,14 +1149,15 @@ create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observatio
 **Example:**
 
 ```ruby
-score_id = "user-thumbs-#{trace_id}"
-created_id = client.create_score!(
-  id: score_id,
+feedback = {
+  id: "user-thumbs-#{trace_id}",
+  timestamp: Time.now,
   name: "user-thumbs",
   value: true,
   trace_id: trace_id,
   data_type: :boolean
-)
+}
+created_id = client.create_score!(**feedback) # Reuse feedback when retrying.
 ```
 
 ### `Client#score_active_observation`

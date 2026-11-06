@@ -266,7 +266,7 @@ score_client.create(name: "quality", value: 0.85, trace_id: "abc123...")
 - Queue score events for batching
 - Reject or drop work at documented boundaries instead of allowing unbounded memory growth
 - Extract trace/observation IDs from active OTel spans
-- Batch and send scores to ingestion API
+- Batch and send scores to the Scores API
 - Handle graceful shutdown and flush
 
 ### 8. Attribute Propagation (`Langfuse::Propagation`)
@@ -488,15 +488,14 @@ User Code
 
 ```
 User Code
-User Code
   ├─> Langfuse.create_score(...)
   │    ├─> Validate, normalize, and snapshot the score payload
   │    ├─> Add to bounded PendingScoreQueue
   │    └─> Flush by count, payload size, timer, or lifecycle boundary
-  │         └─> ApiClient.send_batch() → POST /api/public/ingestion
+  │         └─> ApiClient.send_score_batch() → POST /api/public/scores (array of score bodies)
   └─> Langfuse.create_score!(...)
        ├─> Validate, normalize, and snapshot the same score payload
-       └─> ApiClient.create_score() → POST /api/public/scores
+       └─> ApiClient.create_score() → ApiClient.send_score_batch() (one score)
 ```
 
 ### Process Lifecycle

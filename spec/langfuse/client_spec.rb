@@ -1605,96 +1605,17 @@ RSpec.describe Langfuse::Client do
       client.create_score(name: "quality", value: 0.85, trace_id: "abc123")
     end
 
-    it "forwards correction scores unchanged" do
-      score_client = client.instance_variable_get(:@score_client)
-      expect(score_client).to receive(:create).with(
-        hash_including(
-          name: "output",
-          value: "The corrected output",
-          trace_id: "abc123",
-          observation_id: "def456",
-          data_type: :correction
-        )
-      )
-
-      client.create_score(
-        name: "output",
-        value: "The corrected output",
-        trace_id: "abc123",
-        observation_id: "def456",
-        data_type: :correction
-      )
-    end
-
-    it "forwards text scores unchanged" do
-      score_client = client.instance_variable_get(:@score_client)
-      expect(score_client).to receive(:create).with(
-        hash_including(name: "reviewer_notes", value: "Helpful", data_type: :text)
-      )
-
-      client.create_score(name: "reviewer_notes", value: "Helpful", trace_id: "abc123", data_type: :text)
-    end
-
     it "passes the full score kwarg set to score_client" do
+      attributes = {
+        name: "quality", value: true, id: "my-score", timestamp: Time.utc(2026, 11, 6, 12),
+        trace_id: "trace-1", session_id: "session-1", observation_id: "observation-1",
+        comment: "Helpful", metadata: { source: "manual" }, environment: "production",
+        data_type: :boolean, dataset_run_id: "run-1", config_id: "config-1"
+      }
       score_client = client.instance_variable_get(:@score_client)
-      expect(score_client).to receive(:create).with(
-        name: "quality",
-        value: 0.85,
-        id: "my-score", timestamp: nil,
-        trace_id: "abc123",
-        session_id: "ghi789",
-        observation_id: "def456",
-        comment: "High quality",
-        metadata: { source: "manual" },
-        environment: "production",
-        data_type: :boolean,
-        dataset_run_id: "run-123",
-        config_id: "cfg-456"
-      )
+      expect(score_client).to receive(:create).with(**attributes)
 
-      client.create_score(
-        name: "quality",
-        value: 0.85,
-        id: "my-score", timestamp: nil,
-        trace_id: "abc123",
-        session_id: "ghi789",
-        observation_id: "def456",
-        comment: "High quality",
-        metadata: { source: "manual" },
-        environment: "production",
-        data_type: :boolean,
-        dataset_run_id: "run-123",
-        config_id: "cfg-456"
-      )
-    end
-
-    it "passes all parameters to score_client, identified by session_id" do
-      score_client = client.instance_variable_get(:@score_client)
-      expect(score_client).to receive(:create).with(
-        name: "quality",
-        value: 0.85,
-        id: "my-score", timestamp: nil,
-        trace_id: nil,
-        session_id: "ghi789",
-        observation_id: nil,
-        comment: "High quality",
-        metadata: { source: "manual" },
-        environment: "production",
-        data_type: :boolean,
-        dataset_run_id: nil,
-        config_id: nil
-      )
-
-      client.create_score(
-        name: "quality",
-        value: 0.85,
-        id: "my-score", timestamp: nil,
-        session_id: "ghi789",
-        comment: "High quality",
-        metadata: { source: "manual" },
-        environment: "production",
-        data_type: :boolean
-      )
+      client.create_score(**attributes)
     end
 
     it "sends the configured environment through the Scores API" do

@@ -55,16 +55,18 @@ RSpec.describe "Score delivery through the client and HTTP transport" do
 
   [400, 404, 413].each do |status|
     it "discards HTTP #{status} failures and proceeds to the next batch" do
-      request = stub_request(:post, url).to_return(
-        { status: status, body: { message: "Invalid request" }.to_json, headers: headers }, accepted
-      )
+      bodies = []
+      stub_request(:post, url).to_return do |request|
+        bodies << JSON.parse(request.body)
+        bodies.one? ? { status: status, body: { message: "Invalid request" }.to_json, headers: headers } : accepted
+      end
       %w[invalid valid].each { |name| queue_score(name) }
       client.config.batch_size = 1
 
       client.flush_scores
       client.flush_scores
 
-      expect(request).to have_been_requested.twice
+      expect(bodies.map { |batch| batch.map { |score| score.fetch("id") } }).to eq([%w[invalid], %w[valid]])
       expect(logger).to have_received(:error).with(/permanent batch failure.*#{status}/)
     end
   end
@@ -75,14 +77,16 @@ RSpec.describe "Score delivery through the client and HTTP transport" do
       bodies << request.body
       bodies.length == 1 ? { status: 401 } : accepted
     end
-    queue_score("quality")
+    %w[first later].each { |name| queue_score(name) }
+    client.config.batch_size = 1
 
     client.flush_scores
+    expect(bodies.size).to eq(1)
     client.flush_scores
     client.flush_scores
 
-    expect(bodies.size).to eq(2)
-    expect(bodies.uniq.size).to eq(1)
+    expect(bodies.map { |body| JSON.parse(body).first.fetch("id") }).to eq(%w[first first later])
+    expect(bodies[0]).to eq(bodies[1])
   end
 
   it "preserves IDs, timestamps and queue order after transient retries are exhausted" do
