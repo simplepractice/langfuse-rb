@@ -462,7 +462,9 @@ If the queue is full, the SDK logs an error and drops the new score.
 The call does not wait for capacity.
 Each request contains at most 100 scores and 1,000,000 JSON bytes, even if
 `batch_size` is larger. A single oversized asynchronous score is logged and dropped.
-Retryable failures keep the batch at the front of the queue.
+Score requests retry connection failures, timeouts, HTTP 429, and all HTTP 5xx
+responses up to two times. After retries are exhausted, asynchronous batches
+stay at the front of the queue for a later flush.
 Permanent HTTP failures are logged and discarded so later scores can proceed.
 Authentication failures retain the queue. HTTP 207 responses report accepted and
 rejected counts; rejected scores failed validation. The SDK logs those rejections

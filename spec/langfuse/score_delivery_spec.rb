@@ -118,6 +118,22 @@ RSpec.describe "Score delivery through the client and HTTP transport" do
     expect(request).to have_been_requested.twice
   end
 
+  it "retries server errors during shutdown without changing score identity" do
+    request = stub_request(:post, url).with do |req|
+      score = JSON.parse(req.body).first
+      score.values_at("id", "timestamp") == ["quality", timestamp.iso8601(3)]
+    end
+    request.to_return({ status: 500 }, { status: 502 }, accepted)
+    queue_score("quality")
+
+    client.shutdown
+
+    expect(request).to have_been_requested.times(3)
+    client.flush_scores
+
+    expect(request).to have_been_requested.times(3)
+  end
+
   it "retains scores after an ambiguous network failure and delivers them on the next flush" do
     request = stub_request(:post, url).to_timeout
     queue_score("quality")

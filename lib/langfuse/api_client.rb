@@ -661,6 +661,7 @@ module Langfuse
     def score_connection
       @score_connection ||= build_connection(
         retry_settings: retry_options.merge(
+          retry_statuses: [429, *(500..599)],
           exceptions: [Faraday::TimeoutError, Faraday::ConnectionFailed, Faraday::RetriableResponse]
         )
       )
