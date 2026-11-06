@@ -165,6 +165,46 @@ Important boundaries:
 For cross-service propagation through OpenTelemetry baggage, use `as_baggage: true`.
 The application must also configure the baggage gem and its header propagation pipeline.
 
+## Skill Availability
+
+Discover installed skills locally and configure a catalog before tracing starts:
+
+```ruby
+Langfuse.configure do |config|
+  config.skills = { available: Langfuse.discover_skills(dir: ".agents/skills") }
+end
+
+Langfuse.propagate_attributes(attach_skills: true) do
+  Langfuse.observe("assistant", as_type: :agent) do |agent|
+    agent.start_observation("plan", as_type: :generation) { |generation| generation.update(output: "Plan ready") }
+  end
+end
+```
+
+Discovery reads immediate, non-hidden directories containing a regular `SKILL.md` file and follows symlinks. It makes no network calls or reads of skill contents. A `langfuse-skills.lock` in the skill directory takes precedence over one in the working directory. Valid lock records supply names and versions; other skills use their directory names without versions. Installation records do not verify later local edits.
+
+Missing directories return `[]`. Unreadable directories warn and return `[]`; malformed or unreadable locks warn and fall back to directory names. Invalid lock entries and duplicate discovered names are skipped with warnings. Discovery sorts directory names, so the first discovered skill wins a name collision.
+
+For a specific scope, pass references explicitly:
+
+```ruby
+Langfuse.propagate_attributes(skills_available: [{ name: "summarize", version: 2 }]) do
+  Langfuse.observe("assistant", as_type: :agent) do |agent|
+    Langfuse.propagate_attributes(skills_available: []) do
+      agent.start_observation("without-skills", as_type: :generation) do |generation|
+        generation.update(output: "No skills available")
+      end
+    end
+  end
+end
+```
+
+`skills_available` updates the active span and replaces the inherited list for new spans. An explicit `[]` clears it; `nil` inherits. Values already supplied directly to an OpenTelemetry span take precedence over inherited values, which take precedence over the configured catalog. Leaving a scope restores its parent context; it does not undo attributes written to an active span.
+
+The catalog is serialized when tracing starts and is attached only to new spans in an `attach_skills: true` scope. Nested scopes inherit that flag; `false` disables catalog attachment without removing explicitly propagated skills. Neither option is sent as baggage, even with `as_baggage: true`.
+
+The JSON span attribute is `langfuse.observation.skills_available`. Langfuse displays available skills on generation observations; skill-loading tool observations also use the list to resolve loaded versions. See the [platform tracing guide](https://langfuse.com/docs/skill-management/tracing). Availability records which skills an agent could use; it does not create observations or claim that a skill executed. Disabled tracing remains a no-op.
+
 ## Background Jobs and Async Work
 
 ActiveJob and Sidekiq do not continue Langfuse trace context across processes.

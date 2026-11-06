@@ -13,6 +13,7 @@ module Langfuse
     #   Resilient reporter shared with the OTLP exporter
     def initialize(config:, exporter:, metrics_reporter:)
       @logger = config.logger
+      @available_skills = Skills.serialize(config.skills&.fetch(:available, nil), logger: @logger)
       @default_trace_attributes = build_default_trace_attributes(config).freeze
       @should_export_span = config.should_export_span || Langfuse.method(:default_export_span?)
       @app_root_tracker = AppRootTracking::Tracker.new
@@ -85,11 +86,15 @@ module Langfuse
     def propagated_attributes(parent_context)
       return {} unless parent_context
 
-      Propagation.get_propagated_attributes_from_context(parent_context)
+      Propagation.get_propagated_attributes_from_context(parent_context, available_skills: @available_skills)
     end
 
     def apply_attributes(span, attributes)
-      attributes.each { |key, value| span.set_attribute(key, value) }
+      attributes.each do |key, value|
+        next if key == OtelAttributes::OBSERVATION_SKILLS_AVAILABLE && span.attributes&.key?(key)
+
+        span.set_attribute(key, value)
+      end
     end
 
     def remember_app_root_state(span, parent_context)

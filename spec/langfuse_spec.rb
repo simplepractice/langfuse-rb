@@ -404,6 +404,8 @@ RSpec.describe Langfuse do
         trace_name: nil,
         release: nil,
         environment: nil,
+        skills_available: nil,
+        attach_skills: nil,
         as_baggage: false
       ).and_call_original
 
@@ -422,6 +424,8 @@ RSpec.describe Langfuse do
         trace_name: "test-trace",
         release: "release-123",
         environment: "test",
+        skills_available: [{ name: "summarize", version: 2 }],
+        attach_skills: true,
         as_baggage: true
       ).and_call_original
 
@@ -434,6 +438,8 @@ RSpec.describe Langfuse do
         trace_name: "test-trace",
         release: "release-123",
         environment: "test",
+        skills_available: [{ name: "summarize", version: 2 }],
+        attach_skills: true,
         as_baggage: true
       ) do
         # Block should execute

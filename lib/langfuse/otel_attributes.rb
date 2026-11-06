@@ -52,6 +52,7 @@ module Langfuse
     OBSERVATION_COST_DETAILS = "langfuse.observation.cost_details"
     OBSERVATION_PROMPT_NAME = "langfuse.observation.prompt.name"
     OBSERVATION_PROMPT_VERSION = "langfuse.observation.prompt.version"
+    OBSERVATION_SKILLS_AVAILABLE = "langfuse.observation.skills_available"
     OBSERVATION_COMPLETION_START_TIME = "langfuse.observation.completion_start_time"
     AS_ROOT = "langfuse.internal.as_root"
     IS_APP_ROOT = "langfuse.internal.is_app_root"

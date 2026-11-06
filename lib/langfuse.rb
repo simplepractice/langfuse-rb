@@ -75,6 +75,8 @@ require_relative "langfuse/masking"
 require_relative "langfuse/masking_exporter"
 require_relative "langfuse/otel_attributes"
 require_relative "langfuse/experiment_attributes"
+require_relative "langfuse/skill_discovery"
+require_relative "langfuse/skills"
 require_relative "langfuse/propagation"
 require_relative "langfuse/app_root_tracking"
 require_relative "langfuse/span_processor"
@@ -138,6 +140,17 @@ module Langfuse
     # @return [Client] the global client instance
     def client
       @client ||= Client.new(configuration)
+    end
+
+    # Discover immediate, non-hidden skill directories containing a regular SKILL.md file.
+    # Symlinks are followed. Optional langfuse-skills.lock records supply names and versions.
+    # Discovery is local and does not verify skill contents against installation records.
+    #
+    # @param dir [String] Directory containing installed skill directories
+    # @return [Array<Hash>] Skill references with :name and optional :version
+    # @raise [ArgumentError, TypeError] if dir is not a valid filesystem path
+    def discover_skills(dir:)
+      SkillDiscovery.new(dir: dir, logger: configuration.logger).discover
     end
 
     # Check whether the local configuration can construct a client.
@@ -222,6 +235,8 @@ module Langfuse
     # @param trace_name [String, nil] Trace name (≤200 characters)
     # @param release [String, nil] Release identifier (≤200 characters)
     # @param environment [String, nil] Lowercase environment identifier (≤40 characters)
+    # @param skills_available [Array<Hash>, nil] Skill references; replaces inherited skills, including when empty
+    # @param attach_skills [Boolean, nil] Attach the configured catalog to new spans in this scope; nil inherits
     # @param as_baggage [Boolean] If true, propagates via OpenTelemetry baggage for cross-service propagation
     # @yield Block within which attributes are propagated
     # @return [Object] The result of the block
@@ -255,7 +270,8 @@ module Langfuse
     #   end
     # rubocop:disable Metrics/ParameterLists
     def propagate_attributes(user_id: nil, session_id: nil, metadata: nil, version: nil, tags: nil,
-                             trace_name: nil, release: nil, environment: nil, as_baggage: false, &)
+                             trace_name: nil, release: nil, environment: nil, skills_available: nil,
+                             attach_skills: nil, as_baggage: false, &)
       Propagation.propagate_attributes(
         user_id: user_id,
         session_id: session_id,
@@ -265,6 +281,8 @@ module Langfuse
         trace_name: trace_name,
         release: release,
         environment: environment,
+        skills_available: skills_available,
+        attach_skills: attach_skills,
         as_baggage: as_baggage,
         &
       )
