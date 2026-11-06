@@ -348,7 +348,8 @@ module Langfuse
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
-    # @param id [String, nil] Score ID; use a stable value as an idempotency key
+    # @param id [String, nil] Score ID; reuse with timestamp when retrying
+    # @param timestamp [Time, String, nil] Score time; defaults to now. Reuse with id when retrying.
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
@@ -378,12 +379,14 @@ module Langfuse
     #   client.create_score(name: "output", value: "The corrected output", trace_id: "abc123",
     #                       observation_id: "def456", data_type: :correction)
     # rubocop:disable Metrics/ParameterLists
-    def create_score(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
-                     metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+    def create_score(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
+                     comment: nil, metadata: nil, environment: nil, data_type: :numeric,
+                     dataset_run_id: nil, config_id: nil)
       active_score_client&.create(
         name: name,
         value: value,
         id: id,
+        timestamp: timestamp,
         trace_id: trace_id,
         session_id: session_id,
         observation_id: observation_id,
@@ -401,7 +404,8 @@ module Langfuse
     #
     # @param name [String] Score name (required)
     # @param value [Numeric, Integer, String] Score value (type depends on data_type)
-    # @param id [String, nil] Score ID; use a stable value as an idempotency key
+    # @param id [String, nil] Score ID; reuse with timestamp when retrying
+    # @param timestamp [Time, String, nil] Score time; defaults to now. Reuse with id when retrying.
     # @param trace_id [String, nil] Trace ID to associate with the score
     # @param session_id [String, nil] Session ID to associate with the score
     # @param observation_id [String, nil] Observation ID to associate with the score
@@ -419,12 +423,14 @@ module Langfuse
     # @example Create a score with an idempotency key
     #   client.create_score!(id: "feedback-abc123", name: "quality", value: 0.85, trace_id: "abc123")
     # rubocop:disable Metrics/ParameterLists
-    def create_score!(name:, value:, id: nil, trace_id: nil, session_id: nil, observation_id: nil, comment: nil,
-                      metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)
+    def create_score!(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
+                      comment: nil, metadata: nil, environment: nil, data_type: :numeric,
+                      dataset_run_id: nil, config_id: nil)
       active_score_client&.create!(
         name: name,
         value: value,
         id: id,
+        timestamp: timestamp,
         trace_id: trace_id,
         session_id: session_id,
         observation_id: observation_id,

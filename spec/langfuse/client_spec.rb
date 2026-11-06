@@ -1579,8 +1579,9 @@ RSpec.describe Langfuse::Client do
     let(:client) { described_class.new(valid_config) }
 
     before do
-      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
-        .to_return(status: 200, body: "", headers: {})
+      stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+        .to_return(status: 202, body: { message: "Accepted" }.to_json,
+                   headers: { "Content-Type" => "application/json" })
     end
 
     it "delegates to score_client" do
@@ -1589,6 +1590,7 @@ RSpec.describe Langfuse::Client do
         name: "quality",
         value: 0.85,
         id: nil,
+        timestamp: nil,
         trace_id: "abc123",
         session_id: nil,
         observation_id: nil,
@@ -1638,7 +1640,7 @@ RSpec.describe Langfuse::Client do
       expect(score_client).to receive(:create).with(
         name: "quality",
         value: 0.85,
-        id: "my-score",
+        id: "my-score", timestamp: nil,
         trace_id: "abc123",
         session_id: "ghi789",
         observation_id: "def456",
@@ -1653,7 +1655,7 @@ RSpec.describe Langfuse::Client do
       client.create_score(
         name: "quality",
         value: 0.85,
-        id: "my-score",
+        id: "my-score", timestamp: nil,
         trace_id: "abc123",
         session_id: "ghi789",
         observation_id: "def456",
@@ -1671,7 +1673,7 @@ RSpec.describe Langfuse::Client do
       expect(score_client).to receive(:create).with(
         name: "quality",
         value: 0.85,
-        id: "my-score",
+        id: "my-score", timestamp: nil,
         trace_id: nil,
         session_id: "ghi789",
         observation_id: nil,
@@ -1686,7 +1688,7 @@ RSpec.describe Langfuse::Client do
       client.create_score(
         name: "quality",
         value: 0.85,
-        id: "my-score",
+        id: "my-score", timestamp: nil,
         session_id: "ghi789",
         comment: "High quality",
         metadata: { source: "manual" },
@@ -1695,15 +1697,16 @@ RSpec.describe Langfuse::Client do
       )
     end
 
-    it "sends the configured environment through the ingestion API" do
+    it "sends the configured environment through the Scores API" do
       valid_config.environment = "staging"
       configured_client = described_class.new(valid_config)
-      request = stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
+      request = stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
       request.with do |incoming_request|
         body = JSON.parse(incoming_request.body)
-        body.dig("batch", 0, "body", "environment") == "staging"
+        body.dig(0, "environment") == "staging"
       end
-      request.to_return(status: 200, body: "", headers: {})
+      request.to_return(status: 202, body: { message: "Accepted" }.to_json,
+                        headers: { "Content-Type" => "application/json" })
 
       configured_client.create_score(name: "quality", value: 0.85, session_id: "session-123")
       configured_client.flush_scores
@@ -1723,6 +1726,7 @@ RSpec.describe Langfuse::Client do
         name: "quality",
         value: 0.85,
         id: nil,
+        timestamp: nil,
         trace_id: "abc123",
         session_id: nil,
         observation_id: nil,
@@ -1739,22 +1743,22 @@ RSpec.describe Langfuse::Client do
 
     it "creates a correction score through the direct Scores API" do
       payload = {
-        id: "score-123",
+        id: "score-123", timestamp: "2026-11-06T12:00:00.000Z",
         name: "output",
         value: "Synthetic corrected output",
         dataType: "CORRECTION",
         traceId: "abcdef1234567890abcdef1234567890"
       }
       stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
-        .with(body: payload.to_json)
+        .with(body: [payload].to_json)
         .to_return(
-          status: 200,
-          body: { id: "score-123" }.to_json,
+          status: 202,
+          body: { message: "Accepted" }.to_json,
           headers: { "Content-Type" => "application/json" }
         )
 
       result = client.create_score!(
-        id: "score-123",
+        id: "score-123", timestamp: "2026-11-06T12:00:00.000Z",
         name: "output",
         value: "Synthetic corrected output",
         trace_id: "abcdef1234567890abcdef1234567890",
@@ -1768,10 +1772,10 @@ RSpec.describe Langfuse::Client do
       valid_config.environment = "staging"
       configured_client = described_class.new(valid_config)
       stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
-        .with(body: hash_including(environment: "staging"))
+        .with { |request| JSON.parse(request.body).first.fetch("environment") == "staging" }
         .to_return(
-          status: 200,
-          body: { id: "score-123" }.to_json,
+          status: 202,
+          body: { message: "Accepted" }.to_json,
           headers: { "Content-Type" => "application/json" }
         )
 
@@ -1798,8 +1802,9 @@ RSpec.describe Langfuse::Client do
     let(:span) { tracer.start_span("test-span") }
 
     before do
-      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
-        .to_return(status: 200, body: "", headers: {})
+      stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+        .to_return(status: 202, body: { message: "Accepted" }.to_json,
+                   headers: { "Content-Type" => "application/json" })
     end
 
     it "delegates to score_client" do
@@ -1826,8 +1831,9 @@ RSpec.describe Langfuse::Client do
     let(:span) { tracer.start_span("test-span") }
 
     before do
-      stub_request(:post, "https://cloud.langfuse.com/api/public/ingestion")
-        .to_return(status: 200, body: "", headers: {})
+      stub_request(:post, "https://cloud.langfuse.com/api/public/scores")
+        .to_return(status: 202, body: { message: "Accepted" }.to_json,
+                   headers: { "Content-Type" => "application/json" })
     end
 
     it "delegates to score_client" do
@@ -2637,8 +2643,8 @@ RSpec.describe Langfuse::Client do
         stub_request(:post, "#{base_url}/api/public/dataset-run-items")
           .to_return(status: 200, body: "{}",
                      headers: { "Content-Type" => "application/json" })
-        stub_request(:post, "#{base_url}/api/public/ingestion")
-          .to_return(status: 200, body: '{"successes":[],"errors":[]}',
+        stub_request(:post, "#{base_url}/api/public/scores")
+          .to_return(status: 202, body: '{"message":"Accepted"}',
                      headers: { "Content-Type" => "application/json" })
       end
 

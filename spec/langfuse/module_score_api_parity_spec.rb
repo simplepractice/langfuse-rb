@@ -11,7 +11,7 @@ RSpec.describe "Langfuse module score API parity" do
       expect(mock_client).to receive(:create_score).with(
         name: "quality",
         value: 0.92,
-        id: "score-001",
+        id: "score-001", timestamp: "2026-11-06T12:00:00.000Z",
         trace_id: "trace-123",
         session_id: "session-789",
         observation_id: "observation-456",
@@ -26,7 +26,7 @@ RSpec.describe "Langfuse module score API parity" do
       Langfuse.create_score(
         name: "quality",
         value: 0.92,
-        id: "score-001",
+        id: "score-001", timestamp: "2026-11-06T12:00:00.000Z",
         trace_id: "trace-123",
         session_id: "session-789",
         observation_id: "observation-456",
@@ -47,7 +47,8 @@ RSpec.describe "Langfuse module score API parity" do
       end
 
       expect(keyword_names).to eq(
-        %i[id trace_id session_id observation_id comment metadata environment data_type dataset_run_id config_id]
+        %i[id timestamp trace_id session_id observation_id comment metadata environment data_type dataset_run_id
+           config_id]
       )
     end
 

@@ -10,6 +10,8 @@
 
 > [!IMPORTANT]
 > The SDK requires Ruby `>= 3.2.0`.
+> Score delivery requires Langfuse Cloud or self-hosted Langfuse `>= 4.59.0`.
+> See the [backend compatibility policy](docs/SCORING.md#backend-compatibility) before upgrading.
 
 ```ruby
 gem "langfuse-rb"

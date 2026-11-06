@@ -21,14 +21,30 @@ The SDK provides two score creation contracts:
 
 | Method | Delivery | Return value | Best for |
 | --- | --- | --- | --- |
-| `create_score` | Asynchronous ingestion queue | `nil` | Inline telemetry and high-volume evaluation |
+| `create_score` | Asynchronous Scores API queue | `nil` | Inline telemetry and high-volume evaluation |
 | `create_score!` | Synchronous Scores API request | Created score ID | User feedback, durable verdicts, and workflows that must observe API failure |
 
-`create_score` confirms that the SDK accepted the score into its bounded queue.
-It does not confirm backend storage.
+`create_score` queues the score when capacity is available; its return value
+does not confirm delivery or backend storage.
 `create_score!` confirms that Langfuse accepted the HTTP request.
-For retryable synchronous work, use a stable `id`.
-After an uncertain network failure, use the same complete payload for the retry.
+For retries across calls, reuse both `id` and `timestamp`, along with the other
+score attributes. Otherwise, the SDK generates an ID and timestamp before sending.
+Automatic transport retries preserve both values. Acceptance does not guarantee
+immediate read visibility.
+
+```ruby
+feedback = { id: "feedback-123", timestamp: Time.now, name: "helpful", value: 1, trace_id: "trace-123" }
+Langfuse.client.create_score!(**feedback) # Reuse feedback if this call must be retried.
+```
+
+### Backend Compatibility
+
+Score delivery requires Langfuse Cloud or self-hosted Langfuse **v4.59.0 or later**,
+matching the [upstream batch Scores API contract](https://langfuse.com/docs/observability/sdk/upgrade-path/js-v5-to-v6#minimum-versions).
+Both delivery modes send arrays to `POST /api/public/scores`.
+There is no fallback to legacy ingestion or single-object score requests.
+Upgrade older backends before upgrading this SDK; otherwise, pin `langfuse-rb`
+to `0.12.4` until the backend is ready.
 
 Both methods use the same score validation and environment order.
 An explicit score `environment` has first priority.
@@ -444,10 +460,14 @@ end
 The asynchronous queue has a fixed capacity.
 If the queue is full, the SDK logs an error and drops the new score.
 The call does not wait for capacity.
-The SDK keeps each multi-score JSON payload below 2.5 MB.
+Each request contains at most 100 scores and 1,000,000 JSON bytes, even if
+`batch_size` is larger. A single oversized asynchronous score is logged and dropped.
 Retryable failures keep the batch at the front of the queue.
-The SDK logs and discards permanent batch failures.
-Thus, the SDK can send later valid scores.
+Permanent HTTP failures are logged and discarded so later scores can proceed.
+Authentication failures retain the queue. HTTP 207 responses report accepted and
+rejected counts; rejected scores failed validation. The SDK logs those rejections
+and removes the batch without resending accepted scores. `create_score!` raises
+`Langfuse::ApiError` if its score is rejected.
 Use `create_score!` when the caller needs synchronous delivery and an API error result.
 
 **Manual flush:**
