@@ -96,11 +96,12 @@ provider reference after a reset; the previous provider has been shut down.
 Langfuse's provider. Combine it with `Langfuse.default_export_span?(span)` to retain
 the default allowlist. Keep the callback fast and free of network calls.
 
-`mask` transforms Langfuse-owned input, output, and metadata before serialization.
-It does not mask arbitrary OpenTelemetry attributes. `mask_otel_spans` receives an
-immutable export-batch snapshot and returns attribute patches for the Langfuse
-export only. Other exporters receive their original spans. See [Masking](TRACING.md#masking)
-for examples, result types, and failure behavior.
+`mask` transforms input, output, and metadata passed when creating or updating
+observations and traces. It does not mask metadata passed through `propagate_attributes`
+or arbitrary OpenTelemetry attributes. `mask_otel_spans` receives an immutable
+export-batch snapshot and returns attribute patches for the Langfuse export only.
+Other exporters receive their original spans. See [Masking](TRACING.md#masking) for
+examples, execution constraints, result types, and failure behavior.
 
 ### Custom Exporters
 

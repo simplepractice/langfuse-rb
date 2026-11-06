@@ -153,7 +153,8 @@ Their `is_*` compatibility aliases remain available.
 
 ## Masking
 
-`mask` transforms Langfuse-created input, output, and metadata before serialization:
+`mask` transforms input, output, and metadata passed when creating or updating
+observations and traces, before serialization:
 
 ```ruby
 Langfuse.configure do |config|
@@ -163,7 +164,9 @@ end
 
 The callable receives each non-nil field and returns its replacement. If it raises,
 the field becomes `"<fully masked due to failed mask function>"` and a warning is
-logged. This hook does not mask score payloads or arbitrary third-party span attributes.
+logged. It does not mask metadata passed through `propagate_attributes`, score
+payloads, or arbitrary third-party span attributes. Redact propagated metadata
+before passing it, or use `mask_otel_spans` to mask its exported attributes.
 
 ### Export-Stage Masking
 
@@ -186,11 +189,15 @@ Langfuse.configure do |config|
 end
 ```
 
-The callback runs after filtering and before export. `params.spans` is a frozen hash
-from `OtelSpanIdentifier` to read-only `OtelSpanData`. Snapshots expose IDs, name,
-instrumentation scope, span attributes, and resource attributes. Reuse the supplied
-identifiers as patch keys. Only span attributes can be changed; events, names,
-resources, and IDs cannot be patched.
+The callback runs synchronously after filtering and before export, possibly on a
+background export thread. Keep it fast and thread-safe; do not rely on request
+context or the current span. Each batch may contain only part of a trace or
+observation tree.
+
+`params.spans` is a frozen hash from `OtelSpanIdentifier` to read-only `OtelSpanData`.
+Snapshots expose IDs, name, instrumentation scope, span attributes, and resource
+attributes. Reuse the supplied identifiers as patch keys. Only span attributes can
+be changed; events, names, resources, and IDs cannot be patched.
 
 Return `nil` to leave the batch unchanged, or `MaskOtelSpansResult` containing sparse
 `OtelSpanPatch` values. Missing or nil patches leave a span unchanged. Deletes run
