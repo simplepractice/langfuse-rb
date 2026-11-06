@@ -152,8 +152,9 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] if the API request fails
     #
-    # @example Create a score with an idempotency key
-    #   score_client.create!(id: "feedback-abc123", name: "quality", value: 0.85, trace_id: "abc123")
+    # @example Reuse score identity when retrying
+    #   feedback = { id: "feedback-abc123", timestamp: Time.now, name: "quality", value: 0.85, trace_id: "abc123" }
+    #   score_client.create!(**feedback) # Reuse feedback when retrying.
     # rubocop:disable Metrics/ParameterLists
     def create!(name:, value:, id: nil, timestamp: nil, trace_id: nil, session_id: nil, observation_id: nil,
                 comment: nil, metadata: nil, environment: nil, data_type: :numeric, dataset_run_id: nil, config_id: nil)

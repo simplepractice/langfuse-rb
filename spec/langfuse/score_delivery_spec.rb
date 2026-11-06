@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "timeout"
+
 RSpec.describe "Score delivery through the client and HTTP transport" do
   subject(:client) { Langfuse.client }
 
@@ -153,16 +155,19 @@ RSpec.describe "Score delivery through the client and HTTP transport" do
     end
     queue_score("first")
     worker = Thread.new { client.flush_scores }
-    started.pop
-    queue_score("second")
-    queue_score("overflow")
-    release << true
-    worker.join
+    Timeout.timeout(5) do
+      started.pop
+      queue_score("second")
+      queue_score("overflow")
+      release << true
+      worker.join
+    end
 
     expect(batches).to eq([%w[first], %w[second]])
     expect(logger).to have_received(:error).with(/queue is full/)
   ensure
     release&.push(true)
-    worker&.join
+    worker&.kill
+    worker&.join(1)
   end
 end
