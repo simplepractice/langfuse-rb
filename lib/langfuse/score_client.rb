@@ -317,7 +317,7 @@ module Langfuse
 
       @queue.first([config.batch_size, MAX_BATCH_SIZE].min).each do |score|
         additional_bytes = JSON.generate(score).bytesize + (batch.empty? ? 0 : 1)
-        break if batch.any? && payload_bytes + additional_bytes > MAX_BATCH_PAYLOAD_BYTES
+        break if payload_bytes + additional_bytes > MAX_BATCH_PAYLOAD_BYTES
 
         batch << score
         payload_bytes += additional_bytes
@@ -439,35 +439,26 @@ module Langfuse
     # Send a batch of scores to the API
     #
     # @param scores [Array<Hash>] Array of score bodies
-    # @return [Symbol] :delivered, :discarded, or :retry
+    # @return [Symbol] :complete or :retry
     def send_batch(scores)
       response = api_client.send_score_batch(scores)
       if response.fetch("rejected", 0).positive?
         logger.error("Langfuse accepted #{response['accepted']} and rejected #{response['rejected']} scores: " \
                      "#{response.fetch('errors').map { |error| error.fetch('message') }.join('; ')}")
       end
-      :delivered
+      :complete
     rescue BatchDeliveryError => e
       return retry_batch(e) if e.retryable?
 
-      discard_batch(scores, e)
-    rescue UnauthorizedError => e
-      retry_batch(e)
+      logger.error("Langfuse dropped #{scores.length} score event(s) after a permanent batch failure: #{e.message}")
+      :complete
     rescue StandardError => e
-      logger.error("Langfuse score batch send failed: #{e.message}")
-      :retry
+      retry_batch(e)
     end
 
     def retry_batch(error)
       logger.error("Langfuse score batch send failed and will retry: #{error.message}")
       :retry
-    end
-
-    def discard_batch(events, error)
-      logger.error(
-        "Langfuse dropped #{events.length} score event(s) after a permanent batch failure: #{error.message}"
-      )
-      :discarded
     end
 
     # Start the background flush timer thread
