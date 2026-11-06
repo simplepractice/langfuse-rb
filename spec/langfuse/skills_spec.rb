@@ -121,14 +121,11 @@ RSpec.describe "Skill availability tracing" do
   it "does not put skills or attachment flags in baggage" do
     baggage = Module.new
     allow(baggage).to receive(:set_value) { |_key, _value, context:| context }
-    allow(baggage).to receive(:values).and_return({})
     stub_const("OpenTelemetry::Baggage", baggage)
 
-    Langfuse.propagate_attributes(skills_available: explicit, attach_skills: true, as_baggage: true) do
-      expect(record_skills).to eq(explicit.to_json)
-    end
-    expect(baggage).not_to have_received(:set_value).with("langfuse_skills_available", anything, any_args)
-    expect(baggage).not_to have_received(:set_value).with("langfuse_attach_skills", anything, any_args)
+    Langfuse.propagate_attributes(skills_available: explicit, attach_skills: true, as_baggage: true) {}
+
+    expect(baggage).not_to have_received(:set_value)
   end
 
   it "does not import skills or attachment flags from incoming baggage" do

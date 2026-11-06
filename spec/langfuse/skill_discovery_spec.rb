@@ -24,8 +24,8 @@ RSpec.describe "Langfuse.discover_skills" do
     directory
   end
 
-  def write_lock(directory, skills, lock_version: 1)
-    File.write(File.join(directory, "langfuse-skills.lock"), { lockVersion: lock_version, skills: skills }.to_json)
+  def write_lock(directory, skills)
+    File.write(File.join(directory, "langfuse-skills.lock"), { lockVersion: 1, skills: skills }.to_json)
   end
 
   it "finds sorted immediate directories without reading contents or making network calls" do
