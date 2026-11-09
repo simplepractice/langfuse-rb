@@ -350,6 +350,7 @@ module Langfuse
       normalized_value = ScoreValue.normalize(value, data_type)
       data_type_str = Types::SCORE_DATA_TYPES[data_type] || raise(ArgumentError, "Invalid data_type: #{data_type}")
       validate_correction_subject!(data_type:, trace_id:, session_id:, dataset_run_id:, config_id:)
+      id = nil if id == ""
 
       snapshot_score_body(
         id: id || SecureRandom.uuid,

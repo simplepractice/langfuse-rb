@@ -89,21 +89,22 @@ RSpec.describe "Score delivery through the client and HTTP transport" do
     expect(bodies[0]).to eq(bodies[1])
   end
 
-  it "preserves IDs, timestamps and queue order after transient retries are exhausted" do
+  it "replaces an empty ID once and preserves score identity and queue order across retries" do
     bodies = []
     stub_request(:post, url).to_return do |request|
       bodies << JSON.parse(request.body)
       bodies.length <= 3 ? { status: 503 } : accepted
     end
-    queue_score("first")
+    client.create_score(name: "first", value: 1, id: "", timestamp: timestamp, session_id: "test-session")
     client.flush_scores
     expect(bodies.length).to eq(3)
     queue_score("later")
     client.flush_scores
 
+    expect(bodies.first.first.fetch("id")).to match(/\A[0-9a-f-]{36}\z/)
     expect(bodies.first(3).uniq.size).to eq(1)
     expect(bodies.last.first).to eq(bodies.first.first)
-    expect(bodies.last.map { |score| score.fetch("id") }).to eq(%w[first later])
+    expect(bodies.last.map { |score| score.fetch("name") }).to eq(%w[first later])
     expect(bodies.last.map { |score| score.fetch("timestamp") }.uniq).to eq([timestamp.iso8601(3)])
   end
 

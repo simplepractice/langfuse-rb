@@ -1295,18 +1295,20 @@ RSpec.describe Langfuse::ApiClient do
       expect(api_client.create_score(payload: payload)).to eq("score-123")
     end
 
-    it "assigns an ID and timestamp without changing the caller's payload" do
-      score = { name: "quality", value: 1 }.freeze
-      sent = nil
-      stub_request(:post, "#{base_url}/api/public/scores").with do |request|
-        sent = JSON.parse(request.body).first
-      end.to_return(status: 202, body: { message: "Accepted" }.to_json,
-                    headers: { "Content-Type" => "application/json" })
+    [nil, ""].each do |id|
+      it "assigns an ID and timestamp for id: #{id.inspect} without changing the caller's payload" do
+        score = { id: id, name: "quality", value: 1 }.freeze
+        sent = nil
+        stub_request(:post, "#{base_url}/api/public/scores").with do |request|
+          sent = JSON.parse(request.body).first
+        end.to_return(status: 202, body: { message: "Accepted" }.to_json,
+                      headers: { "Content-Type" => "application/json" })
 
-      expect(api_client.create_score(payload: score)).to eq(sent.fetch("id"))
-      expect(sent.fetch("id")).to match(/\A[0-9a-f-]{36}\z/)
-      expect(Time.iso8601(sent.fetch("timestamp"))).to be_within(2).of(Time.now)
-      expect(score.keys).to eq(%i[name value])
+        expect(api_client.create_score(payload: score)).to eq(sent.fetch("id"))
+        expect(sent.fetch("id")).to match(/\A[0-9a-f-]{36}\z/)
+        expect(Time.iso8601(sent.fetch("timestamp"))).to be_within(2).of(Time.now)
+        expect(score.fetch(:id)).to eq(id)
+      end
     end
 
     it "raises when the synchronous score is rejected" do

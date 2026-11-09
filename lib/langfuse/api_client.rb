@@ -336,7 +336,9 @@ module Langfuse
     # @raise [UnauthorizedError] if authentication fails
     # @raise [ApiError] if the API request fails or the score is not accepted
     def create_score(payload:)
-      score = payload.merge(id: payload[:id] || SecureRandom.uuid,
+      id = payload[:id]
+      id = nil if id == ""
+      score = payload.merge(id: id || SecureRandom.uuid,
                             timestamp: payload[:timestamp] || Time.now.utc.iso8601(3))
       response = send_score_batch([score])
       return score.fetch(:id) if response.fetch("rejected", 0).zero?

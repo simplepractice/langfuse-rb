@@ -21,9 +21,9 @@ feedback = {
 Langfuse.create_score!(**feedback) # Reuse this payload if the call must be retried.
 ```
 
-Otherwise, the SDK creates an ID and timestamp before sending. Automatic transport
-retries preserve both. Synchronous delivery bypasses the asynchronous queue and
-trace sampling.
+The SDK replaces an omitted or empty ID with a UUID and assigns a timestamp when
+absent. Automatic transport retries preserve both. Synchronous delivery bypasses
+the asynchronous queue and trace sampling.
 
 ### Backend Compatibility
 

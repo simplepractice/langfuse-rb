@@ -193,7 +193,8 @@ client.flush_scores
 ```
 
 All four score-creation methods and `flush_scores` also exist on `Langfuse`.
-`timestamp` accepts a Time or String and defaults to now; `id` defaults to a UUID.
+`timestamp` accepts a Time or String and defaults to now. An omitted, nil, or empty
+`id` generates a UUID.
 `create_score` and the active-context helpers return `nil`. With telemetry enabled,
 the active-context helpers raise `ArgumentError` if no valid span is active. `create_score!` returns
 the accepted score ID or nil when telemetry is disabled. Invalid values raise
