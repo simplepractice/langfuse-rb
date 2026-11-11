@@ -88,8 +88,9 @@ flattened paths. Concurrent SDK updates to one span preserve independent keys.
 
 Propagated metadata accepts JSON-serializable values in both modes. Values are
 copied and frozen when the scope is entered, so later caller mutation does not
-change the propagated context. Nested scopes merge top-level keys and restore
-the outer context for subsequent children.
+change the propagated context. Nested scopes merge top-level keys in JSON mode
+and flattened paths in legacy mode. Both restore the outer context for
+subsequent children.
 
 In JSON mode, the 200-character limit applies to each encoded value, including
 quotes and escapes. A plain string can contain at most 198 characters. Legacy
