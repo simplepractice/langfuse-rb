@@ -75,8 +75,11 @@ values. Exiting restores the parent context but does not undo updates already ma
 to an active span.
 
 Supported fields include `trace_name`, `user_id`, `session_id`, `version`, `release`,
-`environment`, `metadata`, and `tags`. Scalar strings, metadata values, and tags
-must be at most 200 characters. Propagated metadata values must be strings.
+`environment`, `metadata`, and `tags`. Scalar strings and tags must be at most
+200 characters. Propagated metadata accepts JSON values, with a 200-character
+encoded limit (legacy strings retain their raw 200-character limit). See
+[metadata encoding and compatibility](METADATA.md) for structured encoding,
+baggage, stored values, filters, and export-hook migration.
 Environment must be 1–40 lowercase letters, digits, hyphens, or underscores and
 must not start with `langfuse`. Invalid values are dropped with a warning.
 

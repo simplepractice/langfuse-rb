@@ -62,6 +62,7 @@ See [Caching](CACHING.md) for refresh, invalidation, and backend behavior.
 | `skills` | `nil` | Catalog such as `{ available: [{ name: "search", version: 1 }] }`; attached only inside opted-in scopes. See [Skill Availability](TRACING.md#skill-availability). |
 | `should_export_span` | `nil` | Callable receiving an ended span; replaces the default export filter. |
 | `mask` | `nil` | Callable receiving `data:` for Langfuse-created input, output, and metadata. |
+| `metadata_encoding` | `:legacy` | `:json` opts into whole-object metadata encoding. See [metadata compatibility](METADATA.md) before changing hooks or filters. |
 | `mask_otel_spans` | `nil` | Callable receiving `params:` for export-stage attribute masking, including third-party spans. |
 | `span_exporter` | `nil` | Custom OpenTelemetry exporter; otherwise Langfuse uses OTLP. |
 | `metrics_reporter` | `nil` | Custom OpenTelemetry metrics reporter; otherwise metrics are discarded. |

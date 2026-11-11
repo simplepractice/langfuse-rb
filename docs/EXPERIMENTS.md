@@ -95,6 +95,10 @@ root observation ID, experiment and item metadata, and `sdk-experiment` environm
 Expected output and run description stay on the root. Item scores target both the
 trace and item root observation.
 
+Experiment and item metadata use the configured [metadata encoding](METADATA.md).
+The default preserves legacy attributes; `:json` uses the same object format as
+observation and trace metadata, with the same creation and export masking hooks.
+
 A dataset-backed run uses the first resolved server run ID. If its first link fails,
 it keeps a generated fallback experiment ID; `dataset_run_id` and `dataset_run_url`
 remain `nil`. Local-data runs use one generated experiment ID and input-derived item

@@ -113,7 +113,7 @@ module Langfuse
         TRACE_TAGS => normalize_tags(get_value.call(:tags)),
         ENVIRONMENT => get_value.call(:environment),
         TRACE_PUBLIC => get_value.call(:public),
-        **flatten_metadata(metadata, TRACE_METADATA)
+        **metadata_attributes(metadata, TRACE_METADATA)
       }
 
       # Remove nil values
@@ -196,6 +196,50 @@ module Langfuse
       end
       filtered.empty? ? nil : filtered
     end
+
+    # Encode metadata without relying on SDK-specific per-key JSON decoding.
+    # Whole JSON objects are decoded by Langfuse independently of the Ruby SDK version.
+    #
+    # @param metadata [Object, nil] Metadata after creation-time masking
+    # @param prefix [String] Metadata attribute name
+    # @return [Hash] OpenTelemetry attributes
+    # @raise [StandardError] if legacy metadata cannot be traversed
+    # @api private
+    def self.metadata_attributes(metadata, prefix)
+      return flatten_metadata(metadata, prefix) unless Langfuse.configuration.metadata_encoding == :json
+      return {} if metadata.nil?
+
+      serialized = serialize(metadata)
+      serialized ? { prefix => serialized } : {}
+    end
+
+    # Preserve per-key update semantics when metadata occupies one JSON attribute.
+    # @param span [OpenTelemetry::Trace::Span] Span receiving the attributes
+    # @param attributes [Hash] Encoded attributes to set
+    # @return [Hash] the supplied attributes
+    # @raise [StandardError] if the span rejects an attribute
+    # @api private
+    def self.apply_to_span(span, attributes)
+      attributes.each do |key, value|
+        if [TRACE_METADATA, OBSERVATION_METADATA].include?(key) &&
+           Langfuse.configuration.metadata_encoding == :json
+          value = merge_metadata_objects(span.attributes&.[](key), value)
+        end
+        span.set_attribute(key, value)
+      end
+    end
+
+    # @api private
+    def self.merge_metadata_objects(existing, replacement)
+      return replacement unless existing
+
+      previous = JSON.parse(existing)
+      updated = JSON.parse(replacement)
+      previous.is_a?(Hash) && updated.is_a?(Hash) ? JSON.generate(previous.merge(updated)) : replacement
+    rescue JSON::ParserError, TypeError
+      replacement
+    end
+    private_class_method :merge_metadata_objects
 
     # Flattens and serializes metadata into OpenTelemetry attribute format
     #
@@ -303,7 +347,7 @@ module Langfuse
         OBSERVATION_COMPLETION_START_TIME => serialize(get_value.call(:completion_start_time)),
         OBSERVATION_MODEL_PARAMETERS => serialize(get_value.call(:model_parameters)),
         ENVIRONMENT => get_value.call(:environment),
-        **flatten_metadata(metadata, OBSERVATION_METADATA)
+        **metadata_attributes(metadata, OBSERVATION_METADATA)
       }
     end
 

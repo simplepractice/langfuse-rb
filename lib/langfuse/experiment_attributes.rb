@@ -55,7 +55,7 @@ module Langfuse
     end
 
     def self.masked_metadata(metadata, prefix, mask)
-      OtelAttributes.flatten_metadata(Masking.apply(metadata, mask: mask), prefix)
+      OtelAttributes.metadata_attributes(Masking.apply(metadata, mask: mask), prefix)
     end
     private_class_method :masked_metadata
 
