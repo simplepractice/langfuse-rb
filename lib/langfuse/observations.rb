@@ -119,7 +119,7 @@ module Langfuse
       return self unless @otel_span.recording?
 
       otel_attrs = OtelAttributes.create_trace_attributes(attrs.to_h, mask: Langfuse.configuration.mask)
-      otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
+      MetadataEncoding.apply_to_span(@otel_span, otel_attrs)
       self
     end
 
@@ -229,7 +229,7 @@ module Langfuse
 
       # Use @type instance variable set during initialization
       otel_attrs = OtelAttributes.create_observation_attributes(type, attrs_hash, mask: Langfuse.configuration.mask)
-      otel_attrs.each { |key, value| @otel_span.set_attribute(key, value) }
+      MetadataEncoding.apply_to_span(@otel_span, otel_attrs)
     end
 
     # Converts a prompt object to hash format for OtelAttributes.

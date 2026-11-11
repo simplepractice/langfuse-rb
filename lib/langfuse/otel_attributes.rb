@@ -113,7 +113,7 @@ module Langfuse
         TRACE_TAGS => normalize_tags(get_value.call(:tags)),
         ENVIRONMENT => get_value.call(:environment),
         TRACE_PUBLIC => get_value.call(:public),
-        **flatten_metadata(metadata, TRACE_METADATA)
+        **MetadataEncoding.attributes(metadata, TRACE_METADATA)
       }
 
       # Remove nil values
@@ -303,7 +303,7 @@ module Langfuse
         OBSERVATION_COMPLETION_START_TIME => serialize(get_value.call(:completion_start_time)),
         OBSERVATION_MODEL_PARAMETERS => serialize(get_value.call(:model_parameters)),
         ENVIRONMENT => get_value.call(:environment),
-        **flatten_metadata(metadata, OBSERVATION_METADATA)
+        **MetadataEncoding.attributes(metadata, OBSERVATION_METADATA)
       }
     end
 

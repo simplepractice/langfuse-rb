@@ -74,6 +74,7 @@ require_relative "langfuse/otel_setup"
 require_relative "langfuse/masking"
 require_relative "langfuse/masking_exporter"
 require_relative "langfuse/otel_attributes"
+require_relative "langfuse/metadata_encoding"
 require_relative "langfuse/experiment_attributes"
 require_relative "langfuse/skill_discovery"
 require_relative "langfuse/skills"
@@ -229,7 +230,7 @@ module Langfuse
     #
     # @param user_id [String, nil] User identifier (≤200 characters)
     # @param session_id [String, nil] Session identifier (≤200 characters)
-    # @param metadata [Hash<String, String>, nil] Additional metadata (all values ≤200 characters)
+    # @param metadata [Hash<String, Object>, nil] JSON-valued metadata (encoded values ≤200 characters)
     # @param version [String, nil] Version identifier (≤200 characters)
     # @param tags [Array<String>, nil] List of tags (each ≤200 characters)
     # @param trace_name [String, nil] Trace name (≤200 characters)

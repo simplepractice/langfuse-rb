@@ -61,7 +61,7 @@ module Langfuse
     #
     # @param user_id [String, nil] User identifier (≤200 characters)
     # @param session_id [String, nil] Session identifier (≤200 characters)
-    # @param metadata [Hash<String, String>, nil] Additional metadata (all values ≤200 characters)
+    # @param metadata [Hash<String, Object>, nil] JSON-valued metadata (encoded values ≤200 characters)
     # @param version [String, nil] Version identifier (≤200 characters)
     # @param tags [Array<String>, nil] List of tags (each ≤200 characters)
     # @param trace_name [String, nil] Trace name (≤200 characters)
@@ -142,25 +142,19 @@ module Langfuse
     # @return [Object, nil] Validated value or nil if invalid
     #
     # @api private
-    # rubocop:disable Metrics/CyclomaticComplexity
     def self._validate_attribute_value(key, value)
       case key
       when "tags"
         validated_tags = value.filter_map { |tag| _validate_propagated_value(tag, "tag") }
         validated_tags.any? ? validated_tags : nil
       when "metadata"
-        validated_metadata = {}
-        value.each do |k, v|
-          validated_metadata[k.to_s] = v.to_s if _validate_string_value(v, "metadata.#{k}")
-        end
-        validated_metadata.any? ? validated_metadata : nil
+        MetadataEncoding.propagation_values(value)
       when "environment"
         _validate_environment_value(value)
       else
         _validate_propagated_value(value, key)
       end
     end
-    # rubocop:enable Metrics/CyclomaticComplexity
 
     # Get propagated attributes from context for span processor
     #
@@ -185,10 +179,7 @@ module Langfuse
           validated_environment = _validate_environment_value(value)
           propagated_attributes[span_key] = validated_environment if validated_environment
         elsif key == "metadata" && value.is_a?(Hash)
-          value.each do |k, v|
-            metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
-            propagated_attributes[metadata_key] = v.to_s
-          end
+          propagated_attributes.merge!(MetadataEncoding.propagated_attributes(value))
         elsif key == "tags" && value.is_a?(Array)
           propagated_attributes[span_key] = value unless value.empty?
         else
@@ -198,7 +189,7 @@ module Langfuse
       # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
       experiment_attributes = context.value(EXPERIMENT_ATTRIBUTES_CONTEXT_KEY) || {}
-      propagated_attributes.merge(experiment_attributes)
+      MetadataEncoding.consolidate_propagated_attributes(propagated_attributes).merge(experiment_attributes)
     end
 
     # Apply SDK-owned experiment attributes to the current span and future children.
@@ -222,14 +213,14 @@ module Langfuse
     #
     # @param context [OpenTelemetry::Context] Current context
     # @param context_key [OpenTelemetry::Context::Key] Context key for metadata
-    # @param new_metadata [Hash<String, String>] New metadata to merge
+    # @param new_metadata [Hash<String, String>] Encoded metadata values to merge
     # @return [Hash<String, String>] Merged metadata
     #
     # @api private
     def self._merge_metadata(context, context_key, new_metadata)
       existing = context.value(context_key) || {}
       existing = existing.to_h if existing.respond_to?(:to_h)
-      existing.merge(new_metadata)
+      existing.merge(new_metadata).freeze
     end
 
     # Merge tags with existing context value
@@ -276,10 +267,8 @@ module Langfuse
       # Set on current span (if recording)
       if span&.recording?
         if key == "metadata" && merged.is_a?(Hash)
-          merged.each do |k, v|
-            metadata_key = "#{OtelAttributes::TRACE_METADATA}.#{k}"
-            span.set_attribute(metadata_key, v.to_s)
-          end
+          metadata = MetadataEncoding.propagated_attributes(merged)
+          MetadataEncoding.apply_to_span(span, MetadataEncoding.consolidate_propagated_attributes(metadata))
         elsif key == "tags" && merged.is_a?(Array)
           span.set_attribute(span_key, merged) unless merged.empty?
         else
@@ -532,7 +521,7 @@ module Langfuse
       if key == "metadata" && value.is_a?(Hash)
         value.each do |k, v|
           entry_key = "#{baggage_key}_#{k}"
-          context = OpenTelemetry::Baggage.set_value(entry_key, v.to_s, context: context)
+          context = OpenTelemetry::Baggage.set_value(entry_key, v, context: context)
         end
       elsif key == "tags" && value.is_a?(Array)
         context = OpenTelemetry::Baggage.set_value(baggage_key, value.join(","), context: context)

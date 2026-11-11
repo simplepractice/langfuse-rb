@@ -102,6 +102,9 @@ module Langfuse
     #   raw third-party span attributes. See {#mask_otel_spans} for those.
     attr_accessor :mask
 
+    # @return [Symbol] Metadata wire format: :legacy (default) or :json (whole JSON objects).
+    attr_reader :metadata_encoding
+
     # @return [#call, nil] Export-stage masking hook for spans exported to Langfuse.
     #   Receives a +params:+ keyword argument containing {MaskOtelSpansParams}.
     #   Its frozen +spans+ Hash maps {OtelSpanIdentifier} keys to {OtelSpanData}
@@ -318,6 +321,17 @@ module Langfuse
       @sample_rate = coerce_sample_rate(value)
     end
 
+    # Select metadata encoding before creating observations or propagation scopes.
+    #
+    # @param value [Symbol] :legacy for existing dotted attributes or :json for structured metadata
+    # @return [Symbol] the selected encoding
+    # @raise [ConfigurationError] if the encoding is unsupported
+    def metadata_encoding=(value)
+      raise ConfigurationError, "metadata_encoding must be :legacy or :json" unless %i[legacy json].include?(value)
+
+      @metadata_encoding = value
+    end
+
     private
 
     def initialize_client_defaults
@@ -360,6 +374,7 @@ module Langfuse
       self.sample_rate = env_value("LANGFUSE_SAMPLE_RATE") || DEFAULT_SAMPLE_RATE
       @should_export_span = nil
       @mask = nil
+      @metadata_encoding = :legacy
       @mask_otel_spans = nil
       @metrics_reporter = nil
       @span_exporter = nil
