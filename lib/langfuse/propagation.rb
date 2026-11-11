@@ -148,30 +148,12 @@ module Langfuse
         validated_tags = value.filter_map { |tag| _validate_propagated_value(tag, "tag") }
         validated_tags.any? ? validated_tags : nil
       when "metadata"
-        _validate_metadata(value)
+        MetadataEncoding.propagation_values(value)
       when "environment"
         _validate_environment_value(value)
       else
         _validate_propagated_value(value, key)
       end
-    end
-
-    # Snapshot JSON values so caller mutation cannot change another thread's context.
-    # @api private
-    def self._validate_metadata(metadata)
-      metadata.each_with_object({}) do |(key, value), validated|
-        encoded = JSON.generate(value)
-        length_value = if Langfuse.configuration.metadata_encoding == :legacy && value.is_a?(String)
-                         value
-                       else
-                         encoded
-                       end
-        next unless _validate_string_value(length_value, "metadata.#{key}")
-
-        validated[key.to_s.dup.freeze] = JSON.parse(encoded, freeze: true)
-      rescue JSON::GeneratorError, JSON::NestingError, EncodingError
-        Langfuse.configuration.logger.warn("Langfuse: Propagated metadata value is not valid JSON. Dropping value.")
-      end.freeze
     end
 
     # Get propagated attributes from context for span processor
@@ -197,8 +179,7 @@ module Langfuse
           validated_environment = _validate_environment_value(value)
           propagated_attributes[span_key] = validated_environment if validated_environment
         elsif key == "metadata" && value.is_a?(Hash)
-          metadata = _merge_baggage_metadata(propagated_attributes, value)
-          propagated_attributes.merge!(OtelAttributes.metadata_attributes(metadata, OtelAttributes::TRACE_METADATA))
+          propagated_attributes.merge!(MetadataEncoding.propagated_attributes(value))
         elsif key == "tags" && value.is_a?(Array)
           propagated_attributes[span_key] = value unless value.empty?
         else
@@ -208,16 +189,7 @@ module Langfuse
       # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
       experiment_attributes = context.value(EXPERIMENT_ATTRIBUTES_CONTEXT_KEY) || {}
-      propagated_attributes.merge(experiment_attributes)
-    end
-
-    # JSON baggage and local metadata share one attribute; local keys take precedence.
-    # @api private
-    def self._merge_baggage_metadata(attributes, metadata)
-      encoded = attributes[OtelAttributes::TRACE_METADATA]
-      return metadata unless encoded && Langfuse.configuration.metadata_encoding == :json
-
-      JSON.parse(encoded).merge(metadata)
+      MetadataEncoding.consolidate_propagated_attributes(propagated_attributes).merge(experiment_attributes)
     end
 
     # Apply SDK-owned experiment attributes to the current span and future children.
@@ -241,14 +213,14 @@ module Langfuse
     #
     # @param context [OpenTelemetry::Context] Current context
     # @param context_key [OpenTelemetry::Context::Key] Context key for metadata
-    # @param new_metadata [Hash<String, Object>] New metadata to merge
-    # @return [Hash<String, Object>] Merged metadata
+    # @param new_metadata [Hash<String, String>] Encoded metadata values to merge
+    # @return [Hash<String, String>] Merged metadata
     #
     # @api private
     def self._merge_metadata(context, context_key, new_metadata)
       existing = context.value(context_key) || {}
       existing = existing.to_h if existing.respond_to?(:to_h)
-      _merge_baggage_metadata(_extract_baggage_attributes(context), existing).merge(new_metadata).freeze
+      existing.merge(new_metadata).freeze
     end
 
     # Merge tags with existing context value
@@ -295,7 +267,8 @@ module Langfuse
       # Set on current span (if recording)
       if span&.recording?
         if key == "metadata" && merged.is_a?(Hash)
-          OtelAttributes.apply_to_span(span, OtelAttributes.metadata_attributes(merged, OtelAttributes::TRACE_METADATA))
+          metadata = MetadataEncoding.propagated_attributes(merged)
+          MetadataEncoding.apply_to_span(span, MetadataEncoding.consolidate_propagated_attributes(metadata))
         elsif key == "tags" && merged.is_a?(Array)
           span.set_attribute(span_key, merged) unless merged.empty?
         else
@@ -509,31 +482,10 @@ module Langfuse
 
         attributes[span_key] = _parse_baggage_value(span_key, baggage_value)
       end
-      _encode_baggage_metadata(attributes.compact)
+      attributes.compact
     rescue StandardError => e
       Langfuse.configuration.logger.debug("Langfuse: Baggage extraction failed: #{e.message}")
       {}
-    end
-
-    # Baggage values remain per-key for cross-service propagation. Convert to the
-    # Ruby-compatible object attribute only when attaching them to a span.
-    # @api private
-    def self._encode_baggage_metadata(attributes)
-      return attributes unless Langfuse.configuration.metadata_encoding == :json
-
-      prefix = "#{OtelAttributes::TRACE_METADATA}."
-      metadata = {}
-      attributes.keys.grep(/^#{Regexp.escape(prefix)}/).each do |key|
-        value = attributes.delete(key)
-        metadata[key.delete_prefix(prefix)] = begin
-          JSON.parse(value)
-        rescue JSON::ParserError
-          value
-        end
-      end
-      return attributes if metadata.empty?
-
-      attributes.merge(OtelAttributes.metadata_attributes(metadata, OtelAttributes::TRACE_METADATA))
     end
 
     # Parse a baggage value into the appropriate format
@@ -569,7 +521,7 @@ module Langfuse
       if key == "metadata" && value.is_a?(Hash)
         value.each do |k, v|
           entry_key = "#{baggage_key}_#{k}"
-          context = OpenTelemetry::Baggage.set_value(entry_key, _encode_metadata_baggage_value(v), context: context)
+          context = OpenTelemetry::Baggage.set_value(entry_key, v, context: context)
         end
       elsif key == "tags" && value.is_a?(Array)
         context = OpenTelemetry::Baggage.set_value(baggage_key, value.join(","), context: context)
@@ -582,13 +534,6 @@ module Langfuse
       context
     end
     # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
-
-    # @api private
-    def self._encode_metadata_baggage_value(value)
-      return value if Langfuse.configuration.metadata_encoding == :legacy && value.is_a?(String)
-
-      JSON.generate(value)
-    end
   end
 end
 # rubocop:enable Metrics/ModuleLength

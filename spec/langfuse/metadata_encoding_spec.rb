@@ -45,8 +45,8 @@ RSpec.describe "Metadata encoding" do
   it "omits nil metadata and unserializable objects" do
     cyclic = []
     cyclic << cyclic
-    expect(Langfuse::OtelAttributes.metadata_attributes(nil, "metadata")).to eq({})
-    expect(Langfuse::OtelAttributes.metadata_attributes(cyclic, "metadata")).to eq({})
+    expect(Langfuse::MetadataEncoding.attributes(nil, "metadata")).to eq({})
+    expect(Langfuse::MetadataEncoding.attributes(cyclic, "metadata")).to eq({})
   end
 
   it "merges updates by top-level key and replaces nested values, including null" do
@@ -99,6 +99,49 @@ RSpec.describe "Metadata encoding" do
     end
   end
 
+  it "omits empty or fully rejected metadata without changing inherited values" do
+    [{}, { oversized: "a" * 201 }, { invalid: Float::NAN }].each do |values|
+      Langfuse.propagate_attributes(metadata: values, as_baggage: true) do
+        Langfuse.observe("empty") do |span|
+          expect(span.otel_span.attributes).not_to have_key("langfuse.trace.metadata")
+          expect(OpenTelemetry::Baggage.values.keys.grep(/langfuse_metadata/)).to be_empty
+        end
+      end
+      Langfuse.propagate_attributes(metadata: { retained: true }) do
+        Langfuse.propagate_attributes(metadata: values) do
+          Langfuse.observe("inherited") { |span| expect(decoded(span)).to eq("retained" => true) }
+        end
+      end
+    end
+  end
+
+  it "merges concurrent metadata updates without losing independent keys" do
+    read_started = Queue.new
+    release_read = Queue.new
+    Langfuse.observe("root", metadata: { seed: true }) do |span|
+      allow(span.otel_span).to receive(:attributes).and_wrap_original do |read|
+        snapshot = read.call
+        if Thread.current[:hold_metadata_read]
+          Thread.current[:hold_metadata_read] = false
+          read_started << true
+          release_read.pop
+        end
+        snapshot
+      end
+      first = Thread.new do
+        Thread.current[:hold_metadata_read] = true
+        span.update(metadata: { first: true })
+      end
+      read_started.pop
+      second = Thread.new { span.update(metadata: { second: true }) }
+      Thread.pass while second.alive? && second.status != "sleep"
+      release_read << true
+      [first, second].each(&:value)
+      expect(decoded(span, "langfuse.observation.metadata"))
+        .to eq("seed" => true, "first" => true, "second" => true)
+    end
+  end
+
   it "preserves legacy string limits and encodes newly accepted values with the legacy wire format" do
     Langfuse.configuration.metadata_encoding = :legacy
     Langfuse.propagate_attributes(metadata: metadata.merge(long: "a" * 200)) do
@@ -142,10 +185,27 @@ RSpec.describe "Metadata encoding" do
     end
   end
 
-  it "serializes JSON-valued legacy baggage without Ruby inspection strings" do
+  it "uses identical legacy metadata on current, child, and baggage-only receiver spans" do
     Langfuse.configuration.metadata_encoding = :legacy
-    Langfuse.propagate_attributes(metadata: { object: { enabled: false } }, as_baggage: true) do
-      expect(OpenTelemetry::Baggage.values["langfuse_metadata_object"]).to eq('{"enabled":false}')
+    baggage = nil
+    expected = { "langfuse.trace.metadata.object.enabled" => "false" }
+    Langfuse.observe("current") do |span|
+      Langfuse.propagate_attributes(metadata: { object: { enabled: false } }, as_baggage: true) do
+        baggage = OpenTelemetry::Baggage.values
+        expect(baggage["langfuse_metadata_object.enabled"]).to eq("false")
+        expect(span.otel_span.attributes.select { |key, _| key.include?("metadata") }).to eq(expected)
+        Langfuse.observe("child") do |child|
+          expect(child.otel_span.attributes.select { |key, _| key.include?("metadata") }).to eq(expected)
+        end
+      end
+    end
+    remote = baggage.reduce(OpenTelemetry::Context.empty) do |context, (key, value)|
+      OpenTelemetry::Baggage.set_value(key, value, context: context)
+    end
+    OpenTelemetry::Context.with_current(remote) do
+      Langfuse.observe("receiver") do |span|
+        expect(span.otel_span.attributes.select { |key, _| key.include?("metadata") }).to eq(expected)
+      end
     end
   end
 

@@ -55,7 +55,7 @@ module Langfuse
     end
 
     def self.masked_metadata(metadata, prefix, mask)
-      OtelAttributes.metadata_attributes(Masking.apply(metadata, mask: mask), prefix)
+      MetadataEncoding.attributes(Masking.apply(metadata, mask: mask), prefix)
     end
     private_class_method :masked_metadata
 

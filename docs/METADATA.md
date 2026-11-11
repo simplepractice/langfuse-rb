@@ -79,9 +79,10 @@ Review saved filters, null/missing checks, and consumers of raw OpenTelemetry
 attributes before opting in. Top-level metadata should be a hash; the backend
 does not retain primitive top-level metadata.
 
-Updates merge top-level metadata keys. Replacing a nested key replaces its
+In JSON mode, updates merge top-level metadata keys. Replacing a nested key replaces its
 entire value, and a nil value explicitly replaces that key in JSON mode. An
-omitted metadata argument does not change it.
+omitted metadata argument does not change it. Legacy updates continue to merge
+flattened paths. Concurrent SDK updates to one span preserve independent keys.
 
 ## Propagation and baggage
 
@@ -101,7 +102,11 @@ JSON, including strings. The receiving Ruby SDK reconstructs the object metadata
 attribute. Configure the same mode at both ends. Legacy unquoted strings that
 are not valid JSON remain strings, but unquoted `123`, `false`, or `null` are
 ambiguous to a JSON-mode receiver. Coordinate migration with other services.
-Legacy mode preserves string baggage and JSON-serializes newly accepted values.
+Legacy mode uses the same flattened paths and string values for context and
+baggage. For example, `{ tenant: { tier: "pro" } }` becomes the baggage entry
+`langfuse_metadata_tenant.tier=pro`; arrays remain JSON strings. This keeps local
+children and baggage-only receivers consistent. Empty or fully rejected metadata
+does not create attributes or replace an inherited scope.
 
 ## Masking and custom exporters
 
