@@ -94,9 +94,11 @@ subsequent children.
 
 In JSON mode, the 200-character limit applies to each encoded value, including
 quotes and escapes. A plain string can contain at most 198 characters. Legacy
-strings retain their existing 200-character limit; other values use their JSON
-length. Oversized values, circular structures, and non-finite numbers are dropped
-with a warning; valid sibling entries still propagate.
+mode applies the limit after flattening: string leaves can contain 200 characters,
+and arrays use their JSON length. A larger nested object is accepted when its
+individual leaves fit. Oversized encoded values are dropped with a warning.
+Invalid JSON, including circular structures and non-finite numbers, drops the
+containing top-level entry; valid sibling entries still propagate.
 
 With `as_baggage: true`, JSON mode encodes each `langfuse_metadata_<key>` value as
 JSON, including strings. The receiving Ruby SDK reconstructs the object metadata

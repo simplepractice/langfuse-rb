@@ -178,6 +178,23 @@ RSpec.describe "Metadata encoding" do
     end
   end
 
+  it "limits legacy metadata after flattening while retaining valid sibling leaves" do
+    Langfuse.configuration.metadata_encoding = :legacy
+    values = { nested: { string: "a" * 200, oversized: "b" * 201,
+                         array: ["c" * 196], oversized_array: ["d" * 197] } }
+    expected = { "langfuse.trace.metadata.nested.string" => "a" * 200,
+                 "langfuse.trace.metadata.nested.array" => JSON.generate(["c" * 196]) }
+
+    Langfuse.propagate_attributes(metadata: values, as_baggage: true) do
+      Langfuse.observe("root") do |span|
+        expect(span.otel_span.attributes.select { |key, _| key.include?("metadata") }).to eq(expected)
+        baggage = OpenTelemetry::Baggage.values.select { |key, _| key.start_with?("langfuse_metadata_") }
+        expect(baggage).to eq("langfuse_metadata_nested.string" => "a" * 200,
+                              "langfuse_metadata_nested.array" => JSON.generate(["c" * 196]))
+      end
+    end
+  end
+
   it "accepts unquoted legacy baggage strings when JSON parsing fails" do
     context = OpenTelemetry::Baggage.set_value("langfuse_metadata_region", "us-east")
     OpenTelemetry::Context.with_current(context) do

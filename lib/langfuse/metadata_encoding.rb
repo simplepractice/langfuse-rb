@@ -30,13 +30,12 @@ module Langfuse
       values = metadata.each_with_object({}) do |(key, value), result|
         encoded = JSON.generate(value)
         snapshot = JSON.parse(encoded, freeze: true)
-        next unless within_propagation_limit?(value, encoded)
-
         result[key.to_s] = json? ? encoded.freeze : snapshot
       rescue JSON::JSONError, EncodingError
         warn_dropped_value("is not valid JSON")
       end
       values = legacy_propagation_values(values) unless json?
+      values.select! { |_key, value| within_propagation_limit?(value) }
       values.empty? ? nil : values.freeze
     end
 
@@ -95,9 +94,8 @@ module Langfuse
     end
     private_class_method :json?
 
-    def self.within_propagation_limit?(value, encoded)
-      length = !json? && value.is_a?(String) ? value.length : encoded.length
-      return true if length <= 200
+    def self.within_propagation_limit?(wire_value)
+      return true if wire_value.length <= 200
 
       warn_dropped_value("exceeds 200 characters")
       false
