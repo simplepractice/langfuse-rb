@@ -1,665 +1,129 @@
-# Prompt Management Guide
+# Prompt Management
 
-Complete guide to managing LLM prompts with Langfuse.
+Use `Langfuse.client` to fetch, compile, create, and label prompts. Fetches return
+`TextPromptClient` or `ChatPromptClient`; API response metadata uses string keys.
 
-## Overview
-
-Langfuse provides central prompt management.
-You can:
-- Version and iterate prompts without code changes
-- A/B test prompt variations
-- Roll back to previous versions
-- Manage prompts across environments (dev/staging/prod)
-- **Create and update prompts programmatically** from your Ruby code
-
-The SDK supports two prompt types:
-- **Text Prompts:** Single string templates (e.g., instructions, system messages)
-- **Chat Prompts:** Structured message arrays (e.g., conversation templates)
-
-### Quick Reference
-
-| Method | Description |
-|--------|-------------|
-| `get_prompt(name)` | Fetch a prompt by name |
-| `prompt.variables` | List the template variables a caller must provide |
-| `compile_prompt(name, variables:)` | Fetch and compile in one call |
-| `create_prompt(name:, prompt:, type:)` | Create a new prompt or version |
-| `update_prompt(name:, version:, labels:)` | Update labels on a version |
-| `list_prompts` | List all prompts in your project |
-
-## Text Prompts
-
-### Fetching Text Prompts
+## Fetch and Compile
 
 ```ruby
 client = Langfuse.client
-prompt = client.get_prompt("product-description")
-# => Returns TextPromptClient instance
-```
-
-The returned `TextPromptClient` provides:
-
-```ruby
-prompt.name       # => "product-description"
-prompt.version    # => 3
-prompt.labels     # => ["production"]
-prompt.tags       # => ["marketing", "seo"]
-prompt.config     # => { "temperature" => 0.7, "model" => "gpt-4" }
-prompt.prompt     # => "Write a {{tone}} product description for {{product_name}}..."
-prompt.type       # => "text"
-prompt.variables  # => ["tone", "product_name"]
-prompt.commit_message  # => "Improve product tone"
-prompt.resolution_graph # => nil
-prompt.is_fallback # => false
-```
-
-### Compiling Text Prompts
-
-Use `compile` with variables:
-
-```ruby
-prompt = client.get_prompt("product-description")
-
-description = prompt.compile(
-  tone: "professional",
-  product_name: "Wireless Headphones",
-  features: "noise-cancelling, 40-hour battery"
-)
-
-puts description
-# => "Write a professional product description for Wireless Headphones..."
-```
-
-### Inspecting Required Variables
-
-Call `variables` before compilation to validate a prompt contract.
-You can also use it to generate a form or find an incompatible prompt change:
-
-```ruby
-prompt = client.get_prompt("support-answer", label: "production")
-
-prompt.variables
-# => ["customer.name", "question", "context"]
-```
-
-The method parses the Mustache template.
-It does not use a text search:
-
-- Names stay in the order of their first occurrence.
-- Each duplicate name occurs one time.
-- Dotted names such as `customer.name` do not change.
-- The result includes section and inverted-section names.
-- Variables in a section include the full section scope.
-- The result does not include Mustache comments.
-- The result does not include chat message placeholders.
-- Invalid Mustache syntax raises `Mustache::Parser::SyntaxError`.
-
-For chat prompts, the SDK examines the content in message order.
-It returns one list without duplicate names:
-
-```ruby
-prompt = client.get_prompt("support-chat", label: "production")
-prompt.variables # => ["agent.role", "customer.name", "question"]
-```
-
-The method reports referenced variables. It does not determine whether a Mustache section is optional for a specific call.
-
-### Using Metadata
-
-The `config` hash stores prompt-specific settings:
-
-```ruby
-prompt = client.get_prompt("chat-completion")
-
-# Use config for LLM parameters
-openai_client.chat(
-  parameters: {
-    model: prompt.config["model"],              # => "gpt-4"
-    temperature: prompt.config["temperature"],  # => 0.7
-    messages: [{ role: "user", content: prompt.compile(input: user_input) }]
-  }
-)
-```
-
-## Chat Prompts
-
-### Fetching Chat Prompts
-
-```ruby
-prompt = client.get_prompt("customer-support")
-# => Returns ChatPromptClient instance
-```
-
-The returned `ChatPromptClient` has the same properties as `TextPromptClient`, but `compile` returns an array of message hashes.
-
-### Compiling Chat Prompts
-
-Chat prompts compile to an array of messages:
-
-```ruby
-prompt = client.get_prompt("customer-support")
-
-messages = prompt.compile(
-  customer_name: "Alice",
-  product: "Premium Plan",
-  issue_type: "billing"
-)
-
-puts messages
-# => [
-#   { role: :system, content: "You are a helpful customer support agent..." },
-#   { role: :user, content: "Customer Alice has a billing issue with Premium Plan" }
-# ]
-```
-
-**Note:** Message roles are returned as symbols (`:system`, `:user`, `:assistant`), matching Ruby conventions.
-
-### Message Placeholders
-
-Chat prompts can include Langfuse message placeholders for runtime chat history or few-shot examples:
-
-```ruby
-prompt = client.get_prompt("movie-critic-chat")
-
-messages = prompt.compile(
-  critic_level: "expert",
-  chat_history: [
-    { role: :user, content: "I like slow cinema." },
-    { role: :assistant, content: "Try contemplative international dramas." }
-  ]
-)
-
-# => [
-#   { role: :system, content: "You are an expert movie critic" },
-#   { role: :user, content: "I like slow cinema." },
-#   { role: :assistant, content: "Try contemplative international dramas." },
-#   { role: :user, content: "What should I watch next?" }
-# ]
-```
-
-Placeholder behavior:
-
-- Passing an array inserts those messages in place and compiles variables inside them.
-- Passing an empty array skips the placeholder.
-- Omitting the placeholder keeps `{ type: "placeholder", name: "..." }` in the compiled output and logs a warning.
-- Passing malformed placeholder values raises `ArgumentError` during compile instead of emitting invalid model messages.
-- Placeholder messages preserve extra fields such as `tool_calls`.
-
-### Using with LLM Libraries
-
-Direct integration with OpenAI:
-
-```ruby
-require 'openai'
-
-client = OpenAI::Client.new
-prompt = Langfuse.client.get_prompt("chat-assistant")
-
-messages = prompt.compile(
-  user_name: "Bob",
-  context: "Product recommendations"
-)
-
-response = client.chat(
-  parameters: {
-    model: prompt.config["model"],
-    temperature: prompt.config["temperature"],
-    messages: messages.map { |m| { role: m[:role].to_s, content: m[:content] } }
-  }
-)
-```
-
-## Versioning
-
-### Fetching Specific Versions
-
-Fetch by version number:
-
-```ruby
-prompt = client.get_prompt("greeting", version: 2)
-puts prompt.version  # => 2
-```
-
-Fetch by label:
-
-```ruby
 prompt = client.get_prompt("greeting", label: "production")
-puts prompt.labels  # => ["production"]
-puts prompt.version  # => whichever version has "production" label
+text = prompt.compile(name: "Alice")
+
+# Fetch and compile in one call.
+text = client.compile_prompt("greeting", variables: { name: "Alice" }, label: "production")
 ```
 
-### Versioning Strategy
+Choose either `version:` or `label:`, never both. A version pins content; labels can
+move between versions. When neither is supplied, the SDK omits both selectors and
+uses `production` as its cache identity. Label changes become visible after cache
+expiry, invalidation, or an explicit `refresh_prompt`.
 
-**Version numbers** are immutable and sequential:
+Prompt clients expose `name`, `version`, `type`, `prompt`, `config`, `labels`, `tags`,
+`commit_message`, `resolution_graph`, and `is_fallback`. `config` contains
+application-defined settings; the SDK does not apply them to a model client.
+
+## Template Variables
+
+Templates use Mustache syntax: `{{name}}`, dotted paths such as `{{customer.name}}`,
+and sections such as `{{#items}}{{title}}{{/items}}`. Substitution inserts raw text
+without HTML escaping.
 
 ```ruby
-# Version 1 (initial)
-"Hello {{name}}!"
+prompt = Langfuse::TextPromptClient.new({
+  "name" => "greeting", "version" => 1,
+  "prompt" => "Hello {{customer.name}}! {{#items}}{{title}} {{/items}}"
+})
 
-# Version 2 (improved)
-"Hello {{name}}, welcome back!"
-
-# Version 3 (A/B test variant)
-"Hi {{name}}, great to see you!"
+prompt.variables # => ["customer.name", "items", "items.title"]
+prompt.compile(customer: { name: "Alice" }, items: [{ title: "Ruby" }])
+# => "Hello Alice! Ruby "
 ```
 
-**Labels** are mutable pointers:
+`variables` returns unique references in source order, including section names.
+It describes references, not which values are required: sections can be optional.
+Invalid Mustache syntax raises `Mustache::Parser::SyntaxError`.
 
-```ruby
-# Production points to version 2
-prompt = client.get_prompt("greeting", label: "production")  # => version 2
+With no compilation arguments, text templates and ordinary chat message content
+remain unchanged. Once any arguments are supplied, Mustache renders the template;
+missing values render as empty strings. Validate required application inputs yourself.
 
-# After promoting version 3 in Langfuse UI:
-prompt = client.get_prompt("greeting", label: "production")  # => version 3
-```
-
-### Best Practices
-
-1. **Be explicit in production:** Always pass `label: "production"` for deterministic selection
-2. **Treat implicit selection as API-defined:** Omitting both `version` and `label` sends no selector — the Langfuse API decides which version to return
-3. **Version for rollback:** Keep version numbers for emergency rollbacks
-
-```ruby
-# Development (API-defined selection)
-prompt = client.get_prompt("greeting")
-
-# Production
-prompt = client.get_prompt("greeting", label: "production")  # Stable
-
-# Rollback scenario
-prompt = client.get_prompt("greeting", version: 2)  # Explicit old version
-```
-
-## Mustache Templating
-
-Langfuse uses [Mustache](https://mustache.github.io/) for variable interpolation.
-
-### Basic Variables
-
-```ruby
-# Template: "Hello {{name}}!"
-prompt.compile(name: "Alice")
-# => "Hello Alice!"
-```
-
-### Nested Objects
-
-```ruby
-# Template: "{{user.name}} lives in {{user.city}}"
-prompt.compile(user: { name: "Bob", city: "NYC" })
-# => "Bob lives in NYC"
-```
-
-### Arrays
-
-```ruby
-# Template: "{{#items}}• {{name}}\n{{/items}}"
-prompt.compile(items: [{ name: "Item 1" }, { name: "Item 2" }])
-# => "• Item 1\n• Item 2\n"
-```
-
-### Conditionals
-
-```ruby
-# Template: "{{#premium}}Premium features enabled{{/premium}}"
-prompt.compile(premium: true)
-# => "Premium features enabled"
-
-prompt.compile(premium: false)
-# => ""
-```
-
-### Raw Variable Substitution
-
-Langfuse prompt compilation preserves variable values as raw strings, matching the JavaScript and Python SDKs:
-
-```ruby
-# Template: "{{html}} with {{schema}}"
-prompt.compile(html: "<b>Bold</b>", schema: '{"type":"object"}')
-# => "<b>Bold</b> with {\"type\":\"object\"}"
-```
-
-### Complex Example
-
-Template in Langfuse UI:
-
-```mustache
-You are a {{role}} helping with {{task}}.
-
-User profile:
-- Name: {{user.name}}
-- Tier: {{user.tier}}
-{{#user.preferences}}
-- Preference: {{.}}
-{{/user.preferences}}
-
-{{#context}}
-Context: {{context}}
-{{/context}}
-```
-
-Compilation:
-
-```ruby
-prompt.compile(
-  role: "sales assistant",
-  task: "product recommendations",
-  user: {
-    name: "Alice",
-    tier: "Premium",
-    preferences: ["eco-friendly", "fast shipping"]
-  },
-  context: "Customer browsing electronics"
-)
-
-# Output:
-# You are a sales assistant helping with product recommendations.
-#
-# User profile:
-# - Name: Alice
-# - Tier: Premium
-# - Preference: eco-friendly
-# - Preference: fast shipping
-#
-# Context: Customer browsing electronics
-```
-
-## Creating Prompts
-
-You can create prompts programmatically without using the Langfuse UI.
-
-### `create_prompt` - Create New Prompts
-
-Create a new prompt or add a new version to an existing prompt:
-
-```ruby
-# Create a text prompt
-prompt = client.create_prompt(
-  name: "welcome-email",
-  prompt: "Welcome {{name}}! Thank you for joining {{company}}.",
-  type: :text,
-  config: { model: "gpt-4o", temperature: 0.7 },
-  labels: ["staging"],
-  tags: ["email", "onboarding"]
-)
-
-puts prompt.name       # => "welcome-email"
-puts prompt.version    # => 1
-```
-
-If a prompt with the same name already exists, a new version is created:
-
-```ruby
-# Create version 2 of "welcome-email"
-prompt_v2 = client.create_prompt(
-  name: "welcome-email",
-  prompt: "Hello {{name}}! Welcome to {{company}}. We're glad you're here!",
-  type: :text,
-  labels: ["staging"]
-)
-
-puts prompt_v2.version  # => 2
-```
-
-### Creating Chat Prompts
-
-Chat prompts use an array of message hashes:
+## Chat Prompts and Message Placeholders
 
 ```ruby
 prompt = client.create_prompt(
-  name: "support-bot",
-  prompt: [
-    { role: "system", content: "You are a {{role}} support assistant for {{company}}." },
-    { type: "placeholder", name: "history" },
-    { role: "user", content: "{{question}}" }
-  ],
+  name: "support-chat",
   type: :chat,
-  config: { model: "gpt-4o", max_tokens: 500 },
-  labels: ["production"]
-)
-```
-
-**Note:** Message roles can use either strings (`"system"`) or symbols (`:system`). Placeholder entries must use `type: "placeholder"` and a `name`.
-
-### Commit Messages
-
-Track changes with optional commit messages:
-
-```ruby
-prompt = client.create_prompt(
-  name: "greeting",
-  prompt: "Hi {{name}}, how can I help you today?",
-  type: :text,
-  commit_message: "Added friendlier tone per UX feedback"
-)
-```
-
-Commit messages are visible in the Langfuse UI version history.
-
-## Updating Prompts
-
-### `update_prompt` - Update Labels
-
-Update the labels on an existing prompt version. This is useful for promoting prompts through environments:
-
-```ruby
-# Promote version 3 to production
-prompt = client.update_prompt(
-  name: "greeting",
-  version: 3,
-  labels: ["production"]
-)
-
-puts prompt.labels  # => ["production"]
-```
-
-**Note:** Only labels can be updated. Prompt content is immutable after creation—create a new version instead.
-
-### Promotion Workflow Example
-
-A typical promotion workflow:
-
-```ruby
-# 1. Create new version in staging
-new_prompt = client.create_prompt(
-  name: "checkout-flow",
-  prompt: "Complete your purchase of {{product}}...",
-  type: :text,
+  prompt: [
+    { role: :system, content: "Help {{name}} with their question." },
+    { type: "placeholder", name: "history" },
+    { role: :user, content: "{{question}}" }
+  ],
   labels: ["staging"]
 )
 
-# 2. Test in staging environment...
-
-# 3. Promote to production
-client.update_prompt(
-  name: "checkout-flow",
-  version: new_prompt.version,
-  labels: ["production"]
-)
-
-# 4. Remove old production label if needed
-client.update_prompt(
-  name: "checkout-flow",
-  version: old_version,
-  labels: []  # Empty array removes all labels
+messages = prompt.compile(
+  name: "Alice",
+  question: "How do I reset my password?",
+  history: [{ role: :assistant, content: "How can I help?" }]
 )
 ```
 
-## Convenience Methods
+Compilation returns message hashes with symbol keys and symbol roles. It preserves
+extra message fields. A placeholder expands an array of messages in place; `[]`
+removes it. Inserted message content is also compiled with the supplied variables.
 
-### `compile_prompt` - Fetch and Compile
+An unresolved placeholder remains `{ type: "placeholder", name: "history" }` and
+logs a warning. Resolve it before sending messages to a model. A non-array value,
+non-hash entry, or entry missing a nonempty role or a content key raises
+`ArgumentError`. `variables` excludes message placeholder names.
 
-Combine fetching and compilation in one call:
-
-```ruby
-# Instead of:
-prompt = client.get_prompt("greeting")
-message = prompt.compile(name: "Alice")
-
-# Use:
-message = client.compile_prompt("greeting", variables: { name: "Alice" })
-```
-
-With versioning:
+## Create and Promote Versions
 
 ```ruby
-message = client.compile_prompt(
-  "greeting",
-  variables: { name: "Alice" },
-  label: "production"
+prompt = client.create_prompt(
+  name: "greeting", type: :text, prompt: "Hello {{name}}!",
+  config: { temperature: 0.2 }, labels: ["staging"],
+  tags: ["onboarding"], commit_message: "Shorten greeting"
 )
+
+client.update_prompt(name: prompt.name, version: prompt.version, labels: ["production"])
 ```
 
-### `list_prompts` - Browse Available Prompts
+Creating the same name creates another version. `update_prompt` replaces a
+version's labels; it does not edit content. Both mutations invalidate that prompt
+name in the configured cache backend. For cache scope and refresh behavior, see
+[Caching](CACHING.md).
 
-List all prompts in the project:
+`client.list_prompts(page: 1, limit: 100)` returns one page of metadata as
+`Array<Hash>`. It does not fetch prompt content or automatically paginate.
 
-```ruby
-prompts = client.list_prompts
-prompts.each do |p|
-  puts "#{p['name']} (v#{p['version']})"
-end
-```
-
-With pagination:
-
-```ruby
-prompts = client.list_prompts(page: 2, limit: 50)
-```
-
-## Fallback Handling
-
-Provide a fallback template for development or when a prompt does not exist:
+## Fallbacks
 
 ```ruby
 prompt = client.get_prompt(
-  "new-feature-prompt",
-  fallback: "Hello {{name}}!",
-  type: :text
+  "greeting", fallback: "Hello {{name}}!", type: :text
 )
-
-message = prompt.compile(name: "Bob")
-# If the prompt does not exist in Langfuse, use the fallback
+text = prompt.compile(name: "Alice")
+puts prompt.is_fallback
 ```
 
-**Important:** You must specify `type:` when using `fallback`.
+A fallback requires `type: :text` with a String or `type: :chat` with an array of
+messages. It is used after an API error, including missing prompts or failed
+authentication. Configuration and argument errors still raise. Fallback clients
+have version `0`, empty config, and `is_fallback == true`; they are never cached.
 
-### Fallback Best Practices
+## Link a Prompt to a Generation
 
 ```ruby
-# Good: Development with fallback
-if Rails.env.development?
-  prompt = client.get_prompt("beta-feature",
-    fallback: "Default behavior for {{input}}",
-    type: :text
-  )
-else
-  prompt = client.get_prompt("beta-feature")  # Fail loudly in production
+prompt = client.get_prompt("greeting", label: "production")
+
+Langfuse.observe("greet", as_type: :generation) do |generation|
+  generation.update(prompt: prompt, input: prompt.compile(name: "Alice"))
+  # Call your model and record its output here.
 end
 ```
 
-```ruby
-# Good: Graceful degradation
-begin
-  prompt = client.get_prompt("personalized-greeting")
-  message = prompt.compile(name: user.name, tier: user.tier)
-rescue Langfuse::NotFoundError
-  message = "Hello #{user.name}!"  # Simple fallback
-end
-```
-
-See [ERROR_HANDLING.md](ERROR_HANDLING.md) for exception handling strategies.
-
-## Caching
-
-Prompts are cached automatically. Default TTL is 60 seconds.
-
-```ruby
-# First call: Fetches from API
-prompt1 = client.get_prompt("greeting")  # HTTP request
-
-# Within TTL: Returns from cache
-prompt2 = client.get_prompt("greeting")  # No HTTP request
-```
-
-Configure cache TTL:
-
-```ruby
-Langfuse.configure do |config|
-  config.cache_ttl = 300  # 5 minutes
-end
-```
-
-Override or bypass cache per call:
-
-```ruby
-prompt = client.get_prompt("greeting", cache_ttl: 300)
-fresh = client.get_prompt_result("greeting", cache_ttl: 0)
-
-fresh.cache_status # => :bypass
-fresh.source       # => :api
-```
-
-Use `get_prompt_result` and the flat cache operations when you need operational visibility:
-
-```ruby
-result = client.get_prompt_result("greeting")
-result.cache_status # => :hit or :miss
-
-client.refresh_prompt("greeting")
-client.invalidate_prompt_cache("greeting")
-client.invalidate_prompt_cache_by_name("greeting")
-client.clear_prompt_cache
-client.prompt_cache_stats
-```
-
-See [CACHING.md](CACHING.md) for advanced caching strategies, generation-based invalidation, cache events, warming, and stampede protection.
-
-## Combining Prompts with Tracing
-
-Track prompt usage in traces:
-
-```ruby
-Langfuse.observe("generate-response", as_type: :generation) do |gen|
-  prompt = Langfuse.client.get_prompt("chat-assistant", label: "production")
-
-  messages = prompt.compile(
-    user_query: user_input,
-    context: relevant_docs
-  )
-
-  response = openai_client.chat(
-    parameters: {
-      model: prompt.config["model"],
-      messages: messages
-    }
-  )
-
-  # Record generation data and link the managed prompt version
-  gen.model = prompt.config["model"]
-  gen.input = messages
-  gen.output = response.dig("choices", 0, "message", "content")
-  gen.usage_details = {
-    prompt_tokens: response.dig("usage", "prompt_tokens"),
-    completion_tokens: response.dig("usage", "completion_tokens"),
-    total_tokens: response.dig("usage", "total_tokens")
-  }
-  gen.update(prompt: prompt)
-
-  response
-end
-```
-
-The trace contains the prompt version and other provenance data.
-Use this data to correlate outputs with prompt versions.
-
-See [TRACING.md](TRACING.md) for more tracing patterns.
-
-## See Also
-
-- [GETTING_STARTED.md](GETTING_STARTED.md) - Basic prompt usage
-- [TRACING.md](TRACING.md) - Tracking prompt usage in traces
-- [CACHING.md](CACHING.md) - Optimizing prompt fetch performance
-- [ERROR_HANDLING.md](ERROR_HANDLING.md) - Handling prompt errors
-- [API_REFERENCE.md](API_REFERENCE.md) - Complete method signatures for all prompt methods
-- [Langfuse prompt variables](https://langfuse.com/docs/prompt-management/features/variables) - Platform variable concepts
+The generation records the managed prompt's name and version. Fallback prompts are
+not linked to a managed version. See [Tracing](TRACING.md) for model and usage fields
+and [API Reference](API_REFERENCE.md#prompts) for full signatures.

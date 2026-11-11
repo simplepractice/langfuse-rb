@@ -5,6 +5,8 @@ require "faraday/retry"
 require "base64"
 require "json"
 require "uri"
+require "securerandom"
+require "time"
 require_relative "prompt_fetch_result"
 require_relative "prompt_cache_coordinator"
 require_relative "read_api"
@@ -87,10 +89,9 @@ module Langfuse
       end
     end
 
-    # List all prompts in the Langfuse project
+    # List one page of prompt metadata in the Langfuse project
     #
-    # Fetches a list of all prompt names available in your project.
-    # Note: This returns metadata only, not full prompt content.
+    # Returns metadata for the requested page, not full prompt content.
     #
     # @param page [Integer, nil] Optional page number for pagination
     # @param limit [Integer, nil] Optional limit per page (default: API default)
@@ -306,18 +307,43 @@ module Langfuse
       raise BatchDeliveryError.new("Batch send failed: #{e.message}", retryable: true)
     end
 
+    # Send score bodies to the batch Scores API (Langfuse v4.59.0 or later).
+    #
+    # IDs and timestamps must be assigned before sending so retries preserve
+    # score identity. Partial rejections are validation failures, not retryable
+    # transport errors; the response reports counts rather than score IDs.
+    #
+    # @param scores [Array<Hash>] Score bodies with stable IDs and timestamps
+    # @return [Hash] Acceptance message or accepted/rejected counts and errors
+    # @raise [ArgumentError] if scores is not a non-empty Array
+    # @raise [UnauthorizedError] if authentication fails
+    # @raise [BatchDeliveryError] if delivery fails or acceptance cannot be confirmed
+    def send_score_batch(scores)
+      raise ArgumentError, "scores must be a non-empty array" unless scores.is_a?(Array) && !scores.empty?
+
+      response = score_connection.post("/api/public/scores", scores)
+      handle_score_batch_response(response, scores.length)
+    rescue Faraday::RetriableResponse => e
+      handle_score_batch_response(e.response, scores.length)
+    rescue Faraday::Error => e
+      raise BatchDeliveryError.new("Score batch send failed: #{e.message}", retryable: true)
+    end
+
     # Create a score through the synchronous Scores API.
     #
     # @param payload [Hash] Validated score attributes in API format
     # @return [String] ID of the created score
     # @raise [UnauthorizedError] if authentication fails
-    # @raise [ApiError] if the API request fails or omits the created score ID
+    # @raise [ApiError] if the API request fails or the score is not accepted
     def create_score(payload:)
-      response = request(:post, "/api/public/scores", body: payload)
-      score_id = response["id"]
-      return score_id if score_id.is_a?(String) && !score_id.empty?
+      id = payload[:id]
+      id = nil if id == ""
+      score = payload.merge(id: id || SecureRandom.uuid,
+                            timestamp: payload[:timestamp] || Time.now.utc.iso8601(3))
+      response = send_score_batch([score])
+      return score.fetch(:id) if response.fetch("rejected", 0).zero?
 
-      raise ApiError, "Score creation response did not include an id"
+      raise ApiError, "Score rejected: #{response.fetch('errors').map { |error| error.fetch('message') }.join('; ')}"
     end
 
     # Create a dataset run item (link a trace to a dataset item within a run)
@@ -630,6 +656,54 @@ module Langfuse
 
     private
 
+    # @api private
+    # HTTP status retries require RetriableResponse in Faraday's exception list.
+    # Scope them to score batches, whose IDs and timestamps make replay safe.
+    def score_connection
+      @score_connection ||= build_connection(
+        retry_settings: retry_options.merge(
+          retry_statuses: [429, *(500..599)],
+          exceptions: [Faraday::TimeoutError, Faraday::ConnectionFailed, Faraday::RetriableResponse]
+        )
+      )
+    end
+
+    def handle_score_batch_response(response, count)
+      body = parse_response_body(response)
+      return body if valid_score_acceptance?(response.status, body, count)
+
+      if (200..299).cover?(response.status)
+        raise BatchDeliveryError.new("Invalid Scores API acceptance response", retryable: true)
+      end
+
+      raise UnauthorizedError, "Authentication failed. Check your API keys." if response.status == 401
+
+      raise BatchDeliveryError.new(
+        "Score batch send failed (#{response.status}): #{extract_error_message(response)}",
+        retryable: retryable_batch_status?(response.status)
+      )
+    end
+
+    def valid_score_acceptance?(status, body, count)
+      return false unless body.is_a?(Hash)
+      return body["message"] == "Accepted" if status == 202
+      return false unless status == 207
+
+      accepted, rejected, errors = body.values_at("accepted", "rejected", "errors")
+      valid_score_counts?(accepted, rejected, count) && valid_score_errors?(errors, rejected)
+    end
+
+    def valid_score_counts?(accepted, rejected, count)
+      [accepted, rejected].all? { |value| value.is_a?(Integer) && value >= 0 } && accepted + rejected == count
+    end
+
+    def valid_score_errors?(errors, rejected)
+      return false unless errors.is_a?(Array)
+      return false unless errors.all? { |error| error.is_a?(Hash) && error["message"].is_a?(String) }
+
+      rejected.positive? ? errors.any? : errors.empty?
+    end
+
     def cache_backend_name
       @prompt_cache_coordinator.backend_name
     end
@@ -689,14 +763,15 @@ module Langfuse
     # Build a new Faraday connection
     #
     # @param timeout [Integer, nil] Optional timeout override
+    # @param retry_settings [Hash] Retry policy for this connection
     # @return [Faraday::Connection]
-    def build_connection(timeout: nil)
+    def build_connection(timeout: nil, retry_settings: retry_options)
       Faraday.new(
         url: base_url,
         headers: default_headers
       ) do |conn|
         conn.request :json
-        conn.request :retry, retry_options
+        conn.request :retry, retry_settings
         conn.response :json, content_type: /\bjson$/
         conn.adapter Faraday.default_adapter
         conn.options.timeout = timeout || @timeout

@@ -1,394 +1,119 @@
-# Configuration Reference
+# Configuration
 
-Complete guide to configuring the Langfuse Ruby SDK.
-
-## Configuration Pattern
-
-The SDK uses global configuration via `Langfuse.configure`:
+Configure once at application startup, before creating the client or tracing:
 
 ```ruby
+require "langfuse"
+
 Langfuse.configure do |config|
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-  # ... additional options
-end
-```
-
-Call this once at application startup (Rails initializer, boot script, etc.).
-
-## Tracing Ownership
-
-Select the tracing owner before you configure OpenTelemetry.
-
-- `Langfuse.configure` stores configuration only.
-- Module-level tracing initializes lazily on first use.
-- Langfuse tracing is isolated by default.
-- `Langfuse.tracer_provider` is the explicit seam for installing Langfuse as the global OpenTelemetry provider.
-- `should_export_span` only runs on spans handled by Langfuse's provider.
-- Filtering is not the fix for ambient-span overcapture. Isolation is.
-- Langfuse does not configure a second OpenTelemetry backend or an export pipeline with multiple destinations.
-
-Default isolated setup:
-
-```ruby
-Langfuse.configure do |config|
-  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
-  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
-end
-```
-
-Explicit global install:
-
-```ruby
-Langfuse.configure do |config|
-  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
-  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
+  config.public_key = ENV.fetch("LANGFUSE_PUBLIC_KEY")
+  config.secret_key = ENV.fetch("LANGFUSE_SECRET_KEY")
+  config.environment = "production"
 end
 
-OpenTelemetry.tracer_provider = Langfuse.tracer_provider
+client = Langfuse.client
 ```
 
-If the application needs propagation or another OpenTelemetry backend, configure them in the application.
-Langfuse does not install them.
+Credentials and supported environment variables are read when `Langfuse::Config`
+is created. Assignments in the block override those defaults.
+
+## Connection and Logging
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `public_key` | `LANGFUSE_PUBLIC_KEY` | Non-empty String; required for API calls and enabled tracing. |
+| `secret_key` | `LANGFUSE_SECRET_KEY` | Non-empty String; required with the public key. |
+| `base_url` | `https://cloud.langfuse.com` | Absolute HTTP(S) URL for your Langfuse region or self-hosted instance. |
+| `timeout` | `5` | Positive API request timeout in seconds. |
+| `logger` | `Rails.logger` when available; otherwise stdout at `WARN` | Must respond to `debug`, `info`, `warn`, and `error`. `nil` disables logging. |
+
+## Prompt Caching
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `cache_backend` | `:memory` | `:memory`, `:rails`, or `:auto`. Auto selects Rails.cache when available. |
+| `cache_ttl` | `60` | Fresh lifetime in seconds. `0` disables the client's cache. |
+| `cache_max_size` | `1000` | Maximum in-memory entries; does not limit Rails.cache. |
+| `cache_lock_timeout` | `10` | Rails cache lock lifetime in seconds. |
+| `cache_stale_ttl` | `0` | Additional stale-serving window in seconds. A positive value enables background refresh on stale reads. Accepts `:indefinite` for a finite window of about 1,000 years. |
+| `cache_stale_while_revalidate` | `false` | Compatibility setting; does not enable or disable SWR independently of `cache_stale_ttl`. |
+| `cache_refresh_threads` | `5` | Background refresh pool size. |
+| `prompt_cache_observer` | `nil` | Callable receiving `(event, payload)` for cache events. |
+
+Use positive values for cache capacity, lock timeout, and refresh threads.
+TTL values must be non-negative. Use integer counts for entries and threads.
+The Rails backend requires `Rails.cache` to exist when the client is built;
+shared caching depends on the configured store, not on Rails alone.
+See [Caching](CACHING.md) for refresh, invalidation, and backend behavior.
+
+## Tracing and Scoring
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `tracing_enabled` | `true` | Boolean switch for both tracing and scoring. |
+| `environment` | `nil` | Default environment for observations and scores. |
+| `release` | `nil` or detected CI commit | Release attached to observations. |
+| `sample_rate` | `1.0` | Deterministic trace-ID sampling in `0.0..1.0`; also applies to trace-linked scores. |
+| `batch_size` | `50` | Positive Integer: score flush threshold and maximum OpenTelemetry export batch size. Score requests also enforce the [API limits](SCORING.md#batching-behavior). |
+| `flush_interval` | `10` | Positive number of seconds between score flushes and scheduled trace exports. |
+| `score_queue_capacity` | `100_000` | Positive Integer: maximum pending asynchronous scores, including in-flight batches. A full queue drops the new score. |
+| `tracing_async` | `true` | Uses `flush_interval` for trace scheduling. `false` still uses a batch processor, with a 60-second schedule; it does not make tracing synchronous. |
+| `job_queue` | `:default` | Reserved compatibility setting with no runtime effect. |
+| `skills` | `nil` | Catalog such as `{ available: [{ name: "search", version: 1 }] }`; attached only inside opted-in scopes. See [Skill Availability](TRACING.md#skill-availability). |
+| `should_export_span` | `nil` | Callable receiving an ended span; replaces the default export filter. |
+| `mask` | `nil` | Callable receiving `data:` for Langfuse-created input, output, and metadata. |
+| `mask_otel_spans` | `nil` | Callable receiving `params:` for export-stage attribute masking, including third-party spans. |
+| `span_exporter` | `nil` | Custom OpenTelemetry exporter; otherwise Langfuse uses OTLP. |
+| `metrics_reporter` | `nil` | Custom OpenTelemetry metrics reporter; otherwise metrics are discarded. |
 
 ### Runtime Modes
 
-Do not combine the Langfuse telemetry switch with the OpenTelemetry switch:
-
-| Configuration | Traces | Asynchronous scores | Synchronous scores | Prompt and read APIs |
-| --- | --- | --- | --- | --- |
-| Default | Enabled | Enabled | Enabled | Enabled |
-| `tracing_enabled = false` or `LANGFUSE_TRACING_ENABLED=false` | Disabled | Disabled | Disabled and returns `nil` | Available with valid credentials |
-| `OTEL_SDK_DISABLED=true` | Disabled | Enabled | Enabled | Enabled |
-
-`tracing_enabled` is the Langfuse telemetry switch.
-It disables tracing and scoring.
-`OTEL_SDK_DISABLED` disables only OpenTelemetry trace export.
-
-## All Configuration Options
-
-### Required
-
-#### `public_key`
-
-- **Type:** String
-- **Required:** Yes
-- **Description:** Your Langfuse public API key (starts with `pk-lf-`)
-
-```ruby
-config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-```
-
-#### `secret_key`
-
-- **Type:** String
-- **Required:** Yes
-- **Description:** Your Langfuse secret API key (starts with `sk-lf-`)
-
-```ruby
-config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-```
-
-### Optional
-
-#### `base_url`
-
-- **Type:** String
-- **Default:** `"https://cloud.langfuse.com"`
-- **Description:** Langfuse API endpoint (use custom for self-hosted)
-
-```ruby
-config.base_url = "https://your-instance.langfuse.com"
-```
-
-#### `timeout`
-
-- **Type:** Integer (seconds)
-- **Default:** `5`
-- **Description:** HTTP request timeout for API calls
-
-```ruby
-config.timeout = 10  # Increase for slow networks
-```
-
-#### `cache_ttl`
-
-- **Type:** Integer (seconds)
-- **Default:** `60`
-- **Description:** How long to cache fetched prompts
-
-```ruby
-config.cache_ttl = 300  # Cache for 5 minutes
-```
-
-See [CACHING.md](CACHING.md) for cache strategies.
-
-#### `cache_max_size`
-
-- **Type:** Integer (entries)
-- **Default:** `1000`
-- **Description:** Maximum number of prompts to cache
-
-```ruby
-config.cache_max_size = 5000  # Large prompt library
-```
-
-#### `cache_backend`
-
-- **Type:** Symbol (`:memory`, `:rails`, or `:auto`)
-- **Default:** `:memory`
-- **Description:** Cache storage backend
-
-```ruby
-# In-memory cache (default, thread-safe)
-config.cache_backend = :memory
-
-# Rails.cache (requires Rails + Redis)
-config.cache_backend = :rails
-
-# Opt in to automatic Rails.cache detection
-config.cache_backend = :auto
-```
-
-`:auto` chooses `:rails` only when Rails and `Rails.cache` are present; otherwise it falls back to `:memory`. The gem default stays `:memory`.
-
-**Requirements for `:rails` backend:**
-
-- Rails must be defined
-- `Rails.cache` must be configured (typically Redis)
-
-See [CACHING.md](CACHING.md) for backend comparison.
-
-#### `cache_lock_timeout`
-
-- **Type:** Integer (seconds)
-- **Default:** `10`
-- **Description:** Timeout for cache stampede protection locks
-
-```ruby
-config.cache_lock_timeout = 5  # Faster timeout for high-traffic apps
-```
-
-See [CACHING.md](CACHING.md#stampede-protection) for details.
-
-#### `cache_stale_while_revalidate`
-
-- **Type:** Boolean
-- **Default:** `false`
-- **Description:** Advisory SWR intent flag (effective SWR behavior is controlled by `cache_stale_ttl`)
-
-```ruby
-config.cache_stale_while_revalidate = true  # Optional intent flag
-```
-
-This flag does not independently turn SWR on or off. SWR activates when `cache_stale_ttl > 0`; the flag exists only as an advisory indicator of intent.
-
-**Behavior (driven by `cache_stale_ttl`):**
-
-- `cache_stale_ttl <= 0` (default): Cache expires at TTL, next request waits for API (~100ms)
-- `cache_stale_ttl > 0`: After TTL, serves stale data instantly (~1ms) + refreshes in background
-
-**Important:** To activate SWR, set `cache_stale_ttl` to a positive value (typically equal to `cache_ttl`).
-
-**Compatibility:**
-
-- Available with the `:memory` backend
-- Available with the `:rails` backend
-
-See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for detailed usage.
-
-#### `cache_stale_ttl`
-
-- **Type:** Integer (seconds) or `:indefinite` Symbol
-- **Default:** `0` (SWR disabled)
-- **Description:** Grace period for serving stale data during background refresh
-- **Note:** `:indefinite` is automatically normalized to 1000 years (31,536,000,000 seconds) during config initialization
-
-```ruby
-config.cache_stale_ttl = 300  # Serve stale data for up to 5 minutes
-config.cache_stale_ttl = :indefinite  # Never expire (normalized to 1000 years internally)
-```
-
-**How it works:**
-
-- After `cache_ttl` expires, data becomes "stale" but still servable
-- Requests return stale data immediately while background refresh occurs
-- After `cache_stale_ttl` expires, data becomes "expired" and requires synchronous fetch
-
-**Recommended values:**
-
-- Same as `cache_ttl`: Balanced freshness/latency
-- `2x cache_ttl`: More tolerance for API slowdowns
-- `:indefinite`: Maximum performance, eventual consistency, high availability
-
-**Important:** When enabling SWR, you should also set `cache_stale_ttl` to a positive value (e.g., same as `cache_ttl`), otherwise stale data expires immediately after the TTL.
-
-See [CACHING.md](CACHING.md#stale-while-revalidate-swr) for examples.
-
-#### `cache_refresh_threads`
-
-- **Type:** Integer
-- **Default:** `5`
-- **Description:** Number of background threads for stale cache refresh
-
-```ruby
-config.cache_refresh_threads = 10  # More threads for high-traffic apps
-```
-
-**Thread pool sizing:**
-
-- Small apps (< 25 prompts): 2-3 threads sufficient
-- Medium apps (25-100 prompts): 5 threads (default)
-- Large apps (> 100 prompts): 10+ threads
-
-**Memory impact:** ~1-2MB per thread pool (negligible)
-
-Only used when SWR is enabled (`cache_stale_ttl > 0`).
-
-#### `prompt_cache_observer`
-
-- **Type:** Callable or `nil`
-- **Default:** `nil`
-- **Description:** Observer hook for prompt cache events
-
-```ruby
-config.prompt_cache_observer = lambda do |event, payload|
-  Rails.logger.info(event: event, prompt: payload[:name], status: payload[:cache_status])
-end
-```
-
-When ActiveSupport is loaded, the SDK also instruments `prompt_cache.langfuse`.
-
-#### `batch_size`
-
-- **Type:** Integer
-- **Default:** `50`
-- **Description:** Number of scores to batch before sending to API. Also used for OpenTelemetry trace export batching.
-
-```ruby
-config.batch_size = 100  # Larger batches for high-volume scoring
-```
-
-Used by scoring API and OpenTelemetry tracing export. See [SCORING.md](SCORING.md).
-
-#### `flush_interval`
-
-- **Type:** Integer (seconds)
-- **Default:** `10`
-- **Description:** Maximum time to wait before flushing batched scores. Also controls OpenTelemetry trace export schedule when tracing is async.
-
-```ruby
-config.flush_interval = 5  # Flush more frequently
-```
-
-#### `score_queue_capacity`
-
-- **Type:** Integer
-- **Default:** `100000`
-- **Description:** Maximum number of asynchronous scores held in memory before new scores are dropped
-
-```ruby
-config.score_queue_capacity = 20_000
-```
-
-A full queue does not wait for capacity.
-The SDK logs an error and drops only the new asynchronous score.
-Synchronous `create_score!` calls do not use this queue.
-A multi-score flush request stays below 2.5 MB.
-Retryable failures keep the batch at the front of the queue.
-The SDK logs and discards permanent batch failures.
-Thus, the SDK can send later valid scores.
-
-#### `sample_rate`
-
-- **Type:** Float (`0.0..1.0`)
-- **Default:** `1.0`
-- **Description:** Deterministic sampling rate for traces and trace-linked scores, based on trace ID
-
-```ruby
-config.sample_rate = 0.1  # Sample ~10% of traces
-```
-
-`0.0` drops all traces, `1.0` preserves current always-on behavior.
-Trace-linked scores use the same `sample_rate` decision so the SDK does not create orphaned scores for sampled-out traces.
-Session-only and dataset-run-only scores are still sent because they are not tied to a sampled trace.
-
-For Ruby client instances, `sample_rate` is snapshotted when the client is built. Changing `config.sample_rate` later does not update that client's score sampler or the already-initialized trace sampler. Rebuild the client with `Langfuse.reset!` when changing sampling behavior.
-
-#### `tracing_enabled`
-
-- **Type:** Boolean
-- **Default:** `true`
-- **Environment:** `LANGFUSE_TRACING_ENABLED`
-- **Description:** Enables or disables Langfuse tracing and scoring
-
-```ruby
-Langfuse.configure do |config|
-  config.tracing_enabled = false
-end
-```
-
-Explicit Ruby configuration overrides `LANGFUSE_TRACING_ENABLED`. The environment variable accepts `true` or `false` without case sensitivity. `OTEL_SDK_DISABLED=true` disables OpenTelemetry trace export. Direct score ingestion remains available.
-
-When `tracing_enabled` is false, trace and score calls are no-ops. They do not require Langfuse credentials and do not create network requests. Buffered spans are discarded instead of exported while the setting is false. Prompt and data API calls still validate the normal client configuration when used. Synchronous `create_score!` returns `nil` while telemetry is disabled. Changes to `tracing_enabled` apply to the initialized SDK. Environment variables are read when configuration is created.
-
-#### `logger`
-
-- **Type:** Logger
-- **Default:** Auto-detected (`Rails.logger` if Rails present, otherwise `Logger.new($stdout)`)
-- **Description:** Logger instance for SDK output
-
-```ruby
-# Custom logger
-config.logger = Logger.new('log/langfuse.log')
-config.logger.level = Logger::DEBUG
-
-# Disable logging
-config.logger = nil
-```
-
-The SDK normalizes `nil` to a null logger. Logger calls remain safe when output is disabled.
-
-#### `tracing_async` (Experimental)
-
-- **Type:** Boolean
-- **Default:** `true`
-- **Status:** Implemented for OpenTelemetry batch scheduling; ActiveJob integration is not implemented
-- **Description:** Controls OpenTelemetry export scheduling. When `true`, spans use the configured `flush_interval` schedule. When `false`, spans still use OpenTelemetry's batch processor with a long schedule delay and are typically flushed explicitly at lifecycle boundaries.
-
-```ruby
-config.tracing_async = true
-```
-
-**Current Behavior:** Uses OpenTelemetry `BatchSpanProcessor` in both modes. Async mode uses `flush_interval` for scheduled export; sync mode uses a 60-second schedule delay and is usually paired with explicit `force_flush` for deterministic delivery timing.
-
-#### `span_exporter`
-
-- **Type:** Object responding to `export`, `force_flush`, and `shutdown`, or `nil`
-- **Default:** `nil` (uses Langfuse's OTLP exporter)
-- **Description:** Replaces the OTLP exporter inside Langfuse's tracing pipeline
-
-The supplied exporter still receives spans through Langfuse's normal sampler,
-filter, environment and release defaults, application-root tracking, masking, batch
-processor, and metrics reporter. Langfuse does not create an OTLP exporter when this
-setting is present.
-
-The internal tracer provider owns the exporter after tracing starts. The provider
-calls `shutdown` on the exporter during `Langfuse.shutdown` or `Langfuse.reset!`.
-Do not reuse a stopped exporter. Changing this setting after tracing starts requires
-`Langfuse.reset!` and a new exporter.
-
-For in-memory RSpec and Minitest recipes, see [TESTING.md](TESTING.md).
-
-#### `metrics_reporter`
-
-- **Type:** Object responding to `add_to_counter`, `record_value`, and `observe_value`, or `nil`
-- **Default:** `nil` (uses OpenTelemetry's no-op reporter)
-- **Description:** Receives operational metrics from OpenTelemetry's `BatchSpanProcessor`
-  and OTLP exporter
-
-The reporter implements the
-[OpenTelemetry metrics reporter interface](https://github.com/open-telemetry/opentelemetry-ruby/blob/main/sdk/lib/opentelemetry/sdk/trace/export/metrics_reporter.rb):
+| Setting | Traces | Scores | Prompt and read APIs |
+| --- | --- | --- | --- |
+| Default | Enabled | Enabled | Available |
+| `tracing_enabled = false` | Disabled | No-op; `create_score!` returns `nil` | Available with valid configuration and credentials |
+| `OTEL_SDK_DISABLED=true` | Disabled | Enabled | Available |
+
+`tracing_enabled` changes apply to the initialized SDK. Buffered spans are dropped
+while it is false. Environment variables are read when configuration is created.
+
+### Tracing Ownership
+
+Langfuse initializes its internal OpenTelemetry provider lazily. It does not replace
+`OpenTelemetry.tracer_provider` or `OpenTelemetry.propagation`. Use the explicit
+[global installation](TRACING.md#opentelemetry-integration) when you want other
+instrumentation to use Langfuse's provider.
+
+Set pipeline options before tracing starts. Changing credentials, host, environment,
+release, sampling, filtering, export-stage masking, exporter, metrics reporter, or
+batch scheduling requires `Langfuse.reset!` and configuration of the new lifecycle.
+Score sampling is also captured when the client is built. Reinstall any global
+provider reference after a reset; the previous provider has been shut down.
+
+### Export Filtering and Masking
+
+`should_export_span` runs once after each span ends, only for spans processed by
+Langfuse's provider. Combine it with `Langfuse.default_export_span?(span)` to retain
+the default allowlist. Keep the callback fast and free of network calls.
+
+`mask` transforms input, output, and metadata passed when creating or updating
+observations and traces. It does not mask metadata passed through `propagate_attributes`
+or arbitrary OpenTelemetry attributes. `mask_otel_spans` receives an immutable
+export-batch snapshot and returns attribute patches for the Langfuse export only.
+Other exporters receive their original spans. See [Masking](TRACING.md#masking) for
+examples, execution constraints, result types, and failure behavior.
+
+### Custom Exporters
+
+A `span_exporter` must implement `export`, `force_flush`, and `shutdown` using the
+OpenTelemetry exporter interface. Langfuse retains its normal sampling, filtering,
+masking, and batch processing. Its provider owns the exporter lifecycle and shuts
+it down on `Langfuse.shutdown` or `Langfuse.reset!`; supply a new exporter afterward.
+See [Testing](TESTING.md) for an in-memory example.
+
+### Metrics Reporter
+
+A reporter must implement:
 
 ```ruby
 add_to_counter(metric, increment: 1, labels: {})
@@ -396,540 +121,56 @@ record_value(metric, value:, labels: {})
 observe_value(metric, value:, labels: {})
 ```
 
-Metric names and labels belong to the installed OpenTelemetry SDK. Langfuse forwards
-them without modification and does not guarantee that they remain stable across
-OpenTelemetry releases. Reporting is best effort. A reporter exception produces one
-warning and does not interrupt span completion or export.
-
-The reporter can run on application threads and the OpenTelemetry export thread. It
-must be thread-safe, fast, and nonblocking. Do not perform HTTP requests or create
-spans from reporter methods. The application owns the reporter lifecycle. Langfuse
-does not flush, close, or shut down the reporter.
-
-This adapter sends the metrics to Datadog through an existing `Datadog::Statsd`
-instance without adding a Datadog dependency to Langfuse:
-
-```ruby
-class DogStatsdMetricsReporter
-  def initialize(statsd)
-    @statsd = statsd
-  end
-
-  def add_to_counter(metric, increment: 1, labels: {})
-    @statsd.increment(metric, by: increment, tags: tags(labels))
-  end
-
-  def record_value(metric, value:, labels: {})
-    @statsd.distribution(metric, value, tags: tags(labels))
-  end
-
-  def observe_value(metric, value:, labels: {})
-    @statsd.gauge(metric, value, tags: tags(labels))
-  end
-
-  private
-
-  def tags(labels)
-    labels.compact.map { |key, value| "#{key}:#{value}" }
-  end
-end
-
-statsd = Datadog::Statsd.new("127.0.0.1", 8125)
-
-Langfuse.configure do |config|
-  config.metrics_reporter = DogStatsdMetricsReporter.new(statsd)
-end
-```
-
-Use one shared DogStatsD client. At application shutdown, call `Langfuse.shutdown`
-first. Then flush and close the client so the final batch processor and OTLP exporter
-metrics can leave the DogStatsD client's buffer:
-
-```ruby
-Langfuse.shutdown
-statsd.flush(sync: true)
-statsd.close
-```
-
-#### `job_queue` (Experimental)
-
-- **Type:** Symbol
-- **Default:** `:default`
-- **Status:** Reserved/no-op
-- **Description:** Reserved for a future ActiveJob integration. It is kept for configuration compatibility and has no runtime effect today.
-
-```ruby
-config.job_queue = :langfuse  # Reserved/no-op today
-```
-
-**Current Behavior:** No ActiveJob integration yet. Reserved for future implementation.
-
-#### `skills`
-
-- **Type:** Hash with an `:available` array of skill references
-- **Default:** `nil`
-- **Description:** Optional catalog, serialized when tracing starts. Each reference has a `:name` and optional integer `:version`.
-
-```ruby
-config.skills = { available: Langfuse.discover_skills(dir: ".agents/skills") }
-```
-
-The catalog is attached only to new spans inside `Langfuse.propagate_attributes(attach_skills: true)`. Explicit `skills_available` lists override it, including an empty list. See [Skill Availability](TRACING.md#skill-availability) for discovery and scope rules.
-
-#### `environment`
-
-- **Type:** String
-- **Default:** `nil` (or `ENV["LANGFUSE_TRACING_ENVIRONMENT"]` if set)
-- **Description:** Default environment applied to new traces, observations, and scores
-
-```ruby
-config.environment = "production"
-```
-
-#### `release`
-
-- **Type:** String
-- **Default:** `nil` (or `ENV["LANGFUSE_RELEASE"]` / CI commit env if set)
-- **Description:** Default release identifier applied to new traces/observations
-
-```ruby
-config.release = "2024.1"
-```
-
-#### `should_export_span`
-
-- **Type:** `#call` (Proc, Lambda, Method, or any object responding to `call`) or `nil`
-- **Default:** `nil` (uses Langfuse's default export filter)
-- **Description:** Controls whether a span handled by Langfuse's tracer provider is exported to Langfuse
-
-```ruby
-config.should_export_span = lambda { |span|
-  Langfuse.default_export_span?(span) &&
-    span.instrumentation_scope&.name != "my_framework.worker"
-}
-```
-
-This callback only runs for spans processed by Langfuse's tracer provider. Under the default isolated setup, ambient spans created on some other global OpenTelemetry provider never reach this filter.
-
-The SDK calls the callback once after each span finishes. The callback can use final attributes, duration, and status.
-
-To make shared OpenTelemetry spans eligible for this filter, install the Langfuse provider explicitly:
-
-```ruby
-OpenTelemetry.tracer_provider = Langfuse.tracer_provider
-```
-
-When Langfuse processes a span and no custom filter is configured, default behavior exports:
-
-- Langfuse SDK spans
-- Spans with `gen_ai.*` attributes
-- Spans from conservative LLM-related instrumentation scopes such as `langsmith.*`, `openinference.*`, and `opentelemetry.instrumentation.anthropic.*`
-
-Combine the callback with `Langfuse.default_export_span?` to keep that allowlist.
-The callback can add more exclusions.
-
-Use this callback to narrow a provider path Langfuse already owns. Do not treat it as the fix for default ambient-span overcapture. The isolated default already prevents that problem.
-
-#### `mask`
-
-- **Type:** `#call` (Proc, Lambda, or any object responding to `call`) or `nil`
-- **Default:** `nil` (masking disabled)
-- **Description:** Mask callable applied to `input`, `output`, and `metadata` fields before they are sent to Langfuse. Receives a `data:` keyword argument containing the raw field value. Must return the masked version. If the callable raises, the field is replaced with a fail-closed fallback string.
-
-```ruby
-# Redact all values in hashes, replace scalars
-config.mask = lambda { |data:|
-  if data.is_a?(Hash)
-    data.transform_values { "[REDACTED]" }
-  else
-    "[REDACTED]"
-  end
-}
-```
-
-See [TRACING.md](TRACING.md#masking) for usage patterns and behavior details.
-
-#### `mask_otel_spans`
-
-- **Type:** `#call` (Proc, Lambda, or any object responding to `call`) or `nil`
-- **Default:** `nil` (export-stage masking disabled)
-- **Description:** Export-stage masking hook applied to each span batch exported to Langfuse, including spans from third-party instrumentations. Receives a `params:` keyword with `Langfuse::MaskOtelSpansParams`. Its frozen `spans` Hash maps `Langfuse::OtelSpanIdentifier` keys to immutable `Langfuse::OtelSpanData` snapshots. Return `nil` to export the batch unchanged. Return `Langfuse::MaskOtelSpansResult` with sparse `Langfuse::OtelSpanPatch` values to delete or replace attributes on selected spans.
-
-```ruby
-config.mask_otel_spans = lambda { |params:|
-  patches = params.spans.filter_map { |identifier, span|
-    next unless span.attributes.key?("gen_ai.prompt")
-
-    [
-      identifier,
-      Langfuse::OtelSpanPatch.new(
-        set_attributes: { "gen_ai.prompt" => "[REDACTED]" }
-      )
-    ]
-  }.to_h
-
-  Langfuse::MaskOtelSpansResult.new(span_patches: patches)
-}
-```
-
-`Langfuse::OtelSpanData` exposes the trace ID, span ID, parent span ID, name,
-instrumentation scope name and version, frozen span attributes, and frozen
-resource attributes. The hook can patch span attributes only. Reuse identifiers
-from `params.spans` when building the result. A `nil` patch leaves that span
-unchanged. `delete_attributes` runs before `set_attributes`, so a set wins when
-the same key appears in both collections.
-
-Batch semantics:
-
-- One call receives one OpenTelemetry export batch, which is not necessarily a complete trace, request, or observation tree. Batch contents depend on `batch_size`, `flush_interval`, explicit `Langfuse.flush`, and shutdown. Do not write a hook that assumes it can see a whole trace.
-- If a batch contains duplicate trace and span identifier pairs, only the last matching span is kept before the hook is called.
-- Spans with a missing or invalid span context are dropped from the Langfuse export before the hook is called. Enabling `mask_otel_spans` therefore drops spans that would otherwise have been exported.
-
-Fail-closed behavior:
-
-- A hook exception or an invalid top-level result drops the whole Langfuse export batch.
-- A malformed per-span patch drops that span from the Langfuse export.
-- An invalid replacement attribute value omits that attribute rather than exporting its original value.
-
-Returning a deliberately invalid patch to drop a span is not a supported API. Use
-[`should_export_span`](#should_export_span) when you need span-level export filtering.
-
-Masking failures are logged with the affected `trace_id` and `span_id`, or the batch
-size when the whole batch is dropped. Exception messages and attribute values are never
-logged, because both can carry the data being masked.
-
-Only the copy exported to Langfuse is transformed. Any other OpenTelemetry exporter receives the original, unmasked spans. The hook is synchronous and usually runs on the batch export thread. Keep it deterministic and fast. Do not rely on request context, the current span, async work, or network calls.
-
-See [TRACING.md](TRACING.md#masking) for how the two masking boundaries relate.
-
-## Tracing Behavior and OpenTelemetry Ownership
-
-There are three states worth documenting.
-
-### Default Isolated Langfuse Tracing
-
-- `Langfuse.configure` does not mutate `OpenTelemetry.tracer_provider`
-- `Langfuse.configure` does not mutate `OpenTelemetry.propagation`
-- `Langfuse.observe(...)` uses Langfuse's internal tracer provider once tracing is ready
-- if tracing configuration is invalid, module-level tracing falls back to a no-op tracer and logs one warning
-
-### Explicit Global Install with `Langfuse.tracer_provider`
-
-To make Langfuse the global OpenTelemetry provider, install it explicitly:
-
-```ruby
-require "opentelemetry/trace/propagation/trace_context"
-
-Langfuse.configure do |config|
-  config.public_key = ENV["LANGFUSE_PUBLIC_KEY"]
-  config.secret_key = ENV["LANGFUSE_SECRET_KEY"]
-end
-
-OpenTelemetry.tracer_provider = Langfuse.tracer_provider
-OpenTelemetry.propagation = OpenTelemetry::Trace::Propagation::TraceContext::TextMapPropagator.new
-```
-
-The application controls the lifecycle of a global provider installation.
-`Langfuse.shutdown` and `Langfuse.reset!` stop the internal provider.
-After a reset or new configuration, install the required tracer provider and propagators again.
-
-### Additional OTel Backends Are Application-Owned
-
-To send spans to another OpenTelemetry backend, configure the export pipeline in the application.
-Langfuse does not install export to multiple destinations.
-Use one of these configurations:
-
-- Add processors or exporters to the application-owned provider.
-- Manage an application-owned provider pipeline.
-
-After the first successful tracing initialization, these settings require `Langfuse.reset!` before changes take effect:
-
-- `public_key`
-- `secret_key`
-- `base_url`
-- `environment`
-- `release`
-- `sample_rate`
-- `should_export_span`
-- `metrics_reporter`
-- `span_exporter`
-- `tracing_async`
-- `batch_size`
-- `flush_interval`
-
-That includes processor tuning. Changing `batch_size` or `flush_interval` after tracing is already live will not rebuild the exporter pipeline until reset.
-
-The singleton client follows the same rule for score sampling: once `Langfuse.client` has been built, changing `sample_rate` on `Langfuse.configuration` does not change that client's trace-linked score sampling. Call `Langfuse.reset!`, configure again, and then rebuild the client.
-
-Performance note for `should_export_span`:
-
-- It runs synchronously on every ended span in the application thread
-- Keep it allocation-light, non-blocking, and free of network/database calls
+OpenTelemetry owns the metric names and labels. Reporter methods may run on
+application or export threads and must be fast, thread-safe, and nonblocking.
+Reporter failures log a warning without stopping export. The application owns
+reporter cleanup: shut down Langfuse first, then flush or close the reporter.
 
 ## Environment Variables
 
-The SDK automatically reads these environment variables as defaults when no explicit value is configured:
+| Variable | Configuration equivalent |
+| --- | --- |
+| `LANGFUSE_PUBLIC_KEY` | `public_key` |
+| `LANGFUSE_SECRET_KEY` | `secret_key` |
+| `LANGFUSE_BASE_URL` | `base_url` |
+| `LANGFUSE_TIMEOUT` | `timeout`; integer seconds |
+| `LANGFUSE_FLUSH_AT` | `batch_size`; Integer |
+| `LANGFUSE_FLUSH_INTERVAL` | `flush_interval`; numeric seconds |
+| `LANGFUSE_TRACING_ENABLED` | `tracing_enabled`; case-insensitive `true` or `false` |
+| `LANGFUSE_TRACING_ENVIRONMENT` | `environment` |
+| `LANGFUSE_RELEASE` | `release`; otherwise uses the first populated entry in `Config::COMMON_RELEASE_ENV_KEYS` |
+| `LANGFUSE_SAMPLE_RATE` | `sample_rate` |
+| `LANGFUSE_DEBUG=true` | stdout logger at `DEBUG` |
+| `OTEL_SDK_DISABLED=true` | Disables trace export only |
 
-- `LANGFUSE_PUBLIC_KEY` — public API key
-- `LANGFUSE_SECRET_KEY` — secret API key
-- `LANGFUSE_BASE_URL` — API endpoint (defaults to `https://cloud.langfuse.com`)
-- `LANGFUSE_TIMEOUT` — HTTP request timeout in seconds (defaults to `5`)
-- `LANGFUSE_FLUSH_AT` — score flush threshold and maximum trace batch size (defaults to `50`)
-- `LANGFUSE_FLUSH_INTERVAL` — maximum batch wait in seconds (defaults to `10`)
-- `LANGFUSE_DEBUG` — set to `true` to write SDK logs to stdout at the `DEBUG` level
-- `LANGFUSE_TRACING_ENABLED` — set to `false` to disable Langfuse tracing and scoring (defaults to `true`)
-- `LANGFUSE_TRACING_ENVIRONMENT` — default trace environment
-- `LANGFUSE_RELEASE` — default release identifier (falls back to common CI commit envs if present)
-- `LANGFUSE_SAMPLE_RATE` — trace sampling rate (`0.0..1.0`, defaults to `1.0`)
-- `OTEL_SDK_DISABLED` — set to `true` to disable OpenTelemetry trace export without disabling score, prompt, or read APIs
+## Validation and Reset
 
-Explicit configuration always takes precedence:
+`Langfuse.client` validates client settings. `Langfuse.configured?` performs a local,
+non-raising readiness check; it does not authenticate or verify delivery.
+`Langfuse::Config#valid?` checks the full client configuration. Tracing validates
+its pipeline separately; module-level tracing uses a no-op tracer if configuration
+is invalid, while `Langfuse.tracer_provider` raises `ConfigurationError`.
 
-```ruby
-Langfuse.configure do |config|
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']   # redundant, already auto-read
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']   # redundant, already auto-read
-  config.base_url = "https://custom.langfuse.com"  # overrides env var
-end
-```
+With telemetry disabled, a client can be built without credentials. Prompt and
+read methods still require valid client configuration when called.
 
-### Recommended Variable Names
-
-```bash
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_BASE_URL=https://cloud.langfuse.com  # Optional
-LANGFUSE_TIMEOUT=10                           # Optional
-LANGFUSE_FLUSH_AT=100                         # Optional
-LANGFUSE_FLUSH_INTERVAL=5                     # Optional
-LANGFUSE_DEBUG=true                           # Optional
-LANGFUSE_TRACING_ENABLED=true                 # Optional
-LANGFUSE_TRACING_ENVIRONMENT=production       # Recommended
-LANGFUSE_RELEASE=release-2026-08-17           # Optional
-LANGFUSE_SAMPLE_RATE=0.25                     # Optional
-# OTEL_SDK_DISABLED=true                      # Optional trace-only kill switch
-```
-
-## Rails-Specific Configuration
-
-### Using Rails Credentials
-
-Recommended for production:
-
-```ruby
-# config/initializers/langfuse.rb
-Langfuse.configure do |config|
-  config.public_key = Rails.application.credentials.dig(:langfuse, :public_key)
-  config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
-  config.cache_backend = :rails
-end
-```
-
-Edit credentials:
-
-```bash
-rails credentials:edit
-```
-
-Add:
-
-```yaml
-langfuse:
-  public_key: pk-lf-...
-  secret_key: sk-lf-...
-```
-
-### Using Environment Variables
-
-For development/staging:
-
-```ruby
-# config/initializers/langfuse.rb
-Langfuse.configure do |config|
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-  config.cache_backend = :rails
-end
-```
-
-`.env` (via dotenv gem):
-
-```bash
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-```
-
-### Rails Cache Backend
-
-When using `cache_backend: :rails`:
-
-```ruby
-# config/environments/production.rb
-config.cache_store = :redis_cache_store, { url: ENV['REDIS_URL'] }
-```
-
-**Advantages:**
-
-- Shared cache across processes (Puma workers, Sidekiq)
-- Persistent across deploys
-- Built-in Rails instrumentation
-
-**Disadvantages:**
-
-- Requires Redis dependency
-- Slightly slower than in-memory
-
-See [CACHING.md](CACHING.md) for performance comparison.
+`Langfuse.reset!` shuts down the existing client and provider and clears their
+configuration. The next access creates configuration from the environment again.
+Reapply any explicit settings before use.
 
 ## Forking Servers and Workers
 
-The SDK restores its background state after `fork` on Ruby 3.2 and later. This applies to Puma cluster workers, Unicorn workers, Resque workers, and other processes created through Ruby's standard fork path.
-
-- The child receives a new score queue and flush timer.
-- The child receives new prompt-cache synchronization objects. `concurrent-ruby` resets stale-while-revalidate worker state on the first child submission.
-- Scores queued before the fork remain owned by the parent. The child discards its copied queue to prevent duplicate ingestion.
-- In-memory prompt values remain available in the child. Rails cache data remains owned by the configured Rails cache store.
-- OpenTelemetry's batch span processor performs its own process-ID reset for trace export.
-
-The parent keeps its original queue and worker objects. Shutdown remains independent in each process.
+After Ruby `fork`, the child starts with a new score queue and synchronization
+state. Parent-owned queued scores are discarded in the child to prevent duplicate
+submission. In-memory prompt values remain available. OpenTelemetry and the
+background refresh pool reset their own worker state. Each process owns its shutdown.
 
 ## Process Exit
 
-The SDK automatically flushes pending spans and scores during normal process exit. One-off scripts and short-lived tasks do not need to register an `at_exit` callback.
+Normal process exit attempts to flush pending traces and scores automatically.
+Use `Langfuse.shutdown` for an earlier shutdown boundary. It disables the pending
+exit callback. Abrupt termination such as `SIGKILL` cannot flush, and API failure
+can still prevent delivery during shutdown.
 
-Call `Langfuse.shutdown` when the application must flush before process exit. An explicit shutdown disables the pending exit callback. `Langfuse.reset!` also disables the callback until the next SDK configuration lifecycle begins.
-
-The exit callback runs once and does not allow shutdown errors to escape the process-exit path. Abrupt termination, such as `SIGKILL`, cannot run process-exit callbacks.
-
-Call `Langfuse.force_flush` or `Langfuse.flush_scores` before an immediate verification read.
-Do not flush on every request.
-Batch export is the normal runtime operation.
-
-## Configuration by Environment
-
-### Development
-
-```ruby
-Langfuse.configure do |config|
-  config.public_key = ENV['LANGFUSE_PUBLIC_KEY']
-  config.secret_key = ENV['LANGFUSE_SECRET_KEY']
-  config.cache_ttl = 30  # Short TTL for rapid prompt iteration
-  config.logger.level = Logger::DEBUG
-end
-```
-
-### Production
-
-```ruby
-Langfuse.configure do |config|
-  config.public_key = Rails.application.credentials.dig(:langfuse, :public_key)
-  config.secret_key = Rails.application.credentials.dig(:langfuse, :secret_key)
-  config.cache_ttl = 300  # Longer TTL for stability
-  config.cache_backend = :rails  # Shared cache
-  config.cache_stale_while_revalidate = true  # Advisory intent flag (SWR activates via cache_stale_ttl > 0)
-  config.cache_stale_ttl = 300  # Activates SWR
-  config.timeout = 10  # Handle network variability
-  config.logger = Rails.logger
-end
-```
-
-### Test
-
-```ruby
-# spec/rails_helper.rb or spec/spec_helper.rb
-RSpec.configure do |config|
-  config.before do
-    Langfuse.reset!  # Clear configuration and caches
-  end
-end
-
-# Or configure once for all tests
-Langfuse.configure do |config|
-  config.public_key = 'pk-lf-test'
-  config.secret_key = 'sk-lf-test'
-  config.cache_backend = :memory  # Isolated per-process cache
-  config.cache_stale_ttl = 0      # Disable SWR for predictable tests
-end
-```
-
-See [RAILS.md](RAILS.md#testing) for testing patterns.
-
-## Validation
-
-The SDK validates configuration when you call `Langfuse.client`:
-
-```ruby
-Langfuse.configure do |config|
-  # Missing keys!
-end
-
-Langfuse.client
-# => Raises Langfuse::ConfigurationError: "public_key is required"
-```
-
-Client validation fails before the client starts. Tracing validates its own settings before the tracing processor starts. Invalid values raise `Langfuse::ConfigurationError`.
-
-Use `Langfuse.configured?` for a local, non-raising client-readiness check. This method does not validate credentials, network access, or trace delivery. `Langfuse.observe` does not require this guard. It uses a no-op tracer when tracing configuration is invalid.
-
-Client-readiness rules:
-
-- `public_key` and `secret_key` must be non-empty Strings
-- `base_url` must be an absolute HTTP or HTTPS URL
-- `batch_size` must be a positive Integer
-- `score_queue_capacity` must be a positive Integer
-- `tracing_enabled` must be `true` or `false`
-- `flush_interval`, `timeout`, `cache_max_size`, `cache_lock_timeout`, and `cache_refresh_threads` must be positive numbers
-- `cache_ttl` must be a non-negative number
-- `cache_stale_ttl` must be a non-negative number or `:indefinite`
-- `sample_rate` must be between `0.0` and `1.0`
-- `cache_backend` must be `:memory`, `:rails`, or `:auto`
-- If `:rails` is selected while caching is enabled, Rails and `Rails.cache` must be available
-- `prompt_cache_observer` must respond to `#call` (if set)
-- `logger` must respond to `#debug`, `#info`, `#warn`, and `#error`
-
-Tracing reuses the credential, batching, sampling, and logger rules. It also validates these tracing-only settings:
-
-- `should_export_span` must respond to `#call` (if set)
-- `mask` must respond to `#call` (if set)
-- `mask_otel_spans` must respond to `#call` (if set)
-- `metrics_reporter` must respond to `#add_to_counter`, `#record_value`, and `#observe_value` (if set)
-- `span_exporter` must respond to `#export`, `#force_flush`, and `#shutdown` (if set)
-
-### Rails cache validation and boot order
-
-When caching is enabled, `cache_backend = :rails` requires an available `Rails.cache` object during validation.
-Rails assigns `Rails.cache` during its `initialize_cache` step.
-An earlier Langfuse client build raises `ConfigurationError`.
-Build the client after `initialize_cache`.
-Alternatively, use `:auto` to select the in-memory cache when `Rails.cache` is unavailable.
-
-## Accessing Current Configuration
-
-```ruby
-Langfuse.configure do |config|
-  config.public_key = 'pk-lf-...'
-  config.cache_ttl = 120
-end
-
-# Later...
-config = Langfuse.configuration
-puts config.public_key  # => "pk-lf-..."
-puts config.cache_ttl   # => 120
-```
-
-## Resetting Configuration
-
-Useful in tests or when reinitializing:
-
-```ruby
-Langfuse.reset!  # Clears config, caches, and client instance
-```
-
-After `reset!`, you must call `configure` again before using the client.
-
-## See Also
-
-- [GETTING_STARTED.md](GETTING_STARTED.md) - Initial setup walkthrough
-- [CACHING.md](CACHING.md) - Cache backend details and strategies
-- [RAILS.md](RAILS.md) - Rails-specific patterns
-- [ERROR_HANDLING.md](ERROR_HANDLING.md) - Configuration errors
+Use `Langfuse.force_flush` and `Langfuse.flush_scores` before an immediate readback;
+backend visibility can lag HTTP acceptance. See [Data Access](DATA_ACCESS.md).

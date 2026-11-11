@@ -17,7 +17,7 @@ module Langfuse
 
     # Add an event without waiting for queue capacity.
     #
-    # @param event [Hash] Score ingestion event
+    # @param event [Hash] Score body
     # @return [Boolean] true when accepted, false when full
     def push(event)
       @mutex.synchronize do

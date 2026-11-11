@@ -1282,56 +1282,74 @@ RSpec.describe Langfuse::ApiClient do
 
   describe "#create_score" do
     let(:payload) do
-      {
-        id: "score-123",
-        name: "quality",
-        value: 0.85,
-        dataType: "NUMERIC",
-        traceId: "trace-123"
-      }
+      { id: "score-123", timestamp: "2026-11-06T12:00:00.000Z", name: "quality", value: 0.85,
+        dataType: "NUMERIC", traceId: "trace-123" }
     end
 
-    it "creates the score through the Scores API and returns its ID" do
+    it "sends an array and returns the assigned ID after acceptance" do
       stub_request(:post, "#{base_url}/api/public/scores")
-        .with(body: payload.to_json)
-        .to_return(
-          status: 200,
-          body: { id: "score-123" }.to_json,
-          headers: { "Content-Type" => "application/json" }
-        )
+        .with(body: [payload].to_json)
+        .to_return(status: 202, body: { message: "Accepted" }.to_json,
+                   headers: { "Content-Type" => "application/json" })
 
       expect(api_client.create_score(payload: payload)).to eq("score-123")
     end
 
-    it "raises ApiError when the response omits the score ID" do
-      stub_request(:post, "#{base_url}/api/public/scores")
-        .to_return(status: 200, body: {}.to_json, headers: { "Content-Type" => "application/json" })
+    [nil, ""].each do |id|
+      it "assigns an ID and timestamp for id: #{id.inspect} without changing the caller's payload" do
+        score = { id: id, name: "quality", value: 1 }.freeze
+        sent = nil
+        stub_request(:post, "#{base_url}/api/public/scores").with do |request|
+          sent = JSON.parse(request.body).first
+        end.to_return(status: 202, body: { message: "Accepted" }.to_json,
+                      headers: { "Content-Type" => "application/json" })
 
-      expect do
-        api_client.create_score(payload: payload)
-      end.to raise_error(Langfuse::ApiError, "Score creation response did not include an id")
+        expect(api_client.create_score(payload: score)).to eq(sent.fetch("id"))
+        expect(sent.fetch("id")).to match(/\A[0-9a-f-]{36}\z/)
+        expect(Time.iso8601(sent.fetch("timestamp"))).to be_within(2).of(Time.now)
+        expect(score.fetch(:id)).to eq(id)
+      end
     end
 
-    it "raises ApiError when the response contains an invalid score ID" do
+    it "raises when the synchronous score is rejected" do
       stub_request(:post, "#{base_url}/api/public/scores")
-        .to_return(status: 200, body: { id: nil }.to_json, headers: { "Content-Type" => "application/json" })
+        .to_return(status: 207,
+                   body: { accepted: 0, rejected: 1, errors: [{ message: "Invalid environment" }] }.to_json,
+                   headers: { "Content-Type" => "application/json" })
 
-      expect do
-        api_client.create_score(payload: payload)
-      end.to raise_error(Langfuse::ApiError, "Score creation response did not include an id")
+      expect { api_client.create_score(payload: payload) }
+        .to raise_error(Langfuse::ApiError, "Score rejected: Invalid environment")
+    end
+  end
+
+  describe "#send_score_batch" do
+    it "rejects empty or non-array batches before issuing HTTP requests" do
+      [[], nil, {}].each do |scores|
+        expect { api_client.send_score_batch(scores) }.to raise_error(ArgumentError, /non-empty array/)
+      end
     end
 
-    it "raises ApiError for invalid score data" do
+    it "accepts a complete accounting with no rejections" do
+      body = { "accepted" => 1, "rejected" => 0, "errors" => [] }
       stub_request(:post, "#{base_url}/api/public/scores")
-        .to_return(
-          status: 400,
-          body: { message: "Invalid request data" }.to_json,
-          headers: { "Content-Type" => "application/json" }
-        )
+        .to_return(status: 207, body: body.to_json, headers: { "Content-Type" => "application/json" })
 
-      expect do
-        api_client.create_score(payload: payload)
-      end.to raise_error(Langfuse::ApiError, "API request failed (400): Invalid request data")
+      expect(api_client.send_score_batch([{ id: "score-123", name: "quality", value: 1 }])).to eq(body)
+    end
+
+    it "does not treat malformed or legacy response bodies as acceptance" do
+      [
+        [202, {}], [200, { id: "legacy-score" }], [207, []],
+        [207, { accepted: 1, rejected: -1, errors: [] }],
+        [207, { accepted: 2, rejected: 0, errors: [] }],
+        [207, { accepted: 0, rejected: 1, errors: [{}] }],
+        [207, { accepted: 0, rejected: 1, errors: [] }]
+      ].each do |status, body|
+        stub_request(:post, "#{base_url}/api/public/scores")
+          .to_return(status: status, body: body.to_json, headers: { "Content-Type" => "application/json" })
+        expect { api_client.send_score_batch([{ id: "score-123", name: "quality", value: 1 }]) }
+          .to raise_error(Langfuse::BatchDeliveryError, /Invalid Scores API acceptance/)
+      end
     end
   end
 

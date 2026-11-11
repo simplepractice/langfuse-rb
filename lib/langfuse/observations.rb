@@ -24,7 +24,7 @@ module Langfuse
   # @example Block-based API (auto-ends)
   #   Langfuse.observe("parent-operation", input: { query: "test" }) do |span|
   #     # Child span
-  #     span.start_observation("data-processing", input: { step: "fetch" }) do |child|
+  #     span.start_observation("data-processing", { input: { step: "fetch" } }) do |child|
   #       result = fetch_data
   #       child.update(output: result)
   #     end
@@ -110,7 +110,7 @@ module Langfuse
       @otel_span.finish(end_timestamp: end_time)
     end
 
-    # Updates trace-level attributes (user_id, session_id, tags, etc.) for the entire trace.
+    # Sets trace-level attributes on this observation. Use propagate_attributes for descendants.
     # Tags exceeding 200 characters are silently dropped with a warning log.
     #
     # @param attrs [Hash, Types::TraceAttributes] Trace attributes to set
@@ -125,7 +125,7 @@ module Langfuse
 
     # Creates a child observation within this observation's context.
     #
-    # Supports block-based (auto-ends) and stateful (manual end) APIs. Events auto-end when created without a block.
+    # Supports block-based (auto-ends) and stateful (manual end) APIs. Events always end at creation.
     #
     # @param name [String] Descriptive name for the child observation
     # @param attrs [Hash, Types::SpanAttributes, Types::GenerationAttributes, nil] Observation attributes
@@ -202,7 +202,7 @@ module Langfuse
     # @param comment [String, nil] optional comment
     # @param metadata [Hash, nil] optional metadata
     # @param data_type [Symbol] one of :numeric, :boolean, :categorical, :text, :correction
-    # @return [Hash] created score data from the API
+    # @return [void] queues the score asynchronously
     def score_trace(name:, value:, comment: nil, metadata: nil, data_type: :numeric)
       Langfuse.create_score(
         name: name,
@@ -278,7 +278,7 @@ module Langfuse
   #   end
   #
   # @example Stateful API
-  #   span = Langfuse.start_observation("data-processing", input: { query: "test" })
+  #   span = Langfuse.start_observation("data-processing", { input: { query: "test" } })
   #   result = process_data
   #   span.update(output: result)
   #   span.end
@@ -333,18 +333,20 @@ module Langfuse
   # @example Block-based API
   #   Langfuse.observe("chat-completion", as_type: :generation) do |gen|
   #     gen.model = "gpt-4"
-  #     gen.input = [{ role: "user", content: "Hello" }]
-  #     response = call_llm(gen.input)
+  #     messages = [{ role: "user", content: "Hello" }]
+  #     gen.input = messages
+  #     response = call_llm(messages)
   #     gen.output = response
   #     gen.usage_details = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
   #   end
   #
   # @example Stateful API
+  #   messages = [{ role: "user", content: "Summarize this" }]
   #   gen = Langfuse.start_observation("chat-completion", {
   #     model: "gpt-3.5-turbo",
-  #     input: [{ role: "user", content: "Summarize this" }]
+  #     input: messages
   #   }, as_type: :generation)
-  #   response = call_llm(gen.input)
+  #   response = call_llm(messages)
   #   gen.update(
   #     output: response,
   #     usage_details: { prompt_tokens: 50, completion_tokens: 25, total_tokens: 75 }
@@ -375,12 +377,10 @@ module Langfuse
     end
   end
 
-  # Point-in-time occurrence. Automatically ended when created without a block.
+  # Point-in-time occurrence. Automatically ended at creation, including with a block.
   #
-  # @example Creating an event
-  #   Langfuse.observe("user-action", as_type: :event) do |event|
-  #     event.update(input: { action: "button_click", button_id: "submit" })
-  #   end
+  # @example Creating an event with its payload
+  #   Langfuse.observe("user-action", { input: { action: "button_click", button_id: "submit" } }, as_type: :event)
   #
   # @example Event without block (auto-ends)
   #   event = Langfuse.start_observation("error-occurred", {
